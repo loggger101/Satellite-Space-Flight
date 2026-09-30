@@ -157,6 +157,11 @@ Earth's sphere of influence.
 
 ## Controls
 
+Rest the mouse on any part of the window (a button, a readout in the top bar,
+a row of the right panel, a diagram, a dot on the map, a satellite or the
+Earth in the 3-D view, a field in a dialog) and a tip explains what it is and
+what it does, with its keyboard shortcut.
+
 | input | action |
 |---|---|
 | left-drag / wheel | orbit / zoom camera (the wheel scrolls the right panel under the mouse); click a satellite to select and inspect it |
@@ -292,6 +297,8 @@ satflight/            physics engine (numpy only)
     groundtrack.py    2-D ground-track map
     plots.py          telemetry time-history plot
     widgets.py        buttons, text fields, choices and the form dialog
+    tips.py           hover tips: parts register what they are as they draw
+    glossary.py       plain-language explanations of every readout
     theme.py          colours, fonts and drawing helpers
 scenarios/            example scenarios
 tools/                scenario and README-picture generators, asset downloader

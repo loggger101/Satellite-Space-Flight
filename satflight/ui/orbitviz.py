@@ -22,10 +22,11 @@ import pygame
 from ..constants import R_EARTH
 from ..elements import perifocal_axes
 from ..orbitinfo import OrbitInfo
-from . import theme
+from . import glossary, theme
 from .orbitpanel import APSIS, EQUATOR, H_VEC, NODE, countdown, deg, num
 from .render3d import Line
 from .theme import px
+from .tips import add as add_tip
 
 MODES = ("full", "basic", "off")
 ARC_I = (255, 150, 90)
@@ -34,6 +35,21 @@ ARC_ARGP = (205, 150, 255)
 R_FILL_IN = R_EARTH * 1.001
 ROUND_E = 0.01          # below this, arcs use the argument of latitude
 LEGEND_TITLE = ("ORBIT GEOMETRY KEY  - click to hide", "ORBIT GEOMETRY KEY  + click to show")
+LEGEND_TIP = ("Key to the lines, planes and angles drawn around the selected satellite's "
+              "orbit. Click to fold or open it; D switches the drawing between full, basic "
+              "and off.")
+LEGEND_ROWS = {         # hover tips of the key's rows, by the row's name
+    "orbital plane": "The flat plane the orbit lies in, shaded in the satellite's colour.",
+    "equatorial plane": "The Earth's equator extended into space. The orbit's tilt against "
+                        "it is the inclination.",
+    "line of apsides": "Joins the perigee (lowest point) and the apogee (highest point); "
+                       "their altitudes are labelled at the ends.",
+    "line of nodes": "Where the orbital plane cuts the equator: AN where the satellite "
+                     "crosses going north, DN going south.",
+    "u arg. of latitude": glossary.ROWS["Arg. of latitude"],
+    "velocity": "Direction the satellite is moving now.",
+    "h ang. momentum": glossary.LABELS["h"],
+}
 X_HAT, Y_HAT, Z_HAT = np.eye(3)
 ORIGIN = np.zeros(3)
 
@@ -126,6 +142,7 @@ def draw_legend(surf, fonts, rows, rect: pygame.Rect, shown: bool = True):
     theme.panel(surf, rect, (10, 16, 30, 228), theme.PANEL_EDGE, 6)
     fonts.draw(surf, LEGEND_TITLE[0 if shown else 1], (rect.x + px(10), rect.y + px(5)),
                theme.ACCENT, fonts.small)
+    add_tip(rect, LEGEND_TIP, "D")
     if not shown:
         return
     name_w = max(fonts.small.size(r[2])[0] for r in rows)
@@ -154,7 +171,18 @@ def draw_legend(surf, fonts, rows, rect: pygame.Rect, shown: bool = True):
         tx = x0 + px(24)
         fonts.draw(surf, name, (tx, y), theme.mix(col, (255, 255, 255), 0.35), fonts.small)
         fonts.draw(surf, desc, (tx + name_w + px(12), y), theme.DIM, fonts.small)
+        add_tip(pygame.Rect(rect.x, y, rect.w, px(17)), legend_tip(name, desc))
         y += px(17)
+
+
+def legend_tip(name: str, desc: str) -> str:
+    """What a row of the key means: its own tip, or the property it draws."""
+    if name in LEGEND_ROWS:
+        return LEGEND_ROWS[name]
+    prop = {"i": "Inclination i", "\N{GREEK CAPITAL LETTER OMEGA}": "RAAN",
+            "\N{GREEK SMALL LETTER OMEGA}": "Arg. of perigee",
+            "\N{GREEK SMALL LETTER NU}": "True anomaly"}.get(name.split(" ")[0])
+    return glossary.ROWS.get(prop, desc) if prop else desc
 
 
 def _arrow(p0, p1, color, side, width=2):
@@ -404,4 +432,7 @@ def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
     for r_ in rows:
         fonts.draw(surf, r_, (rect.x + px(10), yy), theme.TEXT, fonts.small)
         yy += px(16)
+    add_tip(rect, f"{sat.name} at a glance: altitude and speed, perigee (Pe) and apogee (Ap) "
+                  "altitudes, inclination i and period T, and the next special point of the "
+                  "orbit. The right panel has the full list.")
     return rect

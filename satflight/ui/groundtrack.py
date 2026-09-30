@@ -12,9 +12,21 @@ from ..analysis import coverage_half_angle, footprint
 from ..ephemeris import subsolar_point
 from ..frames import ecef_to_geodetic, eci_to_ecef
 from ..simulation import ACTIVE
-from . import theme
+from . import theme, tips
 from .earth import smoothstep
 from .theme import px
+
+
+def _spot(x, y, half: int) -> pygame.Rect:
+    """A square of ``half`` design px either side of the map point (x, y), to hover on."""
+    return pygame.Rect(int(x) - px(half), int(y) - px(half), 2 * px(half), 2 * px(half))
+
+
+def _latlon(lat, lon) -> str:
+    """Latitude and longitude (rad) as e.g. ``28.5° N, 80.6° W``."""
+    la, lo = math.degrees(float(lat)), math.degrees(float(lon))
+    return (f"{abs(la):.1f}\N{DEGREE SIGN} {'N' if la >= 0 else 'S'}, "
+            f"{abs(lo):.1f}\N{DEGREE SIGN} {'E' if lo >= 0 else 'W'}")
 
 
 class GroundTrackView:
@@ -116,6 +128,11 @@ class GroundTrackView:
         mh = mw // 2
         mr = pygame.Rect(rect.centerx - mw // 2, rect.y + px(22), mw, mh)
         labels = mw > px(500)           # room for station and pad names
+        tips.add(rect, "Ground-track map: the whole Earth flattened, north up. Lines are the "
+                       "paths traced beneath the satellites, dots where they are now; the "
+                       "shaded part is night and the yellow dot the point under the Sun. The "
+                       "ring around the selected satellite is the area that sees it at least "
+                       "10 degrees above the horizon.", "M")
         surf.blit(self.background(mr.size), mr.topleft)
         jd = sim.jd()
         theta = sim.gmst()
@@ -128,12 +145,17 @@ class GroundTrackView:
         # sub-solar point
         sx, sy = self.xy(math.degrees(lat_s), math.degrees(lon_s), r)
         pygame.draw.circle(surf, theme.SUN, (int(sx), int(sy)), px(6))
+        tips.add(_spot(sx, sy, 8), "Sub-solar point: the Sun is straight overhead here "
+                                   "(local noon).", clip=mr)
 
         # stations
         for st in sim.stations:
             x, y = self.xy(st.lat, st.lon, r)
             pygame.draw.rect(surf, (120, 255, 160), (int(x) - px(3), int(y) - px(3), px(7), px(7)),
                              1)
+            tips.add(_spot(x, y, 6), f"Ground station {st.name} ({st.lat:.2f}, {st.lon:.2f}): "
+                                     f"it talks to satellites more than {st.min_el:g} degrees "
+                                     "above its horizon.", clip=mr)
             if labels:
                 fonts.draw(surf, st.name, (int(x) + px(6), int(y) - px(6)), (120, 220, 150),
                            fonts.small)
@@ -145,6 +167,8 @@ class GroundTrackView:
             x, y = int(x), int(y)
             pygame.draw.polygon(surf, (255, 170, 90),
                                 [(x, y - px(7)), (x - px(5), y + px(4)), (x + px(5), y + px(4))])
+            tips.add(_spot(x, y, 7), f"Launch pad of {a.spec.name} ({a.spec.vehicle.name}).",
+                     clip=mr)
             if a.phase == "pad" and labels:
                 text = f"{a.spec.name} T-{int(a.t0 - sim.t) // 60} min"
                 box = pygame.Rect((x + px(7), y + px(6)), fonts.small.size(text))
@@ -178,6 +202,9 @@ class GroundTrackView:
                     continue
                 rad = px(5 if i == app.selected else 3)
                 pygame.draw.circle(surf, sim.sats[i].color, (int(x[i]), int(y[i])), rad)
+                tips.add(_spot(x[i], y[i], 6),       # worded only if shown: there may be 1000s
+                         lambda i=i: f"{sim.sats[i].name} is above {_latlon(lat[i], lon[i])}, "
+                                     f"{float(alt[i]):,.0f} km up.", clip=mr)
             i = app.selected
             if 0 <= i < sim.n and sim.sats[i].status == ACTIVE:
                 lam = coverage_half_angle(float(alt[i]), math.radians(10.0))

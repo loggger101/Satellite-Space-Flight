@@ -9,7 +9,7 @@ from ..constants import R_EARTH
 from ..elements import rv2coe
 from ..forces import conservative_energy
 from ..frames import ecef_to_geodetic, eci_to_ecef
-from . import theme
+from . import theme, tips
 from .theme import px
 
 
@@ -41,6 +41,21 @@ METRICS = [
 ]
 
 
+METRIC_TIPS = {
+    "Altitude": "Height above the Earth's surface.",
+    "Speed": "Speed relative to the stars (inertial).",
+    "Semi-major axis": "Size of the orbit. Air drag shrinks it; burns change it.",
+    "Eccentricity": "How stretched the orbit is (0 = circle).",
+    "Inclination": "Tilt of the orbit against the equator.",
+    "RAAN": "Where the orbit crosses the equator going north. The Earth's bulge makes it "
+            "drift steadily.",
+    "Arg. of perigee": "Where the lowest point lies in the orbit. The bulge turns it slowly.",
+    "Perigee altitude": "Height of the orbit's lowest point.",
+    "Energy drift (rel.)": "Relative change of the conserved energy since the first sample: "
+                           "the integrator's error (tiny) unless drag or burns act.",
+}
+
+
 class PlotView:
     """One ``METRICS`` series of the selected satellite over the history buffer;
     clicking cycles the metric."""
@@ -66,6 +81,9 @@ class PlotView:
         self.rect = rect
         theme.panel(surf, rect)
         name, unit, fn = METRICS[self.metric]
+        tips.add(rect, f"{name} of the selected satellite over its recent history, now at "
+                       f"the right. {METRIC_TIPS.get(name, '')}\nClick or scroll down for the "
+                       f"next quantity, right-click or scroll up for the previous one.", "G")
         i = app.selected
         title = f"{name}" + (f" [{unit}]" if unit else "") + "   (click to change)"
         fonts.draw(surf, title, (rect.x + px(10), rect.y + px(5)), theme.ACCENT, fonts.small)

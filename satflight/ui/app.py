@@ -62,6 +62,8 @@ class App:
         self.camera = Camera(*size)
         self.opts = Options()
         self.renderer = SceneRenderer(self.root / "assets")
+        # vector coastlines are redundant over a real texture; K toggles them
+        self.opts.coastlines = not self.renderer.earth.has_image
         self.topbar = TopBar(self)
         self.satlist = SatList(self)
         self.info = InfoPanel(self)
@@ -264,6 +266,7 @@ class App:
             pygame.K_m: lambda: self.toggle("map"),
             pygame.K_g: lambda: self.toggle("plot"),
             pygame.K_i: lambda: self.toggle("panels"),
+            pygame.K_k: lambda: self.toggle("coastlines"),
             pygame.K_h: lambda: self.toggle("help"),
             pygame.K_F1: lambda: self.toggle("help"),
             pygame.K_a: lambda: self.open("add"),

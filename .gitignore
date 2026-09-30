@@ -9,7 +9,4 @@ dist/
 venv/
 screenshots/
 scenarios/user/
-assets/earth.jpg
-assets/earth.png
-assets/coastlines.json
 *-DESKTOP-PJS73RO.*

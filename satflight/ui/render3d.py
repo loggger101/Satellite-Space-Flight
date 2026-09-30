@@ -20,6 +20,7 @@ from ..elements import coe2rv, conic_points, rv2coe
 from ..ephemeris import moon_position, sun_position
 from ..frames import eci_to_ecef, look_angles, rot3
 from ..analysis import coverage_half_angle, footprint
+from ..eclipse import shadow_fraction
 from ..simulation import ACTIVE
 from . import theme
 from .earth import EarthRenderer
@@ -38,13 +39,65 @@ class Line:
 class SceneRenderer:
     def __init__(self, asset_dir):
         self.earth = EarthRenderer(asset_dir)
-        rng = np.random.default_rng(7)
-        v = rng.normal(size=(1800, 3))
-        self.star_dirs = v / np.linalg.norm(v, axis=1, keepdims=True)
-        mag = rng.random(1800) ** 3
-        self.star_bright = (40 + 215 * mag).astype(int)
-        self.star_size = np.where(mag > 0.85, 2, 1)
+        self._build_sky()
+        self._sprites: dict = {}
+        self._sat_lit = np.zeros(0)
         self.sat_screen = None      # (sx, sy, visible) of last frame, for picking
+
+    def _build_sky(self):
+        """Random field stars with stellar colours plus a Milky Way band laid
+        along the true galactic plane (J2000 galactic pole and centre)."""
+        rng = np.random.default_rng(7)
+        v = rng.normal(size=(2400, 3))
+        dirs = v / np.linalg.norm(v, axis=1, keepdims=True)
+        mag = rng.random(2400) ** 3.2
+        palette = np.array([[165, 190, 255], [215, 225, 255], [255, 255, 255],
+                            [255, 244, 214], [255, 214, 160], [255, 180, 140]], np.float32)
+        tint = palette[rng.choice(len(palette), 2400, p=[0.12, 0.2, 0.3, 0.2, 0.12, 0.06])]
+        bright = 0.18 + 0.82 * mag
+        star_col = np.clip(tint * bright[:, None], 0, 255).astype(np.uint8)
+
+        def radec(ra, dec):
+            ra, dec = np.radians(ra), np.radians(dec)
+            return np.array([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+        zg = radec(192.85948, 27.12825)              # north galactic pole
+        xg = radec(266.40499, -28.93617)             # galactic centre
+        xg = xg - zg * (xg @ zg)
+        xg /= np.linalg.norm(xg)
+        yg = np.cross(zg, xg)
+        n = 16000
+        lon = np.where(rng.random(n) < 0.45, rng.normal(0.0, 0.6, n), rng.uniform(-np.pi, np.pi, n))
+        sig = np.radians(3.5 + 7.0 * np.exp(-(lon / 0.35) ** 2))
+        lat = rng.normal(0.0, 1.0, n) * sig
+        mw = (np.cos(lat) * np.cos(lon))[:, None] * xg + (np.cos(lat) * np.sin(lon))[:, None] * yg \
+            + np.sin(lat)[:, None] * zg
+        glow = (10 + 34 * rng.random(n) ** 2) * (0.6 + 0.4 * np.exp(-(lon / 0.8) ** 2))
+        mw_col = np.clip(np.array([0.82, 0.86, 1.0])[None, :] * glow[:, None], 0, 255).astype(np.uint8)
+        self.sky_dirs = np.vstack([mw, dirs])
+        self.sky_col = np.vstack([mw_col, star_col])
+        self.sky_big = np.r_[np.zeros(n, bool), mag > 0.8]
+
+    def _sprite(self, kind: str, color, radius: int):
+        """Cached radial-glow sprite for additive blending."""
+        key = (kind, tuple(color), radius)
+        spr = self._sprites.get(key)
+        if spr is None:
+            size = radius * 2 + 1
+            yy, xx = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+            r = np.hypot(xx, yy).T.astype(np.float32)
+            if kind == "sun":
+                inten = (np.exp(-(r / (radius * 0.07)) ** 2) * 1.6
+                         + 0.55 / (1 + (r / (radius * 0.12)) ** 2)
+                         + 0.25 * np.exp(-np.abs(yy.T) / 1.2) * np.exp(-np.abs(xx.T) / (radius * 0.5)))
+            else:
+                inten = 0.9 / (1 + (r / (radius * 0.28)) ** 2) * np.clip(1 - r / radius, 0, 1)
+            arr = np.clip(inten[..., None] * np.asarray(color, np.float32)[None, None, :], 0, 255)
+            spr = pygame.Surface((size, size))
+            pygame.surfarray.blit_array(spr, arr.astype(np.uint8))
+            if len(self._sprites) > 256:
+                self._sprites.clear()
+            self._sprites[key] = spr
+        return spr
 
     # --- helpers -------------------------------------------------------------------------
     @staticmethod
@@ -157,7 +210,9 @@ class SceneRenderer:
         if sel >= 0 and sim.sats[sel].status == ACTIVE:
             lines.extend(self._selected_extras(sim, sel, W, world_to_ecef, opts, markers))
 
-        # satellites
+        # satellites (dimmed while in Earth's shadow)
+        self._sat_lit = shadow_fraction(sim.y[:, :3], sun) if sim.n else np.zeros(0)
+        self._sat_start = len(markers)
         for i, s in enumerate(sim.sats):
             p = W @ sim.y[i, :3]
             if s.status != ACTIVE:
@@ -165,7 +220,9 @@ class SceneRenderer:
                                 if (sim.n <= 40 or i == sel) else None, i == sel))
                 continue
             label = s.name if (opts.labels and (sim.n <= 40 or i == sel)) else None
-            markers.append((p, s.color, 5 if i == sel else 3, label, i == sel))
+            lit = float(self._sat_lit[i])
+            col = theme.mix(theme.dim(s.color, 0.32), s.color, lit)
+            markers.append((p, col, 5 if i == sel else 3, label, i == sel))
             if opts.vectors and (sim.n <= 40 or i == sel):
                 v = sim.y[i, 3:]
                 tip = sim.y[i, :3] + v * 180.0
@@ -282,6 +339,8 @@ class SceneRenderer:
     def _draw_markers(self, surf, app, markers, mpos, behind: bool):
         sx, sy, vis = mpos
         fonts = app.fonts
+        start = getattr(self, "_sat_start", len(markers))
+        glow = len(markers) - start <= 300
         for k, (p, col, rad, label, selected) in enumerate(markers):
             if not np.isfinite(sx[k]) or not np.isfinite(sy[k]):
                 continue
@@ -290,6 +349,11 @@ class SceneRenderer:
             if behind == bool(vis[k]):
                 continue
             x, y = int(sx[k]), int(sy[k])
+            if rad > 0 and glow and k >= start and not behind:
+                lit = float(self._sat_lit[k - start]) if k - start < len(self._sat_lit) else 0.0
+                if lit > 0.2:
+                    g = self._sprite("glow", theme.dim(col, lit), 5 * rad)
+                    surf.blit(g, (x - 5 * rad, y - 5 * rad), special_flags=pygame.BLEND_ADD)
             if rad > 0:
                 pygame.draw.circle(surf, col, (x, y), rad)
                 if selected:
@@ -297,15 +361,24 @@ class SceneRenderer:
             elif rad < 0:
                 pygame.draw.rect(surf, col, (x + rad, y + rad, -2 * rad, -2 * rad), 1)
             if label and not behind:
+                fonts.draw(surf, label, (x + 9, y - 7), (0, 0, 0), fonts.small)
                 fonts.draw(surf, label, (x + 8, y - 8), theme.mix(col, (255, 255, 255), 0.35),
                            fonts.small)
 
     def _stars(self, surf, cam):
-        sx, sy, z = cam.project_dirs(self.star_dirs)
-        ok = np.isfinite(sx) & (sx >= 0) & (sx < cam.width) & (sy >= 0) & (sy < cam.height)
-        for x, y, b, s in zip(sx[ok].astype(int), sy[ok].astype(int), self.star_bright[ok],
-                              self.star_size[ok]):
-            surf.fill((b, b, min(255, b + 20)), (x, y, s, s))
+        sx, sy, z = cam.project_dirs(self.sky_dirs)
+        w, h = surf.get_size()
+        ok = np.isfinite(sx) & (sx >= 0) & (sx < w - 1) & (sy >= 0) & (sy < h - 1)
+        x = sx[ok].astype(np.intp)
+        y = sy[ok].astype(np.intp)
+        col = self.sky_col[ok]
+        big = self.sky_big[ok]
+        px = pygame.surfarray.pixels3d(surf)
+        px[x, y] = np.maximum(px[x, y], col)
+        for dx, dy in ((1, 0), (0, 1), (1, 1)):
+            px[x[big] + dx, y[big] + dy] = np.maximum(px[x[big] + dx, y[big] + dy],
+                                                      (col[big] * 0.55).astype(np.uint8))
+        del px
 
     def _sun(self, surf, cam, sun_dir, app):
         sx, sy, z = cam.project_dirs(sun_dir[None, :])
@@ -313,11 +386,9 @@ class SceneRenderer:
             return
         x, y = int(sx[0]), int(sy[0])
         if -200 < x < cam.width + 200 and -200 < y < cam.height + 200:
-            glow = pygame.Surface((120, 120), pygame.SRCALPHA)
-            for rr, a in ((60, 18), (40, 35), (24, 70), (12, 255)):
-                pygame.draw.circle(glow, (*theme.SUN, a), (60, 60), rr)
-            surf.blit(glow, (x - 60, y - 60))
-            app.fonts.draw(surf, "Sun", (x + 16, y + 10), theme.SUN, app.fonts.small)
+            spr = self._sprite("sun", (255, 236, 190), 150)
+            surf.blit(spr, (x - 150, y - 150), special_flags=pygame.BLEND_ADD)
+            app.fonts.draw(surf, "Sun", (x + 18, y + 12), theme.SUN, app.fonts.small)
 
     def _moon(self, surf, cam, moon_world, sun_dir, app):
         sx, sy, z = cam.project(moon_world[None, :])

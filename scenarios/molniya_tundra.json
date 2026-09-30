@@ -1,0 +1,83 @@
+{
+  "name": "Molniya and Tundra",
+  "description": "Three Molniya and three Tundra satellites sharing ground tracks - best viewed in the Earth-fixed frame (E) with the map (M).",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": true,
+    "j4": true,
+    "drag": false,
+    "sun": true,
+    "moon": true,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 1200,
+  "satellites": [
+    {
+      "name": "Molniya",
+      "orbit": {
+        "type": "elements",
+        "a": 26554,
+        "e": 0.72,
+        "i": 63.4,
+        "raan": 250,
+        "argp": 270,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 1600,
+      "area": 10,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 3
+    },
+    {
+      "name": "Tundra",
+      "orbit": {
+        "type": "elements",
+        "a": 42164,
+        "e": 0.25,
+        "i": 63.4,
+        "raan": 120,
+        "argp": 270,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 2000,
+      "area": 15,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 3
+    }
+  ],
+  "constellations": [],
+  "stations": [
+    {
+      "name": "Moscow",
+      "lat": 55.75,
+      "lon": 37.62,
+      "alt": 0.15,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Fairbanks",
+      "lat": 64.84,
+      "lon": -147.72,
+      "alt": 0.14,
+      "min_el": 10.0,
+      "color": null
+    }
+  ],
+  "maneuvers": []
+}

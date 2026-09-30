@@ -1,0 +1,105 @@
+{
+  "name": "Hohmann transfer LEO to GEO",
+  "description": "Equatorial 300 km parking orbit raised to GEO with two scheduled burns; a companion stays behind for comparison. Plan: dV1 +2425.1 m/s, dV2 ~+1467.1 m/s, total ~3892.1 m/s, coast 5.27 h.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "drag": false,
+    "sun": false,
+    "moon": false,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 300,
+  "satellites": [
+    {
+      "name": "Transfer",
+      "orbit": {
+        "type": "elements",
+        "altitude": 300,
+        "i": 0.0,
+        "raan": 0,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 4000,
+      "area": 15,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Parking",
+      "orbit": {
+        "type": "elements",
+        "altitude": 300,
+        "i": 0.0,
+        "raan": 0,
+        "nu": -20
+      },
+      "color": null,
+      "mass": 4000,
+      "area": 15,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [],
+  "maneuvers": [
+    {
+      "sat": "Transfer",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 600.0,
+      "delay": 0.0,
+      "dv": [
+        2.425057697538305,
+        0.0,
+        0.0
+      ],
+      "frame": "VNB",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Hohmann burn 1 (+2425.1 m/s)",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Transfer",
+      "kind": "circularize",
+      "timing": "absolute",
+      "t": 19588.876407328655,
+      "delay": 0.0,
+      "dv": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "frame": "VNB",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Hohmann burn 2 (circularize)",
+      "done": false,
+      "result": ""
+    }
+  ]
+}

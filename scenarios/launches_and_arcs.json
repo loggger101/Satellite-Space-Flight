@@ -1,0 +1,137 @@
+{
+  "name": "Launches and ballistic arcs",
+  "description": "Burnout states: sub-orbital hops at 15/45/75 deg from 100 km over the Cape, an orbit insertion over Kourou and a hyperbolic escape at 11.6 km/s.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "drag": true,
+    "sun": false,
+    "moon": false,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 30,
+  "satellites": [
+    {
+      "name": "Hop 15 deg",
+      "orbit": {
+        "type": "surface",
+        "lat": 28.5,
+        "lon": -80.6,
+        "alt": 100.0,
+        "azimuth": 90.0,
+        "speed": 4.0,
+        "fpa": 15.0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 1,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Hop 45 deg",
+      "orbit": {
+        "type": "surface",
+        "lat": 28.5,
+        "lon": -80.6,
+        "alt": 100.0,
+        "azimuth": 90.0,
+        "speed": 4.0,
+        "fpa": 45.0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 1,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Hop 75 deg",
+      "orbit": {
+        "type": "surface",
+        "lat": 28.5,
+        "lon": -80.6,
+        "alt": 100.0,
+        "azimuth": 90.0,
+        "speed": 4.0,
+        "fpa": 75.0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 1,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Insertion",
+      "orbit": {
+        "type": "surface",
+        "lat": 5.2,
+        "lon": -52.8,
+        "alt": 200.0,
+        "speed": 7.4,
+        "azimuth": 90.0,
+        "fpa": 0.0
+      },
+      "color": null,
+      "mass": 5000,
+      "area": 10,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Escape",
+      "orbit": {
+        "type": "surface",
+        "lat": 28.5,
+        "lon": -80.6,
+        "alt": 300.0,
+        "speed": 11.6,
+        "azimuth": 90.0,
+        "fpa": 5.0
+      },
+      "color": null,
+      "mass": 1000,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [
+    {
+      "name": "Cape Canaveral",
+      "lat": 28.39,
+      "lon": -80.61,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Kourou",
+      "lat": 5.25,
+      "lon": -52.8,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    }
+  ],
+  "maneuvers": []
+}

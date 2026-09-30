@@ -40,7 +40,8 @@ OCEAN_DEEP = np.array([5, 24, 66], np.float32)
 OCEAN_SHALLOW = np.array([24, 98, 142], np.float32)
 
 
-def _smoothstep(e0, e1, x):
+def smoothstep(e0, e1, x):
+    """Hermite ramp from 0 at ``e0`` to 1 at ``e1`` (clamped outside)."""
     t = np.clip((x - e0) / (e1 - e0), 0.0, 1.0)
     return t * t * (3 - 2 * t)
 
@@ -49,13 +50,16 @@ def _blur(mask: np.ndarray, factor: int = 16) -> np.ndarray:
     """Cheap wide blur of a (W, H) 0..1 array via down- and up-scaling."""
     w, h = mask.shape
     surf = pygame.Surface((w, h))
-    pygame.surfarray.blit_array(surf, np.repeat((mask * 255).astype(np.uint8)[..., None], 3, axis=2))
+    grey = (mask * 255).astype(np.uint8)[..., None]
+    pygame.surfarray.blit_array(surf, np.repeat(grey, 3, axis=2))
     small = pygame.transform.smoothscale(surf, (max(2, w // factor), max(2, h // factor)))
     big = pygame.transform.smoothscale(small, (w, h))
     return pygame.surfarray.array3d(big)[..., 0].astype(np.float32) / 255.0
 
 
 class EarthRenderer:
+    """Draws the textured, lit globe; ``quality`` caps the ray-traced pixel count."""
+
     def __init__(self, asset_dir: Path | None = None, quality: int = 230_000):
         self.quality = quality
         self.texture = None                        # (W, H, 3) uint8, equirectangular
@@ -68,6 +72,7 @@ class EarthRenderer:
         self._last_cam = None
         self._moving = 0           # consecutive frames with a moving camera
         self._spinning = 0         # consecutive frames that needed a re-texture
+        self._packed_src = self._packed_arr = None
         if asset_dir is not None:
             self.load_assets(Path(asset_dir))
         if self.texture is None:
@@ -75,6 +80,7 @@ class EarthRenderer:
 
     # --- assets -------------------------------------------------------------------
     def load_assets(self, asset_dir: Path):
+        """Load ``earth.jpg``/``earth.png`` and ``coastlines.json`` when present."""
         for name in ("earth.jpg", "earth.png"):
             p = asset_dir / name
             if p.exists():
@@ -110,7 +116,7 @@ class EarthRenderer:
         coast = np.clip(land_near * 2.4, 0.0, 1.0) * water
         h = t.shape[1]
         lat = np.linspace(90, -90, h)[None, :]
-        cold = _smoothstep(45.0, 75.0, np.abs(lat))[..., None]
+        cold = smoothstep(45.0, 75.0, np.abs(lat))[..., None]
         sea = OCEAN_DEEP * (1 - coast[..., None]) + OCEAN_SHALLOW * coast[..., None]
         sea = sea * (1 - 0.25 * cold) + np.array([40, 60, 80], np.float32) * 0.25 * cold
         land = np.clip(t * 1.12 + 4.0, 0, 255)
@@ -136,14 +142,14 @@ class EarthRenderer:
         col = np.where(grid, col * 0.55 + np.array([70, 140, 210], np.float32) * 0.45, col)
         eq = ((np.abs(latd) < 0.3) | (np.abs(lond) < 0.3 / np.maximum(np.cos(lat), 0.1)))[..., None]
         col = np.where(eq, np.array([110, 200, 255], np.float32), col)
-        ice = _smoothstep(72.0, 80.0, np.abs(latd))
+        ice = smoothstep(72.0, 80.0, np.abs(latd))
         col = col * (1 - ice[..., None]) + np.array([225, 235, 245], np.float32) * ice[..., None]
         return np.clip(col, 0, 255).astype(np.uint8), (1.0 - ice).astype(np.float32)
 
     def _packed(self):
         """Texture + water mask packed as one uint32 per texel (R, G, B, water)
         in a flat array indexed ``u * H + v``: a single gather per tap."""
-        if getattr(self, "_packed_src", None) is not self.texture:
+        if self._packed_src is not self.texture:
             w, h = self.texture.shape[:2]
             arr = np.empty((w, h, 4), np.uint8)
             arr[..., :3] = self.texture
@@ -152,35 +158,10 @@ class EarthRenderer:
             self._packed_src = self.texture
         return self._packed_arr
 
-    def _lookup(self, lat, lon, bilinear: bool = True):
-        """Colour (K, 3) and water fraction (K,) at lat/lon (rad); bilinear
-        filtering when the texture is magnified on screen."""
-        packed = self._packed()
-        w, h = self.texture.shape[:2]
-        fu = (lon + np.pi) * (w / (2 * np.pi)) - 0.5
-        fv = (np.pi / 2 - lat) * (h / np.pi) - 0.5
-        if not bilinear:
-            u = np.rint(fu).astype(np.int64) % w
-            v = np.clip(np.rint(fv), 0, h - 1).astype(np.int64)
-            px = packed[u * h + v].view(np.uint8).reshape(-1, 4).astype(np.float32)
-            return px[:, :3], px[:, 3] * (1 / 255.0)
-        u0 = np.floor(fu)
-        v0 = np.floor(fv)
-        du = (fu - u0).astype(np.float32)[:, None]
-        dv = (fv - v0).astype(np.float32)[:, None]
-        u0 = u0.astype(np.int64) % w
-        u1 = (u0 + 1) % w
-        v1 = np.clip(v0 + 1, 0, h - 1).astype(np.int64)
-        v0 = np.clip(v0, 0, h - 1).astype(np.int64)
-
-        def tap(u, v):
-            return packed[u * h + v].view(np.uint8).reshape(-1, 4).astype(np.float32)
-        px = ((tap(u0, v0) * (1 - du) + tap(u1, v0) * du) * (1 - dv)
-              + (tap(u0, v1) * (1 - du) + tap(u1, v1) * du) * dv)
-        return px[:, :3], px[:, 3] * (1 / 255.0)
-
     # --- rendering -----------------------------------------------------------------------
     def _bbox(self, cam):
+        """Screen rectangle (x, y, w, h) enclosing the Earth and its halo; the whole
+        window from inside the halo, None if off screen."""
         c = cam.position
         dist = float(np.linalg.norm(c))
         rh = R_EARTH * HALO
@@ -243,7 +224,8 @@ class EarthRenderer:
             self._tex = self._light = self._final = None
         geo = self._geom
         theta = math.atan2(float(world_to_ecef[0, 1]), float(world_to_ecef[0, 0]))
-        if self._tex is None or abs(math.remainder(theta - self._tex[0], 2 * math.pi)) > geo["tex_tol"]:
+        tol = geo["tex_tol"]
+        if self._tex is None or abs(math.remainder(theta - self._tex[0], math.tau)) > tol:
             self._tex = (theta, *self._sample(geo, theta))
             self._final = None
             self._spinning += 1
@@ -302,7 +284,7 @@ class EarthRenderer:
         g = (1.0 - (mh - R_EARTH) / (R_EARTH * (HALO - 1.0))) ** 2
         alpha = np.zeros(nw * nh, np.uint8)
         # soften the limb over the outermost buffer pixels
-        alpha[hit_idx] = (255 * np.clip(cos_view * max(nw, nh) * 0.35, 0.0, 1.0)).astype(np.uint8)
+        alpha[hit_idx] = (255 * np.clip(cos_view * max(nw, nh) * 0.35, 0, 1)).astype(np.uint8)
         # half a buffer pixel, as an angle on the sphere below the camera
         km_per_px = (bw / nw) / cam.focal * max(float(np.linalg.norm(c)) - R_EARTH, 1.0)
         return dict(size=(nw, nh), out=(bw, bh), hit_idx=hit_idx, halo_idx=halo_idx,
@@ -331,7 +313,7 @@ class EarthRenderer:
                            (fv - v0).astype(np.float32)[:, None],
                            np.clip(np.rint(fv), 0, h - 1).astype(np.int32))
             # world longitude in texel columns, offset to stay positive
-            geo["fuw"] = ((geo["lonw"] + np.pi) * (w / (2 * np.pi)) - 0.5 + 2 * w).astype(np.float64)
+            geo["fuw"] = (geo["lonw"] + np.pi) * (w / (2 * np.pi)) - 0.5 + 2 * w
         v0, v1, dv, vn = geo["rows"]
         fu = geo["fuw"] - theta * (w / (2 * np.pi))
         texel_km = 2 * math.pi * R_EARTH / w
@@ -355,7 +337,7 @@ class EarthRenderer:
         plus the halo canvas and alpha."""
         n = geo["n"]
         ndl = n @ sun_dir
-        day = _smoothstep(-0.12, 0.10, ndl)
+        day = smoothstep(-0.12, 0.10, ndl)
         light = 0.085 + 0.915 * day * (0.28 + 0.72 * np.clip(ndl, 0.0, 1.0) ** 0.85)
         twilight = np.exp(-((ndl - 0.015) / 0.05) ** 2)
         # sun glint (Blinn-Phong); negligible outside n.h > 0.85, so only the
@@ -390,6 +372,7 @@ class EarthRenderer:
         return A, B, C, canvas, alpha.reshape(nw, nh)
 
     def _compose(self, geo):
+        """Combine the cached texture sample and lighting into the output surface."""
         _, base, water = self._tex
         _, A, B, C, canvas, alpha = self._light
         nw, nh = geo["size"]

@@ -124,16 +124,17 @@ Earth's sphere of influence.
 | input | action |
 |---|---|
 | left-drag / wheel | orbit / zoom camera (the wheel scrolls the right panel under the mouse); click a satellite to select and inspect it |
+| arrow keys, `+` `-` | rotate / zoom camera |
 | `Space`, `,` `.`, `1` | pause, slower/faster time warp, real time |
-| `Tab`, `F` | next satellite, follow it |
+| `Tab` / `Shift+Tab`, `F` | next / previous satellite, follow it |
 | `E` | ECI / ECEF frame |
 | `O` `T` `L` `V` `X` `C` `R` `K` | orbits mode, trails, labels, vectors, axes, footprint, GEO ring, coastlines |
 | `D`, `Q` | selected orbit's geometry (full / basic / off), right panel tab (orbit / telemetry) |
 | `M` `G` `I` | ground-track map, plot, hide panels |
 | `A` `W` `B` `N` `P` | add satellite, Walker constellation, manoeuvre, ground station, physics |
 | `U` | launch a rocket from anywhere on Earth |
-| `Ctrl+O`, `Ctrl+S`, `Ctrl+R` | scenarios, save snapshot, reset |
-| `Ctrl+E`, `Del`, `F12`, `H` | edit / delete satellite, screenshot, help |
+| `Ctrl+O`, `Ctrl+S`, `Ctrl+R`, `Ctrl+Q` | scenarios, save snapshot, reset, quit |
+| `Ctrl+E`, `Del`, `F12`, `H` / `F1` | edit / delete satellite, screenshot, help (`Esc` closes it) |
 
 Every dialog shows a live preview (resulting orbit, transfer delta-v, burn
 duration) before you commit.
@@ -183,7 +184,7 @@ sim.advance(86400)
 
 ## Accuracy and validation
 
-The physics is checked by 112 tests (`pytest`), including textbook reference
+The physics is checked by 113 tests (`pytest`), including textbook reference
 cases from Vallado's *Fundamentals of Astrodynamics and Applications*
 (RV to elements, 40-minute Kepler propagation, GMST, Hohmann transfer), the
 numerical integrator against the analytic solution (under 1 m after a day),

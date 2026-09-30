@@ -1,7 +1,10 @@
 # Physics and numerical models
 
 Units throughout: km, s, kg (accelerations km/s^2). The Earth is the central
-body; every state is geocentric.
+body; every state is geocentric. Only the Earth acts on the satellites: Sun
+and Moon gravity and solar radiation pressure are out of the present scope
+(see [SCOPE.md](SCOPE.md)). The Sun's position is still computed for
+lighting, eclipses, beta angle and local solar time.
 
 ## Frames and time
 
@@ -20,7 +23,7 @@ rotation) and for TT in the ephemerides. GMST uses the IAU-82 expression
 
 ## Equations of motion
 
-    r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_drag + a_sun + a_moon + a_srp + a_thrust
+    r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_drag + a_thrust
 
 **Zonal harmonics** - accelerations are the gradients of
 
@@ -37,14 +40,11 @@ extrapolated to 2500 km and zero above. `density_scale` multiplies it to mimic
 solar maximum (~3x at 400 km) or minimum (~0.3x); real densities vary by an
 order of magnitude over the solar cycle, so decay times are indicative.
 
-**Third bodies** - `a = mu_b [(r_b - r)/|r_b - r|^3 - r_b/|r_b|^3]` (direct
-minus indirect term). Sun: Astronomical Almanac series (~0.01 deg). Moon:
-truncated Brown series (~0.3 deg, ~1000 km) - Vallado Algorithms 29 and 31.
-
-**Solar radiation pressure** - cannonball model,
-`a = nu P (AU/d)^2 Cr A/m`, P = 4.56e-6 N/m^2, directed away from the Sun;
-`nu` is the visible fraction of the solar disc from the conical umbra /
-penumbra model (Montenbruck & Gill 3.4.2).
+**Sun position (no force)** - Astronomical Almanac series (~0.01 deg,
+Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:
+`nu`, the visible fraction of the solar disc from the conical umbra /
+penumbra model (Montenbruck & Gill 3.4.2), dims satellites in shadow and
+times eclipse entry and exit.
 
 **Thrust** - finite burns add `T/m(t)` along a direction fixed in the VNB,
 RSW or ECI frame, with `m(t) = m0 - T t / (Isp g0)`. Impulsive burns spend
@@ -114,8 +114,10 @@ including retrograde-equatorial and hyperbolic orbits.
 
 - No tesseral/sectoral harmonics (only zonal J2-J4).
 - No precession/nutation, polar motion or UT1-UTC.
-- Low-precision Sun/Moon ephemerides rather than JPL DE kernels.
+- No Sun or Moon gravity and no solar radiation pressure (out of scope,
+  [SCOPE.md](SCOPE.md)); the low-precision Sun ephemeris is used for lighting
+  and eclipses only.
 - Static exponential atmosphere (no diurnal bulge, no space-weather input).
-- Cannonball SRP and drag (no attitude-dependent areas).
+- Cannonball drag (no attitude-dependent areas).
 - Without the optional `sgp4` package, TLE mean elements are used as
   osculating elements (a few km of error).

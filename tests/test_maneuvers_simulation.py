@@ -180,3 +180,26 @@ def test_launch_from_surface_is_not_flagged_as_reentry():
     assert sim.sats[0].status == "active"
     sim.advance(3600)
     assert sim.sats[0].status in ("re-entered", "impacted")
+
+
+def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
+    """Only the Earth acts on satellites: a scenario asking for Sun/Moon
+    gravity or SRP still loads, runs Earth-only and says what it ignored."""
+    import json
+    assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "drag"}
+    assert not {"sun", "moon", "srp"} & {f for f in vars(ForceModel())}
+    d = Scenario(name="old", satellites=[]).to_dict()
+    d["forces"].update(sun=True, moon=True, srp=False)
+    d["satellites"] = [{"name": "HEO", "cr": 1.8,
+                        "orbit": {"type": "elements", "perigee_alt": 1000, "apogee_alt": 120000, "i": 60}}]
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(d), encoding="utf-8")
+    sc = Scenario.load(path)
+    assert sc.out_of_scope == ["Sun third-body gravity", "Moon third-body gravity"]
+    assert "out_of_scope" not in sc.to_dict() and "sun" not in sc.to_dict()["forces"]
+    sim = Simulation(sc)
+    assert any(e.kind == "warn" and "Moon third-body" in e.text for e in sim.events)
+    ref = Simulation(Scenario(name="earth only", satellites=sc.satellites, forces=ForceModel()))
+    sim.advance(6 * 3600)
+    ref.advance(6 * 3600)
+    assert np.array_equal(sim.y, ref.y)

@@ -14,7 +14,7 @@ SECTIONS = {
              "the Earth's central gravity acted.",
     "ENVIRONMENT": "Sunlight and the size of each force acting on the satellite.",
     "LAUNCH": "The rocket that carried this payload, and how its ascent went.",
-    "SPACECRAFT": "The spacecraft's own properties, and any manoeuvres planned for it.",
+    "SPACECRAFT": "The spacecraft's own properties, and any maneuvers planned for it.",
     "GROUND CONTACT": "Ground stations that can see the satellite now: azimuth (compass "
                       "bearing), elevation above the horizon and slant range.",
     "SHAPE": "The size and shape of the orbit's ellipse.",
@@ -33,13 +33,13 @@ ROWS = {
     "Altitude": "Height above the Earth's surface (the WGS-84 ellipsoid).",
     "Latitude / Longitude": "The point on the ground directly below the satellite. Positive "
                             "latitude is north, positive longitude east.",
-    "Radius": "Distance from the centre of the Earth.",
+    "Radius": "Distance from the center of the Earth.",
     "Speed (inertial)": "Speed relative to the stars (the non-rotating ECI frame). This is "
                         "the speed orbital mechanics works with.",
     "Speed (ground-rel.)": "Speed relative to the rotating Earth's surface, the way someone "
                            "on the ground would measure it.",
     "Flight-path angle": "Angle of the velocity above the local horizontal. Positive while "
-                         "climbing towards apogee, negative while descending, zero on a "
+                         "climbing toward apogee, negative while descending, zero on a "
                          "circular orbit.",
     # --- shape
     "Regime": "Which family of orbit this is: low Earth orbit, geostationary, highly "
@@ -52,10 +52,10 @@ ROWS = {
     "Semi-latus rectum p": "The orbit's radius when the satellite is 90 degrees from "
                            "perigee. It sets the shape through r = p / (1 + e cos(nu)).",
     "Perigee alt / radius": "Lowest point of the orbit: its height above the surface, then "
-                            "its distance from the Earth's centre.",
+                            "its distance from the Earth's center.",
     "Apogee alt / radius": "Highest point of the orbit: its height above the surface, then "
-                           "its distance from the Earth's centre.",
-    "Focus offset c = ae": "How far the ellipse's centre sits from the Earth's centre (the "
+                           "its distance from the Earth's center.",
+    "Focus offset c = ae": "How far the ellipse's center sits from the Earth's center (the "
                            "Earth is at one focus, not in the middle).",
     "Perigee / apogee alt": "Height of the orbit's lowest and highest points above the "
                             "surface.",
@@ -67,7 +67,7 @@ ROWS = {
             "vernal equinox, where the orbit crosses the equator going north.",
     "Arg. of perigee": "Angle from the ascending node to the perigee, measured along the "
                        "orbit in the direction of motion.",
-    "True anomaly": "Angle from the perigee to the satellite, seen from the Earth's centre.",
+    "True anomaly": "Angle from the perigee to the satellite, seen from the Earth's center.",
     "Mean anomaly M": "The fraction of the period since perigee, as an angle. It grows at "
                       "a steady rate, unlike the true anomaly.",
     "Arg. of latitude": "Angle from the ascending node to the satellite along the orbit. "
@@ -145,7 +145,7 @@ ROWS = {
                        "map).",
     "Cd*A/m": "Drag coefficient times area over mass, the number the drag force uses.",
     "BURNING": "A finite burn is firing right now: thrust and time left.",
-    "in": "A manoeuvre scheduled for this satellite, and the time until it executes.",
+    "in": "A maneuver scheduled for this satellite, and the time until it executes.",
     # --- forces
     "a_gravity": "Acceleration from the Earth's central (point-mass) gravity.",
     "a_J2": "Acceleration from the Earth's equatorial bulge (the J2 term), the largest "
@@ -157,15 +157,15 @@ ROWS = {
     # --- launch
     "Phase": "What the rocket is doing now: on the pad, vertical rise, pitch kick, gravity "
              "turn or closed-loop guidance.",
-    "Mission time": "Time since lift-off (T-minus before it).",
+    "Mission time": "Time since liftoff (T-minus before it).",
     "Stage": "The stage now in use, and whether its engine is burning.",
     "Propellant in stage": "Propellant left in the current stage.",
     "Vehicle": "The launch vehicle that flew this payload.",
     "Site": "Where the rocket lifted off.",
     "Outcome": "How the ascent ended: in orbit, sub-orbital, escaped, or failed.",
-    "Cut-off": "Mission time when the last engine shut down.",
-    "Insertion orbit": "Perigee x apogee altitude and inclination at engine cut-off.",
-    "Propellant left": "Propellant still in the last stage at cut-off: the margin.",
+    "Cutoff": "Mission time when the last engine shut down.",
+    "Insertion orbit": "Perigee x apogee altitude and inclination at engine cutoff.",
+    "Propellant left": "Propellant still in the last stage at cutoff: the margin.",
     "Max Q": "Highest aerodynamic pressure on the vehicle during the climb, and when.",
     "Ascent dV / losses": "Delta-v the engines delivered, and how much of it gravity, air "
                           "drag and steering took.",
@@ -174,12 +174,12 @@ ROWS = {
                             "turns with the Earth).",
     "Vertical speed": "Rate of climb.",
     "Dynamic pressure": "Pressure of the oncoming air, 0.5 rho v^2. It peaks at 'max Q' a "
-                        "minute or so after lift-off.",
+                        "minute or so after liftoff.",
     "Acceleration / throttle": "Thrust acceleration in g, and the engine throttle (it drops "
                                "when the vehicle's acceleration limit is reached).",
     "Pitch above horizon": "Angle of the thrust above the local horizontal.",
     "Vehicle mass": "Mass of the rocket and payload now.",
-    "Time to cut-off": "Guidance's estimate of the time left until the engines shut down "
+    "Time to cutoff": "Guidance's estimate of the time left until the engines shut down "
                        "in the target orbit.",
     "Orbit now": "The orbit the vehicle would coast on if the engines stopped now.",
     "Target": "The orbit the guidance is aiming for.",
@@ -189,9 +189,9 @@ ROWS = {
     "gravity / drag loss": "Delta-v lost to gravity pulling back while climbing, and to "
                            "air drag.",
     "steering loss": "Delta-v lost because the thrust does not point along the velocity.",
-    "Lift-off in": "Time left on the countdown.",
-    "Lift-off at": "Date and time of lift-off (UTC).",
-    "Lift-off mass": "Mass of the fuelled rocket and payload on the pad.",
+    "Liftoff in": "Time left on the countdown.",
+    "Liftoff at": "Date and time of liftoff (UTC).",
+    "Liftoff mass": "Mass of the fueled rocket and payload on the pad.",
     "Planned outcome": "What the preview flight predicted for this ascent.",
 }
 
@@ -218,14 +218,14 @@ LABELS = {
 
 EVENTS = {
     "info": "General news from the simulation.",
-    "maneuver": "A manoeuvre was scheduled, started or finished.",
+    "maneuver": "A maneuver was scheduled, started or finished.",
     "eclipse": "A satellite entered or left the Earth's shadow.",
     "station": "A ground station gained or lost sight of a satellite (AOS / LOS).",
     "alert": "Something went wrong or needs attention: a close approach, a re-entry, an "
              "impact.",
-    "warn": "Something the simulator skipped or ignored, such as a manoeuvre it could not "
+    "warn": "Something the simulator skipped or ignored, such as a maneuver it could not "
             "run.",
-    "launch": "A launch event: lift-off, staging, fairing jettison, orbit insertion.",
+    "launch": "A launch event: liftoff, staging, fairing jettison, orbit insertion.",
 }
 
 

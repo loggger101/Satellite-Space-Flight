@@ -1,5 +1,5 @@
-"""The simulation engine: an Earth-centred ensemble of satellites advanced
-in time with a selectable propagator, executing scheduled manoeuvres and
+"""The simulation engine: an Earth-centered ensemble of satellites advanced
+in time with a selectable propagator, executing scheduled maneuvers and
 detecting events.
 
 Propagators
@@ -9,18 +9,18 @@ Propagators
 ``j2mean``  analytic two-body plus J2 secular drift of RAAN, perigee and
             mean anomaly - fast enough for thousands of satellites.
 
-Events logged: manoeuvre execution, eclipse entry/exit, ground-station
+Events logged: maneuver execution, eclipse entry/exit, ground-station
 AOS/LOS, close approaches between satellites, re-entry, surface impact and
 escape from Earth's sphere of influence, and every step of a launch.
 
 Launches (``satflight.launch``): a vehicle waits on its pad, turning with the
-Earth, until lift-off; during the ascent it is integrated by its own ascent
+Earth, until liftoff; during the ascent it is integrated by its own ascent
 model and kept out of the ensemble. At payload separation it joins the
 ensemble like any other satellite, and spent stages join as objects of their
 own.
 
 Time steps belong to the physics, not to the caller: ``advance`` only ever
-lands on physical boundaries (manoeuvres, burnouts, lift-offs, ascent syncs)
+lands on physical boundaries (maneuvers, burnouts, liftoffs, ascent syncs)
 and otherwise takes whole integrator steps, stopping at the last one that
 fits. The state it reports at the requested time is integrated forward from
 there and thrown away on the next call. Advancing an hour in one call or in
@@ -69,7 +69,7 @@ def _hermite_min(d0, c, m0, m1, samples: int = 17, iterations: int = 8):
     """Minimum distance from the origin of the cubic Hermite curves
     ``p(t) = d0 + c t + t (1 - t)^2 a - t^2 (1 - t) b`` (a = m0 - c, b = m1 - c),
     t in [0, 1], one row per curve: a coarse scan, then Newton's method on
-    p . p' = 0 kept between the best sample's neighbours (over one step the
+    p . p' = 0 kept between the best sample's neighbors (over one step the
     distance has a single dip). Returns (t, distance)."""
     a, b = m0 - c, m1 - c
 
@@ -115,7 +115,7 @@ class Satellite:
 @dataclass
 class Event:
     """A log line; ``kind`` (info, maneuver, eclipse, station, alert, warn, launch)
-    picks its colour in the UI."""
+    picks its color in the UI."""
 
     t: float
     text: str
@@ -183,7 +183,7 @@ class History:
 class Simulation:
     """A running scenario: the ensemble state ``y`` (N, 6) in ECI km and km/s at time
     ``t`` (s since the scenario epoch), plus the satellites, stations, pending
-    manoeuvres, burns, ascents and the event log."""
+    maneuvers, burns, ascents and the event log."""
 
     def __init__(self, scenario: Scenario):
         self.scenario = scenario
@@ -332,7 +332,7 @@ class Simulation:
         self.history = new
 
     def remove(self, i: int):
-        """Delete satellite ``i`` with its history, manoeuvres and burns."""
+        """Delete satellite ``i`` with its history, maneuvers and burns."""
         sat = self.sats.pop(i)
         self.ascents = [a for a in self.ascents if a.sat is not sat]
         self.y = np.delete(self.y, i, axis=0)
@@ -406,7 +406,7 @@ class Simulation:
             outcome = f.outcome
         asc.planned = (f.samples, f.stage_marks, outcome)
         self.log(f"{sat.name}: {spec.vehicle.name} on the pad at {spec.site or 'the launch site'} "
-                 f"({spec.lat:.2f}, {spec.lon:.2f}), lift-off {when}; planned {outcome}",
+                 f"({spec.lat:.2f}, {spec.lon:.2f}), liftoff {when}; planned {outcome}",
                  "launch" if f.outcome == "orbit" or spec.guidance == "open" else "warn")
         self._advance_ascents(self.t)
         return sat
@@ -470,17 +470,17 @@ class Simulation:
         elif spec.circularize and asc.outcome == "orbit":
             try:
                 self.schedule(Maneuver(sat.name, "circularize", timing="apoapsis",
-                                       label="circularise at apogee"))
+                                       label="circularize at apogee"))
             except ValueError as exc:
-                self.log(f"{sat.name}: circularisation skipped ({exc})", "warn")
+                self.log(f"{sat.name}: circularization skipped ({exc})", "warn")
 
-    # --- manoeuvres --------------------------------------------------------------------
+    # --- maneuvers ---------------------------------------------------------------------
     def schedule(self, m: Maneuver) -> Maneuver:
         """Resolve ``m``'s execution time and queue it."""
         i = self.index_of(m.sat)
         if self.ascent_of(i) is not None:
             raise ValueError(f"{m.sat} is still on its launch vehicle; "
-                             "manoeuvre it after separation")
+                             "maneuver it after separation")
         r, v = self.y[i, :3], self.y[i, 3:]
         if m.timing != "absolute" or m.t is None:
             m.t = resolve_time(m, self.t, r, v)
@@ -492,7 +492,7 @@ class Simulation:
         return m
 
     def _execute_due(self):
-        """Execute every queued manoeuvre whose time has come."""
+        """Execute every queued maneuver whose time has come."""
         due = [m for m in self.maneuvers if not m.done and m.t <= self.t + 1e-6]
         for m in due:
             m.done = True
@@ -514,7 +514,7 @@ class Simulation:
                     tv = self.y[self.index_of(m.target), 3:]
                 dv = impulse_eci(m, r, v, tv)
             except (ValueError, KeyError) as exc:
-                self.log(f"{m.sat}: manoeuvre skipped ({exc})", "warn")
+                self.log(f"{m.sat}: maneuver skipped ({exc})", "warn")
                 continue
             dvm = float(np.linalg.norm(dv))
             self.y[i, 3:] = v + dv
@@ -590,7 +590,7 @@ class Simulation:
         return f
 
     def _next_boundary(self) -> float:
-        """Time of the next lift-off, manoeuvre, burnout or ascent sync (inf if none).
+        """Time of the next liftoff, maneuver, burnout or ascent sync (inf if none).
         Ascent syncs count from the ascent's own clock, so they fall at the same
         times however the simulation is advanced."""
         tb = math.inf
@@ -678,7 +678,7 @@ class Simulation:
         return scratch.integrate(self._derivative(idx, burns), self.t, y0.copy(), t1)[1]
 
     def _propagate(self, idx: np.ndarray, t_seg: float, t_stop: float | None = None) -> bool:
-        """Advance satellites ``idx`` towards ``t_seg``, landing on it, or with
+        """Advance satellites ``idx`` toward ``t_seg``, landing on it, or with
         ``t_stop`` ending at the last whole step before that. Returns True if it
         stopped early because a satellite left the active set."""
         stop = t_seg if t_stop is None else min(t_seg, t_stop)
@@ -824,7 +824,7 @@ class Simulation:
         step, as (i, j, closest km, time of closest approach).
 
         A fast pass can fall between two steps, so each pair's relative motion
-        over the step is modelled as the cubic Hermite curve through both ends'
+        over the step is modeled as the cubic Hermite curve through both ends'
         positions and velocities; it stays within 4/27 (|m0 - c| + |m1 - c|) of
         its chord c (m = velocity x step). The same bound for each satellite's
         own curve gives how far it can have been from where it is now, which

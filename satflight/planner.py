@@ -1,5 +1,5 @@
 """Mission planners that turn a goal ("go to 35786 km", "meet satellite B in
-3 h") into concrete scheduled manoeuvres for a running simulation.
+3 h") into concrete scheduled maneuvers for a running simulation.
 
 Burn points are predicted with two-body motion; perturbations acting during
 the coast make the arrival slightly imperfect, exactly as in real

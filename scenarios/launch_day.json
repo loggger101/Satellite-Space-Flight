@@ -1,6 +1,6 @@
 {
   "name": "Launch day",
-  "description": "Six launches from four continents: a sounding rocket over Norway, Falcon 9 to a 53 deg shell, Electron to sun-synchronous orbit, a Saturn V parking orbit, a Kourou GTO that circularises at apogee, and a Crew Dragon that waits for the window into the ISS plane. Spent stages fall back or stay in orbit.",
+  "description": "Six launches from four continents: a sounding rocket over Norway, Falcon 9 to a 53 deg shell, Electron to sun-synchronous orbit, a Saturn V parking orbit, a Kourou GTO that circularizes at apogee, and a Crew Dragon that waits for the window into the ISS plane. Spent stages fall back or stay in orbit.",
   "epoch": "2026-09-29T12:00:00Z",
   "propagator": "cowell",
   "integrator": {

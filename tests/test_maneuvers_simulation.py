@@ -1,4 +1,4 @@
-"""Manoeuvre planners, the Lambert solver and whole-simulation behaviour: transfers,
+"""Maneuver planners, the Lambert solver and whole-simulation behavior: transfers,
 burns, J2 regression, drag decay, propagator agreement, scenario files and TLEs."""
 
 import math

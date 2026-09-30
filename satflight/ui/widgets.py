@@ -195,7 +195,7 @@ class Choice(Widget):
 
 
 class Checkbox(Widget):
-    """A tick box; ``on_change(value)`` fires on every click."""
+    """A checkbox; ``on_change(value)`` fires on every click."""
 
     def __init__(self, value: bool = False, on_change=None):
         super().__init__()
@@ -352,7 +352,7 @@ class FormDialog:
 
     # --- layout -----------------------------------------------------------------------
     def layout(self):
-        """Size and centre the dialog and place every visible row and button."""
+        """Size and center the dialog and place every visible row and button."""
         raw = self.raw()
         rows = [s for s in self.specs if self._visible(s, raw)]
         sw, sh = self.app.screen.get_size()

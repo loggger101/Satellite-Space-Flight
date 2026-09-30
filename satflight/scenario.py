@@ -1,7 +1,7 @@
-"""Scenarios: the declarative, JSON-serialisable description of a run.
+"""Scenarios: the declarative, JSON-serializable description of a run.
 
 A scenario lists satellites (each with an *orbit spec*), Walker
-constellations, ground stations, scheduled manoeuvres, the force model and
+constellations, ground stations, scheduled maneuvers, the force model and
 the propagator settings. Orbit specs are dicts with a ``type``:
 
 ``elements``  classical elements. Size by ``a`` (km), ``altitude`` (circular,
@@ -51,7 +51,7 @@ PALETTE = [
 
 
 def palette_color(i: int):
-    """Default colour of the ``i``-th satellite or constellation."""
+    """Default color of the ``i``-th satellite or constellation."""
     return PALETTE[i % len(PALETTE)]
 
 
@@ -76,7 +76,7 @@ class SatSpec:
     count: int = 1
 
     def to_dict(self):
-        """JSON-ready dict (the colour as a list)."""
+        """JSON-ready dict (the color as a list)."""
         d = asdict(self)
         if d["color"] is not None:
             d["color"] = list(d["color"])
@@ -168,7 +168,7 @@ class Scenario:
     # out-of-scope forces the source file asked for (not saved back)
     out_of_scope: list = field(default_factory=list, repr=False)
 
-    # --- serialisation ---
+    # --- serialization ---
     def to_dict(self):
         """The JSON form written by :meth:`save` (out-of-scope requests are dropped)."""
         return {

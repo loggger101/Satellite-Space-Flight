@@ -1,16 +1,16 @@
 """Reference frames and coordinate conversions.
 
-ECI   Earth-centred inertial. Treated as J2000/GCRF; precession and nutation
+ECI   Earth-centered inertial. Treated as J2000/GCRF; precession and nutation
       (< 0.4 deg over the 2000-2030 span) are neglected, as in most
       teaching-grade simulators.
-ECEF  Earth-centred, Earth-fixed. Obtained from ECI by a rotation of GMST
+ECEF  Earth-centered, Earth-fixed. Obtained from ECI by a rotation of GMST
       about +Z (polar motion neglected).
 ENU   local East-North-Up frame at a ground site.
 RSW   radial / along-track (in-plane) / cross-track (orbit normal).
 VNB   velocity / orbit normal / binormal - the natural "prograde, normal,
       radial-ish" frame for burns.
 
-Every function is vectorised: positions are ``(..., 3)`` arrays.
+Every function is vectorized: positions are ``(..., 3)`` arrays.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def rot3(a: float) -> np.ndarray:
 
 
 def unit(v: np.ndarray) -> np.ndarray:
-    """Normalise vectors along the last axis (zero vectors stay zero)."""
+    """Normalize vectors along the last axis (zero vectors stay zero)."""
     n = np.linalg.norm(v, axis=-1, keepdims=True)
     return v / np.where(n == 0.0, 1.0, n)
 

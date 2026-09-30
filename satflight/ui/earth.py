@@ -50,8 +50,8 @@ def _blur(mask: np.ndarray, factor: int = 16) -> np.ndarray:
     """Cheap wide blur of a (W, H) 0..1 array via down- and up-scaling."""
     w, h = mask.shape
     surf = pygame.Surface((w, h))
-    grey = (mask * 255).astype(np.uint8)[..., None]
-    pygame.surfarray.blit_array(surf, np.repeat(grey, 3, axis=2))
+    gray = (mask * 255).astype(np.uint8)[..., None]
+    pygame.surfarray.blit_array(surf, np.repeat(gray, 3, axis=2))
     small = pygame.transform.smoothscale(surf, (max(2, w // factor), max(2, h // factor)))
     big = pygame.transform.smoothscale(small, (w, h))
     return pygame.surfarray.array3d(big)[..., 0].astype(np.float32) / 255.0
@@ -295,7 +295,7 @@ class EarthRenderer:
                     tex_tol=0.5 * km_per_px / R_EARTH, km_per_px=km_per_px)
 
     def _sample(self, geo, theta):
-        """Texture colour and water fraction under Earth rotation ``theta``.
+        """Texture color and water fraction under Earth rotation ``theta``.
 
         ECEF longitude = world longitude - theta while latitude is unchanged,
         so texture rows and their weights are fixed per geometry and only the
@@ -333,7 +333,7 @@ class EarthRenderer:
         return px[:, :3], px[:, 3] * (1 / 255.0)
 
     def _lighting(self, geo, sun_dir):
-        """Sun-dependent terms so that colour = base * A + B + water * C,
+        """Sun-dependent terms so that color = base * A + B + water * C,
         plus the halo canvas and alpha."""
         n = geo["n"]
         ndl = n @ sun_dir

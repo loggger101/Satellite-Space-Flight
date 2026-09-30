@@ -149,7 +149,7 @@ class LaunchPreview:
         mw = mh * 2
         self.map_rect = pygame.Rect(x, y, mw, mh)
         tips.add(self.map_rect, "Click anywhere to move the pad there. The red triangle is the "
-                                "pad, grey dots the known spaceports, orange the planned "
+                                "pad, gray dots the known spaceports, orange the planned "
                                 "climb and blue the first orbit after separation.")
         self._draw_map(surf, self.map_rect, dlg)
         y += mh + px(8)
@@ -221,14 +221,14 @@ class LaunchPreview:
         return self._orbit_track
 
     def _lines(self):
-        """(text, colour) summary lines: vehicle, lift-off, outcome and delta-v budget."""
+        """(text, color) summary lines: vehicle, liftoff, outcome and delta-v budget."""
         out = []
         veh = self.vehicle
         try:
             payload = float(self.spec.payload_mass) if self.spec else 0.0
             summary = veh.stage_summary(payload)
             n = len(veh.stages)
-            out.append((f"{veh.name}: {n} stage{'s' if n != 1 else ''}, lift-off "
+            out.append((f"{veh.name}: {n} stage{'s' if n != 1 else ''}, liftoff "
                         f"{veh.liftoff_mass(payload) / 1000:,.1f} t, T/W {summary[0][3]:.2f}, "
                         f"ideal dV {sum(s[1] for s in summary):.2f} km/s", theme.DIM))
         except (ValueError, ZeroDivisionError, IndexError):
@@ -242,16 +242,16 @@ class LaunchPreview:
         p, f, sim = self.plan, self.plan.flight, self.app.sim
         wait = p.res.t0 - sim.t
         at = sim.clock.datetime(p.res.t0).strftime("%H:%M:%S")
-        when = "Lift-off now" if wait < 1 else f"Lift-off in {countdown(wait)} ({at} UTC)"
+        when = "Liftoff now" if wait < 1 else f"Liftoff in {countdown(wait)} ({at} UTC)"
         auto = self.spec is not None and self.spec.kick is None
         out.append((f"{when}, azimuth {math.degrees(p.res.azimuth) % 360:.1f} deg, "
-                    f"kick {p.kick:.2f} deg{' (optimised)' if auto else ''}", theme.TEXT))
+                    f"kick {p.kick:.2f} deg{' (optimized)' if auto else ''}", theme.TEXT))
         ins = f.insertion or {}
         hp, ha, inc = ins.get("hp", math.nan), ins.get("ha", math.nan), ins.get("i", math.nan)
         if f.outcome == "orbit":
             head = "ORBIT" if self.spec.guidance == "orbit" else "Orbit at burnout"
             out.append((f"{head}: {_km(hp)} x {_km(ha)} km, i {inc:.2f} deg, "
-                        f"cut-off {_clock(f.met)}", theme.GOOD))
+                        f"cutoff {_clock(f.met)}", theme.GOOD))
             if self.spec.guidance == "orbit":
                 out.append((f"Propellant left {ins.get('prop_left', 0):,.0f} kg in {f.stage.name}"
                             f"  |  max Q {f.max_q[0] / 1000:.1f} kPa at T+{f.max_q[1]:.0f} s",
@@ -285,8 +285,8 @@ def draw_profile(surf, rect, fonts, samples, marks, planned, now, color):
     pygame.draw.rect(surf, (8, 12, 24), rect, border_radius=px(6))
     pygame.draw.rect(surf, theme.PANEL_EDGE, rect, 1, border_radius=px(6))
     tips.add(rect, "The climb seen from the side: height against ground distance from the pad. "
-                   "White dots mark events (lift-off, ignitions, separations, fairing, "
-                   "cut-off)"
+                   "White dots mark events (liftoff, ignitions, separations, fairing, "
+                   "cutoff)"
                    + (", the dashed line is the planned path and the ringed dot the vehicle "
                       "now." if planned or now is not None else "."), clip=surf.get_clip())
     fonts.draw(surf, "ALTITUDE vs DOWNRANGE", (rect.x + px(8), rect.y + px(4)), theme.FAINT,
@@ -424,7 +424,7 @@ def launch_dialog(app):
           visible=lambda r: not _orbit(r),
           tip="Compass heading of the ascent: 90 is due east, which gains the most from the "
               "Earth's spin."),
-        F("when", "Lift-off", "choice", "Now", list(WHEN), tip="When the rocket lifts off.",
+        F("when", "Liftoff", "choice", "Now", list(WHEN), tip="When the rocket lifts off.",
           option_tips={"Now": "Lift off at once.",
                        "After delay": "Wait on the pad for the delay below.",
                        "Window: RAAN": "Wait until the pad turns under an orbital plane "
@@ -434,7 +434,7 @@ def launch_dialog(app):
                                                      "launch into it (e.g. to meet a space "
                                                      "station)."}),
         F("delay", "Delay (min)", "float", "10", visible=_is("when", "After delay"),
-          tip="Minutes on the pad before lift-off."),
+          tip="Minutes on the pad before liftoff."),
         F("raan", "Plane RAAN (deg)", "float", "0",
           visible=lambda r: _orbit(r) and r.get("when") == "Window: RAAN",
           tip="RAAN of the plane to launch into; the countdown waits for it."),
@@ -447,7 +447,7 @@ def launch_dialog(app):
               "turn. 'auto' finds the kick that reaches the target best."),
         F("vertical", "Vertical rise (s)", "float", "10",
           tip="Seconds of straight-up flight to clear the pad before the pitch kick."),
-        F("circ", "Circularise at apogee", "bool", False, visible=_orbit,
+        F("circ", "Circularize at apogee", "bool", False, visible=_orbit,
           tip="Add a burn at the first apogee to raise the perigee to the apogee height."),
         F("track", "Keep spent stages as objects", "bool", True,
           tip="Keep discarded stages as objects you can follow as they fall back or stay in "
@@ -471,12 +471,12 @@ def launch_dialog(app):
         spec = build_spec(dlg, preview.vehicle)
         preview.refresh(dlg)
         if preview.plan is not None and spec.kick is None:
-            spec.kick = preview.plan.kick            # the optimised pitch-over, flown for real
+            spec.kick = preview.plan.kick            # the optimized pitch-over, flown for real
         sat = sim.launch(spec)
         app.select(sim.sats.index(sat))
         asc = sim.ascent_of(app.selected)
         app.toast(f"{sat.name} on the pad" if asc is not None and asc.phase == "pad"
-                  else f"{sat.name}: lift-off!")
+                  else f"{sat.name}: liftoff!")
         return None
 
     def edit_vehicle(dlg):
@@ -515,10 +515,10 @@ STAGE_TIPS = {
               "it must exceed 1 for the first stage to lift off.",
     "isp_vac": "Engine efficiency in a vacuum (specific impulse): higher uses less "
                "propellant for the same delta-v.",
-    "isp_sl": "Efficiency at sea level, lower than in a vacuum; thrust and Isp rise towards "
+    "isp_sl": "Efficiency at sea level, lower than in a vacuum; thrust and Isp rise toward "
               "the vacuum values as the air thins. 0 uses the vacuum value throughout.",
-    "propellant": "Propellant the stage carries, in tonnes.",
-    "dry": "Mass of the empty stage (tanks, engines), in tonnes: dropped at separation.",
+    "propellant": "Propellant the stage carries, in metric tons.",
+    "dry": "Mass of the empty stage (tanks, engines), in metric tons: dropped at separation.",
 }
 MAX_STAGES = 4
 
@@ -542,7 +542,7 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
         for key, label, kind in STAGE_FIELDS:
             val = getattr(st, key)
             if key in ("propellant", "dry"):
-                val = f"{val / 1000:g}"          # tonnes in the form
+                val = f"{val / 1000:g}"          # metric tons in the form
             elif isinstance(val, float):
                 val = f"{val:g}"
             specs.append(F(f"s{k}_{key}", label, kind, val, visible=vis,
@@ -570,7 +570,7 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
               for k in range(MAX_STAGES + 1)]
 
     def build(dlg) -> Vehicle:
-        """The vehicle described by the form (masses entered in tonnes)."""
+        """The vehicle described by the form (masses entered in metric tons)."""
         raw = dlg.raw()
         n = int(raw["count"])
         out = []
@@ -639,7 +639,7 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
         head = "STAGING COAST"
     clip = surf.get_clip()
     tips.add(fonts.draw(surf, _clock(met), (x, y), theme.WARN if met < 0 else theme.GOOD,
-                        fonts.title), "Mission clock: T- counts down to lift-off, T+ up "
+                        fonts.title), "Mission clock: T- counts down to liftoff, T+ up "
                                       "from it.", clip=clip)
     tips.add(fonts.draw(surf, head, (x + w, y + px(4)), theme.TEXT, fonts.small, "topright"),
              glossary.ROWS["Phase"], clip=clip)
@@ -677,7 +677,7 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
         ("Acceleration / throttle", f"{asc.accel / G0_M:.2f} g / {asc.throttle * 100:.0f}%"),
         ("Pitch above horizon", f"{st['pitch']:.1f} deg" if asc.burning else "-"),
         ("Vehicle mass", f"{asc.mass / 1000:,.2f} t"),
-        ("Time to cut-off",
+        ("Time to cutoff",
          f"{asc.tgo:.0f} s" if asc.phase == "guided" and math.isfinite(asc.tgo) else "-"),
         ("Orbit now", orbit_now),
         ("Target", target),
@@ -687,9 +687,9 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
         ("  steering loss", f"{asc.losses['steering']:.3f} km/s"),
     ]
     if asc.phase == "pad":
-        rows = [("Lift-off in", countdown(asc.t0 - sim.t)),
-                ("Lift-off at", sim.clock.datetime(asc.t0).strftime("%Y-%m-%d %H:%M:%S UTC")),
-                ("Lift-off mass", f"{asc.mass / 1000:,.1f} t"),
+        rows = [("Liftoff in", countdown(asc.t0 - sim.t)),
+                ("Liftoff at", sim.clock.datetime(asc.t0).strftime("%Y-%m-%d %H:%M:%S UTC")),
+                ("Liftoff mass", f"{asc.mass / 1000:,.1f} t"),
                 ("Target", target),
                 ("Launch azimuth / kick", steering)]
         if planned and planned[2]:
@@ -745,7 +745,7 @@ def launch_rows(sim, i):
     rows = [("Vehicle", rep["vehicle"]),
             ("Site", rep["site"] or f"{rep['lat']:.2f}, {rep['lon']:.2f}"),
             ("Outcome", rep["outcome"]),
-            ("Cut-off", _clock(rep["met"]))]
+            ("Cutoff", _clock(rep["met"]))]
     if "hp" in rep:
         rows.append(("Insertion orbit", f"{_km(rep['hp'])} x {_km(rep['ha'])} km, "
                                         f"i {rep['i']:.2f}"))

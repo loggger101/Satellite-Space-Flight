@@ -71,8 +71,8 @@ class SceneRenderer:
                 math.degrees(math.atan2(p[1], p[0])))
 
     def _build_sky(self):
-        """Random field stars with stellar colours plus a Milky Way band laid
-        along the true galactic plane (J2000 galactic pole and centre)."""
+        """Random field stars with stellar colors plus a Milky Way band laid
+        along the true galactic plane (J2000 galactic pole and center)."""
         rng = np.random.default_rng(7)
         v = rng.normal(size=(2400, 3))
         dirs = v / np.linalg.norm(v, axis=1, keepdims=True)
@@ -87,7 +87,7 @@ class SceneRenderer:
             ra, dec = np.radians(ra), np.radians(dec)
             return np.array([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
         zg = radec(192.85948, 27.12825)              # north galactic pole
-        xg = radec(266.40499, -28.93617)             # galactic centre
+        xg = radec(266.40499, -28.93617)             # galactic center
         xg = xg - zg * (xg @ zg)
         xg /= np.linalg.norm(xg)
         yg = np.cross(zg, xg)
@@ -293,7 +293,7 @@ class SceneRenderer:
                                   (80, 220, 130), 1, 0.4))
 
     def _satellites(self, sim, opts, W, sun, sel, lines, markers):
-        """A marker per satellite (dimmed in the Earth's shadow, grey once
+        """A marker per satellite (dimmed in the Earth's shadow, gray once
         inactive, a countdown on rockets still on the pad) and velocity arrows."""
         self._sat_lit = shadow_fraction(sim.y[:, :3], sun) if sim.n else np.zeros(0)
         self._sat_start = len(markers)
@@ -499,7 +499,7 @@ class SceneRenderer:
                 rect = pygame.Rect(spots[0], (w, h))    # the selected name always shows
             placed.append(rect)
             if tie is not None:
-                # a leader from the labelled point to the label's nearest edge
+                # a leader from the labeled point to the label's nearest edge
                 end = (min(max(x, rect.left - px(3)), rect.right + px(3)),
                        min(max(y, rect.top), rect.bottom))
                 pygame.draw.aaline(surf, theme.dim(col, 0.9), (x, y), end)

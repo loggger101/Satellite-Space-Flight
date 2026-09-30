@@ -46,7 +46,7 @@ class OrbitInfo:
     fpa: float               # flight-path angle, rad
     # shape
     b: float                 # semi-minor axis (km); nan if open
-    c: float                 # centre-to-focus distance a*e (km); nan if open
+    c: float                 # center-to-focus distance a*e (km); nan if open
     rp_alt: float            # km
     ra_alt: float            # km (inf if open)
     # speeds

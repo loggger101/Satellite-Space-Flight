@@ -39,11 +39,11 @@ LEGEND_TIP = ("Key to the lines, planes and angles drawn around the selected sat
               "orbit. Click to fold or open it; D switches the drawing between full, basic "
               "and off.")
 LEGEND_ROWS = {         # hover tips of the key's rows, by the row's name
-    "orbital plane": "The flat plane the orbit lies in, shaded in the satellite's colour.",
+    "orbital plane": "The flat plane the orbit lies in, shaded in the satellite's color.",
     "equatorial plane": "The Earth's equator extended into space. The orbit's tilt against "
                         "it is the inclination.",
     "line of apsides": "Joins the perigee (lowest point) and the apogee (highest point); "
-                       "their altitudes are labelled at the ends.",
+                       "their altitudes are labeled at the ends.",
     "line of nodes": "Where the orbital plane cuts the equator: AN where the satellite "
                      "crosses going north, DN going south.",
     "u arg. of latitude": glossary.ROWS["Arg. of latitude"],
@@ -90,14 +90,14 @@ def _visible_near(cam, pts, k, view=None):
 
 def _angle(lines, markers, fills, world, seen, center, u, w, radius, angle, color, label):
     """Add an angle measured from direction ``u`` turning toward ``w``: the wedge
-    it spans, shaded (clear of the Earth when centred on it) with its two edges,
+    it spans, shaded (clear of the Earth when centered on it) with its two edges,
     an arc with an arrowhead pointing the way it is measured, and ``label`` tied
     to the arc at the visible point nearest its middle (``seen(pts, k)`` finds it)."""
     t = np.linspace(0.0, angle, max(8, int(48 * abs(angle) / math.pi) + 3))
     dirs = np.cos(t)[:, None] * u + np.sin(t)[:, None] * w
     arc = center + radius * dirs
-    at_centre = not center.any()
-    if at_centre:           # the part inside the Earth is left out, like the orbital plane
+    at_center = not center.any()
+    if at_center:           # the part inside the Earth is left out, like the orbital plane
         inner = R_FILL_IN * dirs[::-1]
         edges = (R_FILL_IN * dirs[0], R_FILL_IN * dirs[-1])
     else:
@@ -258,7 +258,7 @@ def draw_fill(surf, cam, poly_world, rgba, part: str):
 
 def build(info: OrbitInfo, r, v, color, W, cam, mode: str, view=None):
     """Lines, label markers, fills (polygon_world, rgba) and, in ``full`` mode,
-    the legend's rows (colour, sample kind, name, what it spans) for one orbit."""
+    the legend's rows (color, sample kind, name, what it spans) for one orbit."""
     lines, markers, fills, legend = [], [], [], []
     if mode == "off":
         return lines, markers, fills, legend

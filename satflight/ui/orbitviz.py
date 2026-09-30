@@ -56,6 +56,15 @@ def _dashed(p0, p1, color, n=24, width=1):
     return [Line(pts, color, width, 0.4)]
 
 
+def _angle(lines, markers, world, center, u, w, radius, angle, color, label, label_r):
+    """Add an angle: an arc of ``radius`` from direction ``u`` turning toward ``w``,
+    and ``label`` at its mid-angle, ``label_r`` from ``center``."""
+    mid = angle / 2
+    lines.append(Line(world(_arc(center, u, w, radius, 0.0, angle)), color, 2, 0.4))
+    at = center + label_r * (math.cos(mid) * u + math.sin(mid) * w)
+    markers.append((world(at), color, 0, label, False))
+
+
 def _arrow(p0, p1, color, side, width=2):
     """Shaft and head of an arrow; the head opens across ``side`` (the view axis)."""
     d = p1 - p0
@@ -196,52 +205,38 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
                           theme.dim(EQUATOR, 0.8), 1, 0.4))
 
     base = max(R_EARTH, 0.35 * el.rp)
-    rn, rw, rv = 1.80 * base, 1.55 * base, 1.30 * base
+    rn, rw, rv = 1.80 * base, 1.55 * base, 1.30 * base     # arc radii: RAAN, argp, u / nu
+    bright = theme.mix(color, (255, 255, 255), 0.35)
+    ang = (lines, markers, world)
     # RAAN: in the equator from the vernal equinox (+X) to the ascending node
     if not info.equatorial:
         lines += _dashed(ORIGIN, world(X_HAT * rn * 1.12), ARC_RAAN, 10)
         markers.append((world(X_HAT * rn * 1.16), ARC_RAAN, 0, "\N{GREEK SMALL LETTER GAMMA}",
                         False))
         if el.raan > 1e-3:
-            arc = _arc(ORIGIN, X_HAT, Y_HAT, rn, 0.0, el.raan)
-            lines.append(Line(world(arc), ARC_RAAN, 2, 0.4))
-            mid = el.raan / 2
-            markers.append((world(rn * 1.08 * np.array([math.cos(mid), math.sin(mid), 0])),
-                            ARC_RAAN, 0, f"\N{GREEK CAPITAL LETTER OMEGA} {deg(el.raan, 1)}",
-                            False))
+            _angle(*ang, ORIGIN, X_HAT, Y_HAT, rn, el.raan, ARC_RAAN,
+                   f"\N{GREEK CAPITAL LETTER OMEGA} {deg(el.raan, 1)}", rn * 1.08)
     # near-circular orbits have an ill-defined perigee: show the argument of
     # latitude (node -> satellite) instead of the perigee and true anomaly
     round_ = el.e < ROUND_E
     if round_ and not info.equatorial and el.u > 1e-3:
-        uc = theme.mix(color, (255, 255, 255), 0.35)
-        lines.append(Line(world(_arc(ORIGIN, n_hat, v_hat, rv, 0.0, el.u)), uc, 2, 0.4))
-        mid = el.u / 2
-        markers.append((world(rv * 1.1 * (math.cos(mid) * n_hat + math.sin(mid) * v_hat)), uc, 0,
-                        f"u {deg(el.u, 1)}", False))
+        _angle(*ang, ORIGIN, n_hat, v_hat, rv, el.u, bright, f"u {deg(el.u, 1)}", rv * 1.1)
     # argument of perigee: in the orbit plane from the node to the perigee
     if not info.equatorial and not round_ and el.argp > 1e-3:
-        lines.append(Line(world(_arc(ORIGIN, n_hat, v_hat, rw, 0.0, el.argp)), ARC_ARGP, 2, 0.4))
-        mid = el.argp / 2
-        markers.append((world(rw * 1.08 * (math.cos(mid) * n_hat + math.sin(mid) * v_hat)),
-                        ARC_ARGP, 0, f"\N{GREEK SMALL LETTER OMEGA} {deg(el.argp, 1)}", False))
+        _angle(*ang, ORIGIN, n_hat, v_hat, rw, el.argp, ARC_ARGP,
+               f"\N{GREEK SMALL LETTER OMEGA} {deg(el.argp, 1)}", rw * 1.08)
     # true anomaly: from the perigee (or node, if circular) to the satellite
     nu0 = float(el.nu) if info.closed else (float(el.nu) + np.pi) % (2 * np.pi) - np.pi
     if abs(nu0) > 1e-3 and not (round_ and not info.equatorial):
-        vc = theme.mix(color, (255, 255, 255), 0.35)
-        lines.append(Line(world(_arc(ORIGIN, P, Q, rv, 0.0, nu0)), vc, 2, 0.4))
-        mid = nu0 / 2
-        markers.append((world(rv * 1.1 * (math.cos(mid) * P + math.sin(mid) * Q)), vc, 0,
-                        f"\N{GREEK SMALL LETTER NU} {deg(el.nu, 1)}", False))
+        _angle(*ang, ORIGIN, P, Q, rv, nu0, bright,
+               f"\N{GREEK SMALL LETTER NU} {deg(el.nu, 1)}", rv * 1.1)
     # inclination at the ascending node, between the equator and the track
     if an is not None:
         east = _unit(np.cross(Z_HAT, n_hat))
         rho = max(0.45 * R_EARTH, 0.12 * np.linalg.norm(an))
         lines.append(Line(world(np.stack([an - 0.4 * rho * east, an + 1.5 * rho * east])),
                           EQUATOR, 1, 0.4))
-        lines.append(Line(world(_arc(an, east, Z_HAT, rho, 0.0, el.i)), ARC_I, 2, 0.4))
-        mid = el.i / 2
-        markers.append((world(an + 1.15 * rho * (math.cos(mid) * east + math.sin(mid) * Z_HAT)),
-                        ARC_I, 0, f"i {deg(el.i, 2)}", False))
+        _angle(*ang, an, east, Z_HAT, rho, el.i, ARC_I, f"i {deg(el.i, 2)}", 1.15 * rho)
     # angular momentum, radius and velocity vectors
     h_len = 2.1 * base
     lines += _arrow(ORIGIN, world(Hn * h_len), H_VEC, side)

@@ -288,60 +288,17 @@ def maneuver_dialog(app):
         F("preview", "", "info", ""),
     ]
 
-    scan_cache: dict = {}
-
-    def build(v):
-        """(burns, summary) for the form values; raises ValueError if impossible."""
-        kind = KINDS[v["kind"]]
-        timing = TIMINGS[v["timing"]]
-        delay = v.get("delay", 0.0)
-        sat = v["sat"]
-        common = dict(timing=timing, delay=delay, isp=v["isp"])
-        if kind == "hohmann":
-            burns, summary = plan_hohmann(sim, sat, v["target_alt"], timing, delay)
-        elif kind == "bielliptic":
-            burns, summary = plan_bielliptic(sim, sat, v["rb_alt"], v["target_alt"], timing, delay)
-        elif kind == "rendezvous":
-            if v.get("auto_tof"):
-                key = (sat, v["target"], timing, delay, round(sim.t, 1))
-                if key not in scan_cache:
-                    scan_cache[key] = scan_rendezvous(sim, sat, v["target"], steps=60,
-                                                      timing=timing, delay=delay)[0]
-                tof = scan_cache[key]
-            else:
-                tof = v["tof"] * 60.0
-            burns, summary = plan_rendezvous(sim, sat, v["target"], tof, timing, delay)
-            summary = f"TOF {tof / 60:.1f} min: " + summary
-        elif kind == "impulse":
-            dv = (v["dv_v"] / 1000, v["dv_n"] / 1000, v["dv_b"] / 1000)
-            burns = [Maneuver(sat, "impulse", dv=dv, frame=v["frame"], **common)]
-            summary = f"|dV| {np.linalg.norm(dv) * 1000:.1f} m/s"
-        elif kind == "circularize":
-            burns = [Maneuver(sat, "circularize", **common)]
-            summary = "burn computed from the state at execution"
-        elif kind == "plane_change":
-            burns = [Maneuver(sat, "plane_change", delta_i=v["delta_i"], **common)]
-            summary = plane_change_summary(sim, sat, v["delta_i"], timing, delay)
-        else:
-            burns = [Maneuver(sat, "finite", thrust=v["thrust"], duration=v["duration"],
-                              dv=DIRECTIONS[v["direction"]], frame="VNB", **common)]
-            m = sim.sats[sim.index_of(sat)].mass
-            mf = m - v["thrust"] / (v["isp"] * G0_M) * v["duration"]
-            dvm = v["isp"] * G0_M * math.log(m / mf) if mf > 0 else float("inf")
-            summary = f"dV ~{dvm:.1f} m/s, accel {v['thrust'] / m * 1000:.2f} mm/s^2"
-        for b in burns:
-            b.isp = v["isp"]
-        return burns, summary
+    scan_cache: dict = {}     # the rendezvous TOF scan is slow: reuse it while the form changes
 
     def on_change(dlg, key):
         try:
-            _, summary = build(dlg.values())
+            _, summary = _plan_maneuver(sim, dlg.values(), scan_cache)
             dlg.info["preview"] = summary
         except Exception as exc:
             dlg.info["preview"] = f"({exc})"
 
     def on_ok(v):
-        burns, _ = build(v)
+        burns, _ = _plan_maneuver(sim, v, scan_cache)
         for b in burns:
             sim.schedule(b)
         return None
@@ -352,6 +309,53 @@ def maneuver_dialog(app):
                               "(radial out on circular orbits)")
     on_change(dlg, None)
     return dlg
+
+
+def _plan_maneuver(sim, v: dict, scan_cache: dict):
+    """(burns, summary) for the manoeuvre form values ``v``; raises ValueError
+    if the manoeuvre is impossible. ``scan_cache`` keeps the automatic
+    rendezvous time of flight between calls."""
+    kind = KINDS[v["kind"]]
+    timing = TIMINGS[v["timing"]]
+    delay = v.get("delay", 0.0)
+    sat = v["sat"]
+    common = dict(timing=timing, delay=delay, isp=v["isp"])
+    if kind == "hohmann":
+        burns, summary = plan_hohmann(sim, sat, v["target_alt"], timing, delay)
+    elif kind == "bielliptic":
+        burns, summary = plan_bielliptic(sim, sat, v["rb_alt"], v["target_alt"], timing, delay)
+    elif kind == "rendezvous":
+        if v.get("auto_tof"):
+            key = (sat, v["target"], timing, delay, round(sim.t, 1))
+            if key not in scan_cache:
+                scan_cache[key] = scan_rendezvous(sim, sat, v["target"], steps=60,
+                                                  timing=timing, delay=delay)[0]
+            tof = scan_cache[key]
+        else:
+            tof = v["tof"] * 60.0
+        burns, summary = plan_rendezvous(sim, sat, v["target"], tof, timing, delay)
+        summary = f"TOF {tof / 60:.1f} min: " + summary
+    elif kind == "impulse":
+        dv = (v["dv_v"] / 1000, v["dv_n"] / 1000, v["dv_b"] / 1000)      # m/s -> km/s
+        burns = [Maneuver(sat, "impulse", dv=dv, frame=v["frame"], **common)]
+        summary = f"|dV| {np.linalg.norm(dv) * 1000:.1f} m/s"
+    elif kind == "circularize":
+        burns = [Maneuver(sat, "circularize", **common)]
+        summary = "burn computed from the state at execution"
+    elif kind == "plane_change":
+        burns = [Maneuver(sat, "plane_change", delta_i=v["delta_i"], **common)]
+        summary = plane_change_summary(sim, sat, v["delta_i"], timing, delay)
+    else:
+        burns = [Maneuver(sat, "finite", thrust=v["thrust"], duration=v["duration"],
+                          dv=DIRECTIONS[v["direction"]], frame="VNB", **common)]
+        # rocket equation for the preview: m_final = m - mdot * t, mdot = F / (Isp g0)
+        m = sim.sats[sim.index_of(sat)].mass
+        mf = m - v["thrust"] / (v["isp"] * G0_M) * v["duration"]
+        dvm = v["isp"] * G0_M * math.log(m / mf) if mf > 0 else float("inf")
+        summary = f"dV ~{dvm:.1f} m/s, accel {v['thrust'] / m * 1000:.2f} mm/s^2"
+    for b in burns:
+        b.isp = v["isp"]
+    return burns, summary
 
 
 # --- Ground station -------------------------------------------------------------------------

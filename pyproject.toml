@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "satflight"
+version = "0.1.0"
+description = "Earth-centred 3-D satellite orbit simulator with an interactive pygame front end"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "pygame-ce>=2.4"]
+
+[project.optional-dependencies]
+tle = ["sgp4>=2.22"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+satflight = "satflight.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["satflight*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

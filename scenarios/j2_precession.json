@@ -1,0 +1,138 @@
+{
+  "name": "J2 precession study",
+  "description": "Identical 600 x 1400 km orbits at six inclinations: RAAN regresses fastest at low inclination, stands still at 90 deg, and the perigee freezes at 63.4 deg. Open the plot panel (G) and pick RAAN or Arg. of perigee.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "drag": false,
+    "sun": false,
+    "moon": false,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 3600,
+  "satellites": [
+    {
+      "name": "i = 0",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 600,
+        "apogee_alt": 1400,
+        "i": 0.0,
+        "raan": 0,
+        "argp": 30,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "i = 30",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 600,
+        "apogee_alt": 1400,
+        "i": 30.0,
+        "raan": 0,
+        "argp": 30,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "i = 63.4",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 600,
+        "apogee_alt": 1400,
+        "i": 63.4,
+        "raan": 0,
+        "argp": 30,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "i = 90",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 600,
+        "apogee_alt": 1400,
+        "i": 90.0,
+        "raan": 0,
+        "argp": 30,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "i = sso",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 600,
+        "apogee_alt": 1400,
+        "i": "sso",
+        "raan": 0,
+        "argp": 30,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "i = 130",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 600,
+        "apogee_alt": 1400,
+        "i": 130.0,
+        "raan": 0,
+        "argp": 30,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 500,
+      "area": 4,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [],
+  "maneuvers": []
+}

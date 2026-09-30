@@ -1,0 +1,78 @@
+{
+  "name": "Atmospheric drag decay",
+  "description": "Three spacecraft at 300 km with different ballistic coefficients: a dense probe, a CubeSat and a balloon. The balloon re-enters in about a day.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "drag": true,
+    "sun": false,
+    "moon": false,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 3600,
+  "satellites": [
+    {
+      "name": "Dense probe",
+      "orbit": {
+        "type": "elements",
+        "altitude": 300,
+        "i": 51.6,
+        "raan": 0,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 2000,
+      "area": 1.0,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "CubeSat 3U",
+      "orbit": {
+        "type": "elements",
+        "altitude": 300,
+        "i": 51.6,
+        "raan": 0,
+        "nu": 120
+      },
+      "color": null,
+      "mass": 4,
+      "area": 0.03,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Balloon",
+      "orbit": {
+        "type": "elements",
+        "altitude": 300,
+        "i": 51.6,
+        "raan": 0,
+        "nu": 240
+      },
+      "color": null,
+      "mass": 60,
+      "area": 40,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [],
+  "maneuvers": []
+}

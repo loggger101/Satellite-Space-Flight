@@ -1,0 +1,90 @@
+{
+  "name": "GPS-like constellation",
+  "description": "Walker delta 55 deg: 24/6/1 at 20180 km, Cowell propagation with J2, Sun and Moon.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "drag": false,
+    "sun": true,
+    "moon": true,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 600,
+  "satellites": [],
+  "constellations": [
+    {
+      "name": "GPS",
+      "altitude": 20180,
+      "inclination": 55.0,
+      "total": 24,
+      "planes": 6,
+      "phasing": 1,
+      "pattern": "delta",
+      "color": [
+        255,
+        196,
+        64
+      ],
+      "mass": 2000,
+      "area": 20,
+      "cd": 2.2,
+      "cr": 1.3,
+      "raan0": 0.0
+    }
+  ],
+  "stations": [
+    {
+      "name": "Cape Canaveral",
+      "lat": 28.39,
+      "lon": -80.61,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Svalbard",
+      "lat": 78.23,
+      "lon": 15.39,
+      "alt": 0.5,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Canberra",
+      "lat": -35.4,
+      "lon": 148.98,
+      "alt": 0.7,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Madrid",
+      "lat": 40.43,
+      "lon": -4.25,
+      "alt": 0.8,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Kourou",
+      "lat": 5.25,
+      "lon": -52.8,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    }
+  ],
+  "maneuvers": []
+}

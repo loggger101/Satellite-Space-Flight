@@ -1,0 +1,122 @@
+{
+  "name": "Lambert rendezvous",
+  "description": "A chaser 70 km below and 6 deg behind a station intercepts it with a Lambert transfer (time of flight chosen for minimum delta-v with the arc kept above the atmosphere), then matches velocity. Plan (TOF 69 min): dV1 84.6 m/s, dV2 ~42.2 m/s, total ~126.8 m/s.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": false,
+    "j3": false,
+    "j4": false,
+    "drag": false,
+    "sun": false,
+    "moon": false,
+    "srp": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 30,
+  "satellites": [
+    {
+      "name": "Station",
+      "orbit": {
+        "type": "elements",
+        "altitude": 420,
+        "i": 51.6,
+        "raan": 30,
+        "nu": 40
+      },
+      "color": null,
+      "mass": 420000,
+      "area": 1600,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    },
+    {
+      "name": "Chaser",
+      "orbit": {
+        "type": "elements",
+        "altitude": 350,
+        "i": 51.6,
+        "raan": 30,
+        "nu": 34
+      },
+      "color": null,
+      "mass": 8000,
+      "area": 20,
+      "cd": 2.2,
+      "cr": 1.5,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [
+    {
+      "name": "Cape Canaveral",
+      "lat": 28.39,
+      "lon": -80.61,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Svalbard",
+      "lat": 78.23,
+      "lon": 15.39,
+      "alt": 0.5,
+      "min_el": 5.0,
+      "color": null
+    }
+  ],
+  "maneuvers": [
+    {
+      "sat": "Chaser",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 300.0,
+      "delay": 0.0,
+      "dv": [
+        -0.019814128456927094,
+        -0.06144424550463323,
+        -0.05463758127272156
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Intercept burn (84.6 m/s)",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Chaser",
+      "kind": "match_velocity",
+      "timing": "absolute",
+      "t": 4442.713567839196,
+      "delay": 0.0,
+      "dv": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "frame": "VNB",
+      "delta_i": 0.0,
+      "target": "Station",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Match velocity with Station",
+      "done": false,
+      "result": ""
+    }
+  ]
+}

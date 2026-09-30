@@ -152,6 +152,7 @@ class Vehicle:
 
     @classmethod
     def from_dict(cls, d):
+        """Build from a scenario dict; stages may be dicts or :class:`Stage` objects."""
         v = _from_dict(cls, d)
         v.stages = [s if isinstance(s, Stage) else _from_dict(Stage, s) for s in v.stages]
         return v
@@ -242,6 +243,7 @@ class LaunchSpec:
 
     @classmethod
     def from_dict(cls, d):
+        """Build from a scenario dict; ``vehicle`` may be a dict or a ``VEHICLES`` name."""
         s = _from_dict(cls, d)
         v = d.get("vehicle")
         if isinstance(v, str):
@@ -295,6 +297,7 @@ class AscentEnv:
 
     @classmethod
     def from_sim(cls, forces, clock):
+        """The environment matching a simulation's force model and clock."""
         return cls(forces.j2, forces.j3, forces.j4, forces.density_scale,
                    lambda t: float(clock.gmst(t)))
 
@@ -679,7 +682,7 @@ class Ascent:
     def _event(self, text: str, kind: str = "launch"):
         self.events.append((self.t, f"{self.spec.name}: {text}", kind))
 
-    def _geo(self, t, s):
+    def geo(self, t, s):
         """(geocentric lat deg, lon deg, downrange km) of state s at time t."""
         th = self.env.gmst(t)
         c, sn = math.cos(th), math.sin(th)
@@ -694,7 +697,7 @@ class Ascent:
         if not self.record or (not force and self.t < self._next_sample):
             return
         self._next_sample = self.t + SAMPLE_DT
-        lat, lon, dr = self._geo(self.t, self.y)
+        lat, lon, dr = self.geo(self.t, self.y)
         alt = _altitude(*self.y[:3])
         self.samples.append((self.met, alt, dr, self.speed, self.q / 1000.0, self.accel / G0_M))
         self.track.append((lat, lon))
@@ -702,7 +705,7 @@ class Ascent:
     def _mark(self, label: str):
         """Record a labelled milestone (lift-off, staging ...) on the profile."""
         if self.record:
-            *_, dr = self._geo(self.t, self.y)
+            *_, dr = self.geo(self.t, self.y)
             self.stage_marks.append((self.met, _altitude(*self.y[:3]), dr, label))
 
     # --- flight -------------------------------------------------------------------------
@@ -1000,6 +1003,19 @@ class Ascent:
                            for u, q, e in zip(up, n, eh, strict=True)))
 
     # --- reporting --------------------------------------------------------------------------
+    def telemetry(self) -> dict:
+        """Live figures for the panels: altitude, inertial and air-relative speed,
+        vertical speed, downrange, thrust pitch above the horizon and elements."""
+        x, y, z, vx, vy, vz = self.y
+        r = (x, y, z)
+        w = (vx + OMEGA_EARTH * y, vy - OMEGA_EARTH * x, vz)
+        *_, dr = self.geo(self.t, self.y)
+        up = _plumb_up(r, self.env)
+        pitch = math.degrees(math.asin(max(-1.0, min(1.0, _dot(self.thrust_dir, up)))))
+        return dict(alt=_altitude(x, y, z), speed=self.speed, air=math.sqrt(_dot(w, w)),
+                    vr=_dot(self.y[3:], _unit(r)), downrange=dr, pitch=pitch,
+                    el=rv2coe(np.array(r), np.array(self.y[3:])))
+
     def summary(self) -> dict:
         """Figures for panels and the planner (valid once released)."""
         ins = self.insertion or {}

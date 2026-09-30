@@ -1,3 +1,6 @@
+"""Manoeuvre planners, the Lambert solver and whole-simulation behaviour: transfers,
+burns, J2 regression, drag decay, propagator agreement, scenario files and TLEs."""
+
 import math
 from pathlib import Path
 
@@ -41,7 +44,8 @@ def test_lambert_recovers_kepler_arc():
 
 
 def test_sun_synchronous_inclination_700km():
-    assert math.degrees(sun_synchronous_inclination(R_EARTH + 700)) == pytest.approx(98.19, abs=0.02)
+    inc = math.degrees(sun_synchronous_inclination(R_EARTH + 700))
+    assert inc == pytest.approx(98.19, abs=0.02)
 
 
 def _scenario(sats, **kw):
@@ -189,8 +193,8 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     assert not {"sun", "moon", "srp"} & {f for f in vars(ForceModel())}
     d = Scenario(name="old", satellites=[]).to_dict()
     d["forces"].update(sun=True, moon=True, srp=False)
-    d["satellites"] = [{"name": "HEO", "cr": 1.8,
-                        "orbit": {"type": "elements", "perigee_alt": 1000, "apogee_alt": 120000, "i": 60}}]
+    heo = {"type": "elements", "perigee_alt": 1000, "apogee_alt": 120000, "i": 60}
+    d["satellites"] = [{"name": "HEO", "cr": 1.8, "orbit": heo}]
     path = tmp_path / "old.json"
     path.write_text(json.dumps(d), encoding="utf-8")
     sc = Scenario.load(path)

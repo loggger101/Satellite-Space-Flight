@@ -30,12 +30,13 @@ def _rows(sim: Simulation, t: float, y: np.ndarray):
     theta = sim.clock.gmst(t)
     lat, lon, alt = ecef_to_geodetic(eci_to_ecef(y[:, :3], theta))
     el = rv2coe(y[:, :3], y[:, 3:])
+    a, e = np.atleast_1d(el.a), np.atleast_1d(el.e)
+    angles = np.degrees(np.atleast_2d([el.i, el.raan, el.argp, el.nu]))    # (4, N)
     utc = format_epoch(sim.clock.datetime(t))
     for k, s in enumerate(sim.sats):
         yield [f"{t:.3f}", utc, s.name, s.status, *(f"{x:.6f}" for x in y[k]),
                f"{alt[k]:.4f}", f"{math.degrees(lat[k]):.6f}", f"{math.degrees(lon[k]):.6f}",
-               f"{np.atleast_1d(el.a)[k]:.4f}", f"{np.atleast_1d(el.e)[k]:.8f}",
-               *(f"{math.degrees(np.atleast_1d(x)[k]):.6f}" for x in (el.i, el.raan, el.argp, el.nu))]
+               f"{a[k]:.4f}", f"{e[k]:.8f}", *(f"{x:.6f}" for x in angles[:, k])]
 
 
 def export_history_csv(sim: Simulation, path) -> int:

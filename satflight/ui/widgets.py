@@ -259,10 +259,10 @@ class FormDialog:
                 opts = list(s.options)
                 idx = opts.index(s.default) if s.default in opts else 0
                 self.widgets[s.key] = Choice(opts, idx,
-                                             on_change=lambda v, k=s.key: self._changed(k))
+                                             on_change=lambda v, k=s.key: self.changed(k))
             elif s.kind == "bool":
                 self.widgets[s.key] = Checkbox(bool(s.default),
-                                               on_change=lambda v, k=s.key: self._changed(k))
+                                               on_change=lambda v, k=s.key: self.changed(k))
             elif s.kind == "info":
                 self.info[s.key] = str(s.default)
             else:
@@ -312,7 +312,7 @@ class FormDialog:
     def _visible(self, s: FieldSpec, raw) -> bool:
         return s.visible is None or bool(s.visible(raw))
 
-    def _changed(self, key):
+    def changed(self, key):
         """A field changed: tell ``on_change`` and re-layout (visibility may change)."""
         if self.on_change:
             try:
@@ -435,7 +435,7 @@ class FormDialog:
             w = self.widgets[s.key]
             if w.handle(ev):
                 if isinstance(w, TextField):
-                    self._changed(s.key)
+                    self.changed(s.key)
                 return True
         return True    # modal: swallow everything
 

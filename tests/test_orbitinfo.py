@@ -1,3 +1,5 @@
+"""The orbit inspector's derived quantities (orbitinfo.orbit_info)."""
+
 import math
 
 import numpy as np
@@ -106,8 +108,8 @@ def test_physical_properties():
     assert info.area_to_mass == pytest.approx(0.01)
     assert info.ballistic == pytest.approx(400 / (2.2 * 4))
     # 0.5 rho v^2 Cd A/m with rho(400 km) = 3.725e-12
-    assert info.drag_perigee == pytest.approx(0.5 * 3.725e-12 * (info.v_peri * 1e3) ** 2 * 2.2 * 0.01,
-                                              rel=1e-2)
+    expected = 0.5 * 3.725e-12 * (info.v_peri * 1e3) ** 2 * 2.2 * 0.01
+    assert info.drag_perigee == pytest.approx(expected, rel=1e-2)
     assert 1000 < info.footprint_km < 2500
     # ground track moves west by ~ (earth rate) * period, ~23 deg for the ISS
     assert info.ground_shift == pytest.approx(23.2, abs=0.5)

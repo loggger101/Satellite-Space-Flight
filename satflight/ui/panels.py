@@ -17,7 +17,7 @@ from ..simulation import ACTIVE
 from ..timeutil import format_duration, format_period
 from . import theme
 from .launchui import draw_ascent_tab, launch_rows
-from .orbitpanel import draw_orbit_tab
+from .orbitpanel import draw_orbit_tab, draw_section, num
 from .widgets import Button
 
 LEFT_W = 262
@@ -25,13 +25,6 @@ RIGHT_W = 340
 TOP_H = 38
 LOG_H = 132
 GAP = 8          # px between panels and window edges
-
-
-def fmt(x, unit="", prec=3):
-    """``x`` with thousands separators, ``prec`` decimals and ``unit``; '-' if missing."""
-    if x is None or (isinstance(x, float) and not math.isfinite(x)):
-        return "-"
-    return f"{x:,.{prec}f}{(' ' + unit) if unit else ''}"
 
 
 # --- Top bar -------------------------------------------------------------------------------
@@ -257,21 +250,21 @@ class InfoPanel:
         fpa = math.degrees(math.asin(np.clip(np.dot(r, v) / (rm * vm), -1, 1)))
         D = math.degrees
         sections = [("STATE", [
-            ("Altitude", fmt(alt, "km", 2)),
+            ("Altitude", num(alt, "km", 2)),
             ("Latitude / Longitude", f"{D(lat):+.3f} / {D(lon):+.3f} deg"),
-            ("Radius", fmt(rm, "km", 1)),
-            ("Speed (inertial)", fmt(vm, "km/s", 4)),
-            ("Speed (ground-rel.)", fmt(v_ground, "km/s", 4)),
-            ("Flight-path angle", fmt(fpa, "deg", 3)),
+            ("Radius", num(rm, "km", 1)),
+            ("Speed (inertial)", num(vm, "km/s", 4)),
+            ("Speed (ground-rel.)", num(v_ground, "km/s", 4)),
+            ("Flight-path angle", num(fpa, "deg", 3)),
         ])]
         orbit = [
-            ("Semi-major axis a", fmt(el.a, "km", 2)),
+            ("Semi-major axis a", num(el.a, "km", 2)),
             ("Eccentricity e", f"{el.e:.6f}"),
-            ("Inclination i", fmt(D(el.i), "deg", 4)),
-            ("RAAN", fmt(D(el.raan), "deg", 4)),
-            ("Arg. of perigee", fmt(D(el.argp), "deg", 3)),
-            ("True anomaly", fmt(D(el.nu), "deg", 3)),
-            ("Arg. of latitude", fmt(D(el.u), "deg", 3)),
+            ("Inclination i", num(D(el.i), "deg", 4)),
+            ("RAAN", num(D(el.raan), "deg", 4)),
+            ("Arg. of perigee", num(D(el.argp), "deg", 3)),
+            ("True anomaly", num(D(el.nu), "deg", 3)),
+            ("Arg. of latitude", num(D(el.u), "deg", 3)),
         ]
         if el.e < 1:
             orbit += [
@@ -283,16 +276,16 @@ class InfoPanel:
             orbit.append(("J2 dRAAN / dargp",
                           f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"))
         else:
-            orbit += [("Perigee alt", fmt(el.rp - R_EARTH, "km", 1)),
-                      ("Hyperbolic excess v", fmt(math.sqrt(max(0, 2 * el.energy)), "km/s", 4))]
-        orbit += [("Specific energy", fmt(el.energy, "km^2/s^2", 4)),
-                  ("Angular momentum", fmt(el.h, "km^2/s", 1))]
+            orbit += [("Perigee alt", num(el.rp - R_EARTH, "km", 1)),
+                      ("Hyperbolic excess v", num(math.sqrt(max(0, 2 * el.energy)), "km/s", 4))]
+        orbit += [("Specific energy", num(el.energy, "km^2/s^2", 4)),
+                  ("Angular momentum", num(el.h, "km^2/s", 1))]
         sections.append(("ORBIT  (" + classify(el) + ")", orbit))
 
         jd = sim.jd()
         sun = sun_position(jd)
         env = [("Illumination", f"{shadow_state(s.shadow)} ({s.shadow * 100:.0f}%)"),
-               ("Beta angle", fmt(D(beta_angle(r, v, sun)), "deg", 2))]
+               ("Beta angle", num(D(beta_angle(r, v, sun)), "deg", 2))]
         cd_am = s.cd * s.area / s.mass
         br = sim.forces.breakdown(r, v, cd_am)
         for name, (mag, on) in br.items():
@@ -308,7 +301,7 @@ class InfoPanel:
         launch = launch_rows(sim, i)
         if launch:
             sections.insert(0, ("LAUNCH", launch))
-        craft = [("Mass", fmt(s.mass, "kg", 2)), ("dV spent", fmt(s.dv_used * 1000, "m/s", 2)),
+        craft = [("Mass", num(s.mass, "kg", 2)), ("dV spent", num(s.dv_used * 1000, "m/s", 2)),
                  ("Cd*A/m", f"{cd_am:.4f} m^2/kg")]
         pending = [m for m in sim.maneuvers if m.sat == s.name]
         for m in pending[:3]:
@@ -362,14 +355,7 @@ class InfoPanel:
         else:
             y = y0
             for title, rows in self.report(i):
-                fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small)
-                y += 18
-                for label, value in rows:
-                    fonts.draw(surf, label, (x + 4, y), theme.DIM, fonts.small)
-                    fonts.draw(surf, value, (self.rect.right - 12, y), theme.TEXT, fonts.small,
-                               "topright")
-                    y += 16
-                y += 6
+                y = draw_section(surf, fonts, x, y, RIGHT_W - 24, title, rows)
         self.content_h = y - y0
         surf.set_clip(clip)
         if self.content_h > body.h:

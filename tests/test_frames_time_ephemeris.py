@@ -1,3 +1,5 @@
+"""Time scales, frame conversions, look angles, the Sun ephemeris and shadows."""
+
 import math
 from datetime import datetime
 

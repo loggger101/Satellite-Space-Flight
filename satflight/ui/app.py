@@ -401,6 +401,7 @@ class App:
         return pygame.Rect(x0, bottom - 190, x1 - x0, 190)
 
     def draw(self):
+        """Draw one frame: 3-D scene, panels, map/plot, help, dialogs and toasts."""
         s = self.screen
         self.renderer.draw(s, self)
         if self.opts.panels:

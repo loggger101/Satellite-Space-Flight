@@ -2,6 +2,7 @@
 dialogs, keyboard shortcuts and panels."""
 
 import os
+from pathlib import Path
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
 os.environ["SDL_AUDIODRIVER"] = "dummy"
@@ -64,7 +65,7 @@ def test_add_satellite_dialog_with_preset(app):
     app.open("add")
     dlg = app.dialogs[-1]
     dlg.widgets["preset"].set("Molniya (12 h, 63.4 deg)")
-    dlg._changed("preset")
+    dlg.changed("preset")
     assert dlg.widgets["mode"].value == "Elements (a, e)"
     fill(dlg, "count", 3)
     dlg.submit()
@@ -122,7 +123,7 @@ def test_maneuver_dialog_every_kind(app):
         app.open("maneuver")
         dlg = app.dialogs[-1]
         dlg.set("kind", kind)
-        dlg._changed("kind")
+        dlg.changed("kind")
         if kind == "Circularize":
             dlg.set("timing", "Next apoapsis")
         dlg.submit()
@@ -147,7 +148,7 @@ def test_physics_dialog_switches_models(app):
 def test_scenario_dialog_load_save_export(app, tmp_path):
     app.open("scenario")
     dlg = app.dialogs[-1]
-    dlg.set("file", "scenarios\\drag_decay.json" if os.name == "nt" else "scenarios/drag_decay.json")
+    dlg.set("file", str(Path("scenarios/drag_decay.json")))      # labels use the OS separator
     dlg.submit()
     assert app.sim.scenario.name == "Atmospheric drag decay"
     app.sim.advance(600)
@@ -301,7 +302,7 @@ def test_launch_dialog_reports_impossible_launches(app):
     app.open("launch")
     dlg = app.dialogs[-1]
     dlg.set("site", "Plesetsk (Russia)")
-    dlg._changed("site")
+    dlg.changed("site")
     fill(dlg, "inc", 28.5)
     dlg.preview.refresh(dlg)
     assert dlg.preview.plan is None and "cannot be reached" in dlg.preview.error
@@ -325,11 +326,11 @@ def test_vehicle_dialog_builds_a_custom_three_stage_rocket(app):
     assert vd is not dlg
     vd.set("count", "3")
     vd.set("edit", "3")
-    vd._changed("count")
+    vd.changed("count")
     fill(vd, "s3_thrust", 60)
     fill(vd, "s3_propellant", 4)
     fill(vd, "s3_dry", 0.5)
-    vd._changed("s3_thrust")
+    vd.changed("s3_thrust")
     assert "Stage 3" in " ".join(vd.info.values())
     frame(app)
     vd.submit()

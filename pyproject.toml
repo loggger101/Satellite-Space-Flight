@@ -13,7 +13,7 @@ dependencies = ["numpy>=1.24", "pygame-ce>=2.4"]
 
 [project.optional-dependencies]
 tle = ["sgp4>=2.22"]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "ruff>=0.5"]
 
 [project.scripts]
 satflight = "satflight.__main__:main"

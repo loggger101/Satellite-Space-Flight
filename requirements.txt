@@ -4,3 +4,4 @@ pygame-ce>=2.4
 # sgp4>=2.22
 # development
 pytest>=7
+ruff>=0.5

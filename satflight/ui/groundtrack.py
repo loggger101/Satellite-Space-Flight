@@ -14,6 +14,7 @@ from ..frames import ecef_to_geodetic, eci_to_ecef
 from ..simulation import ACTIVE
 from . import theme
 from .earth import smoothstep
+from .theme import px
 
 
 class GroundTrackView:
@@ -70,9 +71,9 @@ class GroundTrackView:
         cosz = np.sin(lat) * math.sin(lat_s) + np.cos(lat) * math.cos(lat_s) * np.cos(lon - lon_s)
         night = 1.0 - smoothstep(-0.10, 0.05, cosz)
         small = pygame.Surface((gw, gh), pygame.SRCALPHA)
-        px = pygame.surfarray.pixels3d(small)
-        px[...] = np.array([2, 4, 16], np.uint8)
-        del px
+        rgb = pygame.surfarray.pixels3d(small)
+        rgb[...] = np.array([2, 4, 16], np.uint8)
+        del rgb
         pa = pygame.surfarray.pixels_alpha(small)
         pa[...] = (night * 150).astype(np.uint8)
         del pa
@@ -108,11 +109,13 @@ class GroundTrackView:
         sim, fonts = app.sim, app.fonts
         self.rect = rect
         theme.panel(surf, rect)
-        fonts.draw(surf, "GROUND TRACK", (rect.x + 10, rect.y + 5), theme.FAINT, fonts.small)
-        mh = rect.h - 26
-        mw = min(rect.w - 16, 2 * mh)
+        fonts.draw(surf, "GROUND TRACK", (rect.x + px(10), rect.y + px(5)), theme.FAINT,
+                   fonts.small)
+        mh = rect.h - px(26)
+        mw = min(rect.w - px(16), 2 * mh)
         mh = mw // 2
-        mr = pygame.Rect(rect.centerx - mw // 2, rect.y + 22, mw, mh)
+        mr = pygame.Rect(rect.centerx - mw // 2, rect.y + px(22), mw, mh)
+        labels = mw > px(500)           # room for station and pad names
         surf.blit(self.background(mr.size), mr.topleft)
         jd = sim.jd()
         theta = sim.gmst()
@@ -124,24 +127,27 @@ class GroundTrackView:
 
         # sub-solar point
         sx, sy = self.xy(math.degrees(lat_s), math.degrees(lon_s), r)
-        pygame.draw.circle(surf, theme.SUN, (int(sx), int(sy)), 6)
+        pygame.draw.circle(surf, theme.SUN, (int(sx), int(sy)), px(6))
 
         # stations
         for st in sim.stations:
             x, y = self.xy(st.lat, st.lon, r)
-            pygame.draw.rect(surf, (120, 255, 160), (int(x) - 3, int(y) - 3, 7, 7), 1)
-            if mw > 500:
-                fonts.draw(surf, st.name, (int(x) + 6, int(y) - 6), (120, 220, 150), fonts.small)
+            pygame.draw.rect(surf, (120, 255, 160), (int(x) - px(3), int(y) - px(3), px(7), px(7)),
+                             1)
+            if labels:
+                fonts.draw(surf, st.name, (int(x) + px(6), int(y) - px(6)), (120, 220, 150),
+                           fonts.small)
 
         # launch pads with a vehicle waiting or climbing (labels stack when pads share a site)
         taken: list[pygame.Rect] = []
         for a in sim.ascents:
             x, y = self.xy(a.spec.lat, a.spec.lon, r)
             x, y = int(x), int(y)
-            pygame.draw.polygon(surf, (255, 170, 90), [(x, y - 7), (x - 5, y + 4), (x + 5, y + 4)])
-            if a.phase == "pad" and mw > 500:
+            pygame.draw.polygon(surf, (255, 170, 90),
+                                [(x, y - px(7)), (x - px(5), y + px(4)), (x + px(5), y + px(4))])
+            if a.phase == "pad" and labels:
                 text = f"{a.spec.name} T-{int(a.t0 - sim.t) // 60} min"
-                box = pygame.Rect((x + 7, y + 6), fonts.small.size(text))
+                box = pygame.Rect((x + px(7), y + px(6)), fonts.small.size(text))
                 while box.collidelist(taken) >= 0:
                     box.y += box.h
                 taken.append(box)
@@ -160,7 +166,7 @@ class GroundTrackView:
                 col = sim.sats[i].color
                 col = col if i == app.selected else theme.dim(col, 0.7)
                 self.polyline(surf, col, np.degrees(lat[k]), np.degrees(lon[k]), r,
-                               2 if i == app.selected else 1)
+                               px(2) if i == app.selected else 1)
 
         # current sub-satellite points
         if sim.n:
@@ -170,7 +176,7 @@ class GroundTrackView:
             for i in range(sim.n):
                 if sim.sats[i].status != ACTIVE:
                     continue
-                rad = 5 if i == app.selected else 3
+                rad = px(5 if i == app.selected else 3)
                 pygame.draw.circle(surf, sim.sats[i].color, (int(x[i]), int(y[i])), rad)
             i = app.selected
             if 0 <= i < sim.n and sim.sats[i].status == ACTIVE:

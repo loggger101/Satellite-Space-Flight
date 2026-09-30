@@ -11,6 +11,7 @@ from typing import Any
 import pygame
 
 from . import theme
+from .theme import px
 
 
 class Widget:
@@ -59,10 +60,11 @@ class Button(Widget):
         bg = theme.ACCENT_DARK if (on or self.accent) else theme.FIELD
         if self.hover:
             bg = theme.mix(bg, theme.ACCENT, 0.35)
-        pygame.draw.rect(surf, bg, self.rect, border_radius=5)
+        pygame.draw.rect(surf, bg, self.rect, border_radius=px(5))
         edge = theme.ACCENT if on else theme.PANEL_EDGE
-        pygame.draw.rect(surf, edge, self.rect, 1, border_radius=5)
-        fonts.draw(surf, self.text, self.rect.center, theme.TEXT, fonts.ui, "center")
+        pygame.draw.rect(surf, edge, self.rect, 1, border_radius=px(5))
+        if self.text:
+            fonts.draw(surf, self.text, self.rect.center, theme.TEXT, fonts.ui, "center")
 
 
 def draw_tooltip(surf, fonts, button: Button):
@@ -73,16 +75,16 @@ def draw_tooltip(surf, fonts, button: Button):
     if hint is None and key is None:
         return None
     parts = [p for p in (hint, key) if p is not None]
-    w = sum(p.get_width() for p in parts) + 14 * (len(parts) - 1) + 20
-    h = max(p.get_height() for p in parts) + 10
+    w = sum(p.get_width() for p in parts) + px(14) * (len(parts) - 1) + px(20)
+    h = max(p.get_height() for p in parts) + px(10)
     box = pygame.Rect(0, 0, w, h)
-    box.midtop = (button.rect.centerx, button.rect.bottom + 6)
-    box.clamp_ip(surf.get_rect().inflate(-8, -8))
+    box.midtop = (button.rect.centerx, button.rect.bottom + px(6))
+    box.clamp_ip(surf.get_rect().inflate(-px(8), -px(8)))
     theme.panel(surf, box, (20, 30, 55, 245), theme.ACCENT, 5)
-    x = box.x + 10
+    x = box.x + px(10)
     for p in parts:
         surf.blit(p, (x, box.centery - p.get_height() // 2))
-        x += p.get_width() + 14
+        x += p.get_width() + px(14)
     return box
 
 
@@ -137,19 +139,20 @@ class TextField(Widget):
 
     def draw(self, surf, fonts):
         bg = theme.FIELD_FOCUS if self.focused else theme.FIELD
-        pygame.draw.rect(surf, bg, self.rect, border_radius=4)
+        pygame.draw.rect(surf, bg, self.rect, border_radius=px(4))
         edge = theme.BAD if self.error else (theme.ACCENT if self.focused else theme.PANEL_EDGE)
-        pygame.draw.rect(surf, edge, self.rect, 1, border_radius=4)
+        pygame.draw.rect(surf, edge, self.rect, 1, border_radius=px(4))
         clip = surf.get_clip()
-        surf.set_clip(self.rect.inflate(-6, 0))
+        surf.set_clip(self.rect.inflate(-px(6), 0))
         txt = fonts.render(self.value, theme.TEXT, fonts.mono)
-        x = self.rect.x + 6
-        if txt.get_width() > self.rect.w - 14:
-            x = self.rect.right - 8 - txt.get_width()
+        x = self.rect.x + px(6)
+        if txt.get_width() > self.rect.w - px(14):
+            x = self.rect.right - px(8) - txt.get_width()
         surf.blit(txt, (x, self.rect.centery - txt.get_height() // 2))
         if self.focused and (pygame.time.get_ticks() // 500) % 2 == 0:
-            cx = min(self.rect.right - 6, x + txt.get_width() + 1)
-            pygame.draw.line(surf, theme.TEXT, (cx, self.rect.y + 5), (cx, self.rect.bottom - 5))
+            cx = min(self.rect.right - px(6), x + txt.get_width() + 1)
+            pygame.draw.line(surf, theme.TEXT, (cx, self.rect.y + px(5)),
+                             (cx, self.rect.bottom - px(5)), px(1))
         surf.set_clip(clip)
 
 
@@ -197,16 +200,17 @@ class Choice(Widget):
 
     def draw(self, surf, fonts):
         bg = theme.mix(theme.FIELD, theme.ACCENT, 0.2) if self.hover else theme.FIELD
-        pygame.draw.rect(surf, bg, self.rect, border_radius=4)
-        pygame.draw.rect(surf, theme.PANEL_EDGE, self.rect, 1, border_radius=4)
+        pygame.draw.rect(surf, bg, self.rect, border_radius=px(4))
+        pygame.draw.rect(surf, theme.PANEL_EDGE, self.rect, 1, border_radius=px(4))
         clip = surf.get_clip()
         # clip on the right only (for the arrows): a symmetric inset cut the first letter
-        surf.set_clip(pygame.Rect(self.rect.x + 2, self.rect.y, self.rect.w - 26, self.rect.h))
-        fonts.draw(surf, self.value, (self.rect.x + 8, self.rect.centery), theme.TEXT, fonts.ui,
-                   "midleft")
+        surf.set_clip(pygame.Rect(self.rect.x + px(2), self.rect.y, self.rect.w - px(26),
+                                  self.rect.h))
+        fonts.draw(surf, self.value, (self.rect.x + px(8), self.rect.centery), theme.TEXT,
+                   fonts.ui, "midleft")
         surf.set_clip(clip)
-        fonts.draw(surf, "<>", (self.rect.right - 8, self.rect.centery), theme.DIM, fonts.small,
-                   "midright")
+        fonts.draw(surf, "<>", (self.rect.right - px(8), self.rect.centery), theme.DIM,
+                   fonts.small, "midright")
 
 
 class Checkbox(Widget):
@@ -227,14 +231,15 @@ class Checkbox(Widget):
         return False
 
     def draw(self, surf, fonts):
-        box = pygame.Rect(self.rect.x, self.rect.centery - 9, 18, 18)
-        pygame.draw.rect(surf, theme.FIELD, box, border_radius=3)
+        box = pygame.Rect(self.rect.x, self.rect.centery - px(9), px(18), px(18))
+        pygame.draw.rect(surf, theme.FIELD, box, border_radius=px(3))
         edge = theme.ACCENT if self.value else theme.PANEL_EDGE
-        pygame.draw.rect(surf, edge, box, 1, border_radius=3)
+        pygame.draw.rect(surf, edge, box, 1, border_radius=px(3))
         if self.value:
             x, y = box.topleft
-            tick = [(x + 4, box.centery), (x + 8, box.bottom - 4), (box.right - 4, y + 4)]
-            pygame.draw.lines(surf, theme.ACCENT, False, tick, 2)
+            tick = [(x + px(4), box.centery), (x + px(8), box.bottom - px(4)),
+                    (box.right - px(4), y + px(4))]
+            pygame.draw.lines(surf, theme.ACCENT, False, tick, px(2))
 
 
 # --- Form dialog ------------------------------------------------------------------------------
@@ -258,7 +263,7 @@ class FormDialog:
     dialog)`` and ``handle(ev, dialog) -> bool``. It is left out when the
     window is too narrow for it."""
 
-    ROW = 32
+    ROW = 32                       # design px, like ``width`` and the side panel's sizes
     MIN_ROW = 22
 
     def __init__(self, app, title: str, specs: list[FieldSpec], on_ok, ok_text: str = "OK",
@@ -273,7 +278,7 @@ class FormDialog:
         self.width = width
         self.side = side
         self.side_rect = None
-        self.row_h = self.ROW
+        self.row_h = px(self.ROW)
         self.error = ""
         self.info: dict[str, str] = {}
         self.widgets: dict[str, Widget] = {}
@@ -293,7 +298,7 @@ class FormDialog:
         self.buttons = [Button(ok_text, self.submit, accent=True), Button("Cancel", self.close)]
         for text, cb in (extra_buttons or []):
             self.buttons.insert(-1, Button(text, lambda cb=cb: self._extra(cb)))
-        self.rect = pygame.Rect(0, 0, width, 100)
+        self.rect = pygame.Rect(0, 0, px(width), px(100))
         self.layout()
 
     # --- values -----------------------------------------------------------------------
@@ -358,48 +363,50 @@ class FormDialog:
         raw = self.raw()
         rows = [s for s in self.specs if self._visible(s, raw)]
         sw, sh = self.app.screen.get_size()
+        width = px(self.width)
         side_w = 0
         if self.side is not None:
-            side_w = min(self.side.width, sw - self.width - 34)
-            side_w = side_w if side_w >= 260 else 0
-        total_w = self.width + (side_w + 6 if side_w else 0)
-        top = 52 + (22 if self.subtitle else 0)
-        avail = sh - 20 - top - 90
+            side_w = min(px(self.side.width), sw - width - px(34))
+            side_w = side_w if side_w >= px(260) else 0
+        total_w = width + (side_w + px(6) if side_w else 0)
+        top = px(52 + (22 if self.subtitle else 0))
+        avail = sh - px(20) - top - px(90)
         # squeeze the rows (never below MIN_ROW) rather than run off the screen
-        row = max(self.MIN_ROW, min(self.ROW, avail // max(1, len(rows))))
-        body = row * len(rows) + 12
+        row = max(px(self.MIN_ROW), min(px(self.ROW), avail // max(1, len(rows))))
+        body = row * len(rows) + px(12)
         if side_w:
-            body = max(body, min(self.side.min_height, avail + 12))
-        h = min(top + body + 78, sh - 20)
+            body = max(body, min(px(self.side.min_height), avail + px(12)))
+        h = min(top + body + px(78), sh - px(20))
         self.row_h = row
-        self.rect = pygame.Rect((sw - total_w) // 2, max(10, (sh - h) // 2), total_w, h)
-        self.side_rect = (pygame.Rect(self.rect.x + self.width, self.rect.y + top - 6, side_w,
-                                      self.rect.bottom - 56 - (self.rect.y + top - 6))
+        self.rect = pygame.Rect((sw - total_w) // 2, max(px(10), (sh - h) // 2), total_w, h)
+        self.side_rect = (pygame.Rect(self.rect.x + width, self.rect.y + top - px(6), side_w,
+                                      self.rect.bottom - px(56) - (self.rect.y + top - px(6)))
                           if side_w else None)
         y = self.rect.y + top
-        lx = self.rect.x + 18
-        right = self.rect.x + self.width - 18
-        wx = self.rect.x + int(self.width * 0.44)
+        lx = self.rect.x + px(18)
+        right = self.rect.x + width - px(18)
+        wx = self.rect.x + int(width * 0.44)
         ww = right - wx
+        gap = px(6)                                     # between rows
         self._rows = []
         for s in rows:
             if s.kind == "info":
-                self._rows.append((s, pygame.Rect(lx, y, self.width - 36, row - 6)))
+                self._rows.append((s, pygame.Rect(lx, y, width - px(36), row - gap)))
             else:
                 w = self.widgets[s.key]
                 if s.wide:
-                    w.rect = pygame.Rect(lx + 60, y, right - lx - 60, row - 6)
+                    w.rect = pygame.Rect(lx + px(60), y, right - lx - px(60), row - gap)
                 elif s.kind == "bool":
-                    w.rect = pygame.Rect(wx, y, 24, row - 6)
+                    w.rect = pygame.Rect(wx, y, px(24), row - gap)
                 else:
-                    w.rect = pygame.Rect(wx, y, ww, row - 6)
+                    w.rect = pygame.Rect(wx, y, ww, row - gap)
                 self._rows.append((s, w.rect))
             y += row
-        bx = self.rect.right - 18
+        bx = self.rect.right - px(18)
         for b in reversed(self.buttons):
-            bw = max(90, self.app.fonts.ui.size(b.text)[0] + 28)
-            b.rect = pygame.Rect(bx - bw, self.rect.bottom - 46, bw, 32)
-            bx -= bw + 10
+            bw = max(px(90), self.app.fonts.ui.size(b.text)[0] + px(28))
+            b.rect = pygame.Rect(bx - bw, self.rect.bottom - px(46), bw, px(32))
+            bx -= bw + px(10)
         self._visible_keys = {s.key for s in rows}
 
     # --- events -----------------------------------------------------------------------
@@ -470,16 +477,17 @@ class FormDialog:
         shade.fill((0, 0, 0, 110))
         surf.blit(shade, (0, 0))
         theme.panel(surf, self.rect, (14, 20, 36, 245), theme.ACCENT)
-        fonts.draw(surf, self.title, (self.rect.x + 18, self.rect.y + 14), theme.TEXT, fonts.title)
+        fonts.draw(surf, self.title, (self.rect.x + px(18), self.rect.y + px(14)), theme.TEXT,
+                   fonts.title)
         if self.subtitle:
-            fonts.draw(surf, self.subtitle, (self.rect.x + 18, self.rect.y + 42), theme.DIM,
-                       fonts.small)
+            fonts.draw(surf, self.subtitle, (self.rect.x + px(18), self.rect.y + px(42)),
+                       theme.DIM, fonts.small)
         for s, r in self._rows:
             if s.kind == "info":
                 fonts.draw(surf, self.info.get(s.key, ""), (r.x, r.centery), theme.ACCENT,
                            fonts.small, "midleft")
                 continue
-            fonts.draw(surf, s.label, (self.rect.x + 18, r.centery), theme.DIM, fonts.ui,
+            fonts.draw(surf, s.label, (self.rect.x + px(18), r.centery), theme.DIM, fonts.ui,
                        "midleft")
             self.widgets[s.key].draw(surf, fonts)
         if self.side_rect is not None:
@@ -487,5 +495,5 @@ class FormDialog:
         for b in self.buttons:
             b.draw(surf, fonts)
         if self.error:
-            fonts.draw(surf, self.error[:90], (self.rect.x + 18, self.rect.bottom - 30), theme.BAD,
-                       fonts.small, "midleft")
+            fonts.draw(surf, self.error[:90], (self.rect.x + px(18), self.rect.bottom - px(30)),
+                       theme.BAD, fonts.small, "midleft")

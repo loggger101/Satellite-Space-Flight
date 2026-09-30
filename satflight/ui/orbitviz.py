@@ -32,6 +32,7 @@ ARC_RAAN = (120, 200, 255)
 ARC_ARGP = (205, 150, 255)
 R_FILL_IN = R_EARTH * 1.001
 ROUND_E = 0.01          # below this, arcs use the argument of latitude
+LEGEND_TITLE = ("ORBIT GEOMETRY KEY  - click to hide", "ORBIT GEOMETRY KEY  + click to show")
 X_HAT, Y_HAT, Z_HAT = np.eye(3)
 ORIGIN = np.zeros(3)
 
@@ -47,7 +48,7 @@ def _arc(center, u, w, radius, a0, a1, n=48):
     return center + radius * (np.cos(t)[:, None] * u + np.sin(t)[:, None] * w)
 
 
-def _dashed(p0, p1, color, n=24, width=1):
+def _dashed(p0, p1, color, n=24, width=2):
     """A dashed straight line: one Line whose dashes are separated by NaN
     points (the renderer breaks polylines at non-finite points)."""
     t = np.linspace(0.0, 1.0, 2 * n)
@@ -56,13 +57,102 @@ def _dashed(p0, p1, color, n=24, width=1):
     return [Line(pts, color, width, 0.4)]
 
 
-def _angle(lines, markers, world, center, u, w, radius, angle, color, label, label_r):
-    """Add an angle: an arc of ``radius`` from direction ``u`` turning toward ``w``,
-    and ``label`` at its mid-angle, ``label_r`` from ``center``."""
-    mid = angle / 2
-    lines.append(Line(world(_arc(center, u, w, radius, 0.0, angle)), color, 2, 0.4))
-    at = center + label_r * (math.cos(mid) * u + math.sin(mid) * w)
-    markers.append((world(at), color, 0, label, False))
+def _visible_near(cam, pts, k, view=None):
+    """Index of the point of ``pts`` nearest index ``k`` that lies in ``view``
+    (a screen rect; default the whole window), with room for a label, and is
+    not hidden by the Earth (``k`` itself when none is)."""
+    sx, sy, _ = cam.project(pts)
+    x0, y0, x1, y1 = (0, 0, cam.width, cam.height) if view is None else (
+        view.left + 12, view.top + 16, view.right - 12, view.bottom - 16)
+    with np.errstate(invalid="ignore"):
+        seen = (np.isfinite(sx) & np.isfinite(sy) & (sx >= x0) & (sx < x1)
+                & (sy >= y0) & (sy < y1) & ~cam.hidden_by_sphere(pts))
+    idx = np.flatnonzero(seen)
+    return int(idx[np.argmin(np.abs(idx - k))]) if idx.size else k
+
+
+def _angle(lines, markers, fills, world, seen, center, u, w, radius, angle, color, label):
+    """Add an angle measured from direction ``u`` turning toward ``w``: the wedge
+    it spans, shaded (clear of the Earth when centred on it) with its two edges,
+    an arc with an arrowhead pointing the way it is measured, and ``label`` tied
+    to the arc at the visible point nearest its middle (``seen(pts, k)`` finds it)."""
+    t = np.linspace(0.0, angle, max(8, int(48 * abs(angle) / math.pi) + 3))
+    dirs = np.cos(t)[:, None] * u + np.sin(t)[:, None] * w
+    arc = center + radius * dirs
+    at_centre = not center.any()
+    if at_centre:           # the part inside the Earth is left out, like the orbital plane
+        inner = R_FILL_IN * dirs[::-1]
+        edges = (R_FILL_IN * dirs[0], R_FILL_IN * dirs[-1])
+    else:
+        inner = center[None, :]
+        edges = (center, center)
+    fills.append((world(np.concatenate([arc, inner])), (*color[:3], 38)))
+    edge_col = theme.dim(color, 0.8)
+    lines.append(Line(world(np.linspace(edges[0], arc[0], 12)), edge_col, 1, 0.4))
+    lines.append(Line(world(np.linspace(edges[1], arc[-1], 12)), edge_col, 1, 0.4))
+    lines.append(Line(world(arc), color, 2, 0.4))
+    # arrowhead at the end of the arc, in the angle's plane
+    a = float(t[-1])
+    tangent = math.copysign(1.0, angle) * (-math.sin(a) * u + math.cos(a) * w)
+    outward = math.cos(a) * u + math.sin(a) * w
+    head = min(0.14 * radius, 0.6 * abs(angle) * radius)
+    tips = np.stack([arc[-1] - head * tangent + 0.45 * head * outward, arc[-1],
+                     arc[-1] - head * tangent - 0.45 * head * outward])
+    lines.append(Line(world(tips), color, 2, 0.4))
+    k = seen(world(arc), len(arc) // 2)
+    markers.append((world(arc[k]), color, 0, label, False))
+
+
+def legend_rect(fonts, rows, bounds: pygame.Rect, shown: bool = True):
+    """Where the key to the overlay goes: the top-left corner of ``bounds``
+    (None if it does not fit); only its title bar when not ``shown``."""
+    if not rows:
+        return None
+    title_w = fonts.small.size(LEGEND_TITLE[0])[0] + 20
+    if not shown:
+        rect = pygame.Rect(bounds.x + 8, bounds.y + 8, title_w, 24)
+    else:
+        name_w = max(fonts.small.size(r[2])[0] for r in rows)
+        desc_w = max(fonts.small.size(r[3])[0] for r in rows)
+        w = max(34 + name_w + 12 + desc_w + 10, title_w)
+        rect = pygame.Rect(bounds.x + 8, bounds.y + 8, w, 28 + 17 * len(rows))
+    return rect if bounds.contains(rect) else None
+
+
+def draw_legend(surf, fonts, rows, rect: pygame.Rect, shown: bool = True):
+    """The key: a sample of each element of the overlay, its name and what it
+    spans or points at (just the title bar when not ``shown``)."""
+    theme.panel(surf, rect, (10, 16, 30, 228), theme.PANEL_EDGE, 6)
+    fonts.draw(surf, LEGEND_TITLE[0 if shown else 1], (rect.x + 10, rect.y + 5), theme.ACCENT,
+               fonts.small)
+    if not shown:
+        return
+    name_w = max(fonts.small.size(r[2])[0] for r in rows)
+    y = rect.y + 26
+    for col, kind, name, desc in rows:
+        x0, mid = rect.x + 10, y + 8
+        if kind == "fill":
+            sw = pygame.Rect(x0, y + 3, 18, 11)
+            theme.panel(surf, sw, (*col[:3], 90), col, 2)
+        elif kind == "dash":
+            for dx in (0, 7, 14):
+                pygame.draw.line(surf, col, (x0 + dx, mid), (x0 + dx + 4, mid), 2)
+        elif kind == "arrow":
+            pygame.draw.line(surf, col, (x0, mid), (x0 + 17, mid), 2)
+            pygame.draw.lines(surf, col, False, [(x0 + 12, mid - 4), (x0 + 17, mid),
+                                                 (x0 + 12, mid + 4)], 2)
+        else:                                   # an angle: a shaded wedge and its arc
+            c, r = (x0, y + 15), 18
+            t = np.linspace(0.0, 0.8, 8)
+            pts = [(c[0] + r * math.cos(a), c[1] - r * math.sin(a)) for a in t]
+            theme_poly = pygame.Surface(rect.size, pygame.SRCALPHA)
+            pygame.draw.polygon(theme_poly, (*col[:3], 90),
+                                [(px - rect.x, py - rect.y) for px, py in [c] + pts])
+            surf.blit(theme_poly, rect.topleft)
+            pygame.draw.lines(surf, col, False, pts, 2)
+        fonts.draw(surf, name, (x0 + 24, y), theme.mix(col, (255, 255, 255), 0.35), fonts.small)
+        fonts.draw(surf, desc, (x0 + 24 + name_w + 12, y), theme.DIM, fonts.small)
+        y += 17
 
 
 def _arrow(p0, p1, color, side, width=2):
@@ -136,11 +226,12 @@ def draw_fill(surf, cam, poly_world, rgba, part: str):
     surf.blit(layer, (x0, y0))
 
 
-def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
-    """Lines, label markers and fills (polygon_world, rgba) for one orbit."""
-    lines, markers, fills = [], [], []
+def build(info: OrbitInfo, r, v, color, W, cam, mode: str, view=None):
+    """Lines, label markers, fills (polygon_world, rgba) and, in ``full`` mode,
+    the legend's rows (colour, sample kind, name, what it spans) for one orbit."""
+    lines, markers, fills, legend = [], [], [], []
     if mode == "off":
-        return lines, markers, fills
+        return lines, markers, fills, legend
     el = info.el
     P, Q = perifocal_axes(el.i, el.raan, el.argp)
     Hn = np.cross(P, Q)
@@ -150,6 +241,9 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
     def world(x):
         return np.asarray(x) @ W.T
 
+    def seen(pts, k):           # where along ``pts`` a label can go
+        return _visible_near(cam, pts, k, view)
+
     # orbital plane
     if info.closed:
         nu = np.linspace(0.0, 2 * np.pi, 181)
@@ -157,7 +251,8 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
         rcap = max(3.0e5, 1.5 * info.radius)
         lim = min(math.acos(np.clip((p / rcap - 1.0) / e, -1, 1)), math.acos(-1.0 / e) - 1e-3)
         nu = np.linspace(-lim, lim, 181)
-    fills.append((world(sector_polygon(P, Q, p, e, nu)), (*color[:3], 26)))
+    fills.append((world(sector_polygon(P, Q, p, e, nu)), (*color[:3], 40)))
+    legend.append((color, "fill", "orbital plane", "the satellite's plane"))
 
     def at(nu_):
         den = 1.0 + e * math.cos(nu_)
@@ -174,9 +269,12 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
         ap = at(math.pi) if info.closed else None
         lines += _dashed(world(pe), world(ap if ap is not None else ORIGIN),
                          theme.dim(APSIS, 0.75))
-        markers.append((world(pe), APSIS, -2, f"Pe {num(info.rp_alt, 'km', 0)}", False))
+        markers.append((world(pe), APSIS, -2, f"perigee {num(info.rp_alt, 'km', 0)}", False))
         if ap is not None:
-            markers.append((world(ap), APSIS, -2, f"Ap {num(info.ra_alt, 'km', 0)}", False))
+            markers.append((world(ap), APSIS, -2, f"apogee {num(info.ra_alt, 'km', 0)}",
+                            False))
+        legend.append((APSIS, "dash", "line of apsides",
+                       "perigee \N{LEFT RIGHT ARROW} apogee"))
 
     # line of nodes
     an = dn = None
@@ -188,62 +286,83 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
         d_w = world(dn) if dn is not None else ORIGIN
         lines += _dashed(d_w, a_w, NODE, 30)
         if an is not None:
-            markers.append((a_w, NODE, -2, "AN", False))
+            markers.append((a_w, NODE, -2, "AN ascending node", False))
         if dn is not None:
-            markers.append((d_w, NODE, -2, "DN", False))
+            markers.append((d_w, NODE, -2, "DN descending node", False))
+        legend.append((NODE, "dash", "line of nodes", "AN north-bound, DN south"))
 
     if mode != "full":
-        return lines, markers, fills
+        return lines, markers, fills, []
 
     # equatorial plane out past the node crossings, and the reference directions
     node_r = [np.linalg.norm(x) for x in (an, dn) if x is not None]
     r_eq = min(1.12 * max(node_r + [info.radius, 1.6 * R_EARTH]), 3e5)
     if not info.equatorial:
         a = np.linspace(0, 2 * np.pi, 145)
-        fills.append((world(sector_polygon(X_HAT, Y_HAT, r_eq, 0.0, a)), (*EQUATOR, 14)))
-        lines.append(Line(world(_arc(ORIGIN, X_HAT, Y_HAT, r_eq, 0, 2 * np.pi, 96)),
-                          theme.dim(EQUATOR, 0.8), 1, 0.4))
+        fills.append((world(sector_polygon(X_HAT, Y_HAT, r_eq, 0.0, a)), (*EQUATOR, 24)))
+        ring = world(_arc(ORIGIN, X_HAT, Y_HAT, r_eq, 0, 2 * np.pi, 96))
+        lines.append(Line(ring, theme.dim(EQUATOR, 0.8), 1, 0.4))
+        markers.append((ring[seen(ring, 0)], EQUATOR, 0, "equatorial plane", False))
+        legend.insert(1, (EQUATOR, "fill", "equatorial plane", "the equator extended"))
 
     base = max(R_EARTH, 0.35 * el.rp)
     rn, rw, rv = 1.80 * base, 1.55 * base, 1.30 * base     # arc radii: RAAN, argp, u / nu
     bright = theme.mix(color, (255, 255, 255), 0.35)
-    ang = (lines, markers, world)
+    ang = (lines, markers, fills, world, seen)
     # RAAN: in the equator from the vernal equinox (+X) to the ascending node
     if not info.equatorial:
         lines += _dashed(ORIGIN, world(X_HAT * rn * 1.12), ARC_RAAN, 10)
-        markers.append((world(X_HAT * rn * 1.16), ARC_RAAN, 0, "\N{GREEK SMALL LETTER GAMMA}",
-                        False))
+        markers.append((world(X_HAT * rn * 1.12), ARC_RAAN, 0,
+                        "\N{GREEK SMALL LETTER GAMMA} vernal equinox", False))
         if el.raan > 1e-3:
             _angle(*ang, ORIGIN, X_HAT, Y_HAT, rn, el.raan, ARC_RAAN,
-                   f"\N{GREEK CAPITAL LETTER OMEGA} {deg(el.raan, 1)}", rn * 1.08)
+                   f"\N{GREEK CAPITAL LETTER OMEGA} RAAN {deg(el.raan, 1)}")
+            legend.append((ARC_RAAN, "angle", "\N{GREEK CAPITAL LETTER OMEGA} RAAN",
+                           "\N{GREEK SMALL LETTER GAMMA} \N{RIGHTWARDS ARROW} AN, in the equator"))
     # near-circular orbits have an ill-defined perigee: show the argument of
     # latitude (node -> satellite) instead of the perigee and true anomaly
     round_ = el.e < ROUND_E
     if round_ and not info.equatorial and el.u > 1e-3:
-        _angle(*ang, ORIGIN, n_hat, v_hat, rv, el.u, bright, f"u {deg(el.u, 1)}", rv * 1.1)
+        _angle(*ang, ORIGIN, n_hat, v_hat, rv, el.u, bright,
+               f"u arg. of latitude {deg(el.u, 1)}")
+        legend.append((bright, "angle", "u arg. of latitude",
+                       "AN \N{RIGHTWARDS ARROW} satellite"))
     # argument of perigee: in the orbit plane from the node to the perigee
     if not info.equatorial and not round_ and el.argp > 1e-3:
         _angle(*ang, ORIGIN, n_hat, v_hat, rw, el.argp, ARC_ARGP,
-               f"\N{GREEK SMALL LETTER OMEGA} {deg(el.argp, 1)}", rw * 1.08)
+               f"\N{GREEK SMALL LETTER OMEGA} arg. of perigee {deg(el.argp, 1)}")
+        legend.append((ARC_ARGP, "angle", "\N{GREEK SMALL LETTER OMEGA} arg. of perigee",
+                       "AN \N{RIGHTWARDS ARROW} perigee"))
     # true anomaly: from the perigee (or node, if circular) to the satellite
     nu0 = float(el.nu) if info.closed else (float(el.nu) + np.pi) % (2 * np.pi) - np.pi
     if abs(nu0) > 1e-3 and not (round_ and not info.equatorial):
         _angle(*ang, ORIGIN, P, Q, rv, nu0, bright,
-               f"\N{GREEK SMALL LETTER NU} {deg(el.nu, 1)}", rv * 1.1)
-    # inclination at the ascending node, between the equator and the track
+               f"\N{GREEK SMALL LETTER NU} true anomaly {deg(el.nu, 1)}")
+        legend.append((bright, "angle", "\N{GREEK SMALL LETTER NU} true anomaly",
+                       "perigee \N{RIGHTWARDS ARROW} satellite"))
+    # inclination at the ascending node, from the equator (east) to the track
     if an is not None:
         east = _unit(np.cross(Z_HAT, n_hat))
         rho = max(0.45 * R_EARTH, 0.12 * np.linalg.norm(an))
         lines.append(Line(world(np.stack([an - 0.4 * rho * east, an + 1.5 * rho * east])),
                           EQUATOR, 1, 0.4))
-        _angle(*ang, an, east, Z_HAT, rho, el.i, ARC_I, f"i {deg(el.i, 2)}", 1.15 * rho)
+        lines += _dashed(world(an), world(an + 1.5 * rho * v_hat), bright, 6)
+        _angle(*ang, an, east, Z_HAT, rho, el.i, ARC_I, f"i inclination {deg(el.i, 2)}")
+        legend.append((ARC_I, "angle", "i inclination",
+                       "equator \N{RIGHTWARDS ARROW} track, at AN"))
     # angular momentum, radius and velocity vectors
     h_len = 2.1 * base
     lines += _arrow(ORIGIN, world(Hn * h_len), H_VEC, side)
-    markers.append((world(Hn * h_len * 1.06), H_VEC, 0, "h", False))
+    shaft = world(np.linspace(ORIGIN, Hn * h_len, 16))
+    markers.append((shaft[seen(shaft, 15)], H_VEC, 0, "h orbit normal", False))
+    legend.append((H_VEC, "arrow", "h ang. momentum", "orbit normal"))
     lines.append(Line(np.linspace(ORIGIN, world(r), 24), theme.dim(color, 0.8), 1, 0.3))
-    lines += _arrow(world(r), world(r + _unit(v) * 0.5 * base), (255, 255, 255), side)
-    return lines, markers, fills
+    tip = r + _unit(v) * 0.5 * base
+    lines += _arrow(world(r), world(tip), (255, 255, 255), side)
+    shaft = world(np.linspace(r, tip, 8))
+    markers.append((shaft[seen(shaft, 7)], (255, 255, 255), 0, "velocity", False))
+    legend.append(((255, 255, 255), "arrow", "velocity", "direction of motion"))
+    return lines, markers, fills, legend
 
 
 def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
@@ -281,6 +400,6 @@ def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
     fonts.draw(surf, sat.name, (rect.x + 22, rect.y + 4), theme.TEXT, fonts.bold)
     yy = rect.y + 26
     for r_ in rows:
-        fonts.draw(surf, r_, (rect.x + 10, yy), theme.DIM, fonts.small)
+        fonts.draw(surf, r_, (rect.x + 10, yy), theme.TEXT, fonts.small)
         yy += 16
     return rect

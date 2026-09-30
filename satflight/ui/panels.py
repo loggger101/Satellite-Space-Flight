@@ -25,6 +25,7 @@ RIGHT_W = 340
 TOP_H = 38
 LOG_H = 132
 GAP = 8          # px between panels and window edges
+PAGE_KEYS = (pygame.K_PAGEUP, pygame.K_PAGEDOWN, pygame.K_HOME, pygame.K_END)
 
 
 # --- Top bar -------------------------------------------------------------------------------
@@ -230,6 +231,7 @@ class InfoPanel:
         self.scroll = [0, 0]           # per tab, pixels
         self.content_h = 0
         self.body = pygame.Rect(0, 0, 0, 0)
+        self._drag = None              # grab offset while the scrollbar thumb is dragged
 
     def layout(self, w, h):
         """Place the panel, its tab buttons and the scrollable body."""
@@ -246,13 +248,53 @@ class InfoPanel:
         """Switch to the next tab (key Q)."""
         self.tab = (self.tab + 1) % len(self.TABS)
 
+    def scrollbar(self):
+        """The scrollbar's track and thumb rects; the thumb is None when the tab fits."""
+        body = self.body
+        track = pygame.Rect(self.rect.right - 9, body.y, 6, body.h)
+        if self.content_h <= body.h:
+            return track, None
+        thumb_h = max(24, int(body.h * body.h / self.content_h))
+        f = self.scroll[self.tab] / (self.content_h - body.h)
+        return track, pygame.Rect(track.x, body.y + int((body.h - thumb_h) * min(1.0, f)),
+                                  track.w, thumb_h)
+
+    def _thumb_to(self, y):
+        """Scroll so that the thumb's top is at screen ``y``."""
+        track, thumb = self.scrollbar()
+        if thumb is None:
+            return
+        f = (y - track.y) / max(1, track.h - thumb.h)
+        self.scroll[self.tab] = int(round(min(1.0, max(0.0, f)) * (self.content_h - track.h)))
+
     def handle(self, ev):
-        """Scroll the current tab, or switch tabs on a click; swallows clicks on the panel."""
+        """Scroll the current tab (wheel, scrollbar, PgUp/PgDn/Home/End), or switch
+        tabs on a click; swallows clicks on the panel."""
         if ev.type == pygame.MOUSEWHEEL and self.rect.collidepoint(pygame.mouse.get_pos()):
             self.scroll[self.tab] = max(0, self.scroll[self.tab] - ev.y * 48)
             return True
+        if ev.type == pygame.KEYDOWN and ev.key in PAGE_KEYS and not ev.mod & pygame.KMOD_CTRL:
+            page, s = max(48, self.body.h - 48), self.scroll[self.tab]
+            s = {pygame.K_PAGEUP: s - page, pygame.K_PAGEDOWN: s + page, pygame.K_HOME: 0,
+                 pygame.K_END: self.content_h}[ev.key]
+            self.scroll[self.tab] = max(0, s)       # draw() clamps the far end
+            return True
+        if self._drag is not None:
+            if ev.type == pygame.MOUSEMOTION:
+                self._thumb_to(ev.pos[1] - self._drag)
+                return True
+            if ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+                self._drag = None
+                return True
         if ev.type != pygame.MOUSEBUTTONDOWN or not self.rect.collidepoint(ev.pos):
             return False
+        track, thumb = self.scrollbar()
+        if ev.button == 1 and thumb is not None and track.inflate(10, 0).collidepoint(ev.pos):
+            if not thumb.collidepoint(ev.pos):      # a click on the track jumps there
+                self._thumb_to(ev.pos[1] - thumb.h // 2)
+                track, thumb = self.scrollbar()
+            self._drag = ev.pos[1] - thumb.y
+            return True
         for k, r in enumerate(self.tab_rects):
             if r.collidepoint(ev.pos) and ev.button == 1:
                 self.tab = k
@@ -381,8 +423,11 @@ class InfoPanel:
                 y = draw_section(surf, fonts, x, y, RIGHT_W - 24, title, rows)
         self.content_h = y - y0
         surf.set_clip(clip)
-        if self.content_h > body.h:
-            theme.scrollbar(surf, self.rect.right - 5, body, top, body.h, self.content_h, 24)
+        track, thumb = self.scrollbar()
+        if thumb is not None:
+            pygame.draw.rect(surf, theme.FIELD, track, border_radius=3)
+            pygame.draw.rect(surf, theme.ACCENT if self._drag is not None else theme.SCROLL_THUMB,
+                             thumb, border_radius=3)
         self._closest(surf, x, self.rect.bottom - 22)
 
     def _closest(self, surf, x, y):
@@ -449,7 +494,7 @@ HELP = [
     ("T  L  V  X", "trails, labels, velocity vectors, axes"),
     ("C  R  K", "coverage footprint, GEO ring, coastlines"),
     ("D", "orbit geometry: full / basic / off"),
-    ("Q", "right panel: orbit / telemetry tab"),
+    ("Q  PgUp PgDn", "right panel: switch tab / scroll it"),
     ("M  G", "ground-track map, telemetry plot"),
     ("A  W  B  N", "add satellite, Walker, manoeuvre, station"),
     ("U", "launch a rocket from anywhere on Earth"),

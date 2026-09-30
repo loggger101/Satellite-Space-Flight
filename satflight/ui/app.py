@@ -44,6 +44,7 @@ class Options:
     frame: str = "ECI"          # ECI | ECEF
     orbits: str = "auto"        # auto | all | selected | none
     geometry: str = "full"      # selected orbit's geometry overlay: full | basic | off
+    legend: bool = True         # the overlay's key open (clicking it folds it)
     trails: bool = True
     labels: bool = True
     axes: bool = True
@@ -286,6 +287,11 @@ class App:
             return
         if self.dialogs:
             self.dialogs[-1].handle(ev)
+            return
+        key = self.renderer.legend_rect
+        if (key is not None and ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
+                and key.collidepoint(ev.pos)):
+            self.opts.legend = not self.opts.legend
             return
         if self.opts.panels:
             if self.topbar.handle(ev):

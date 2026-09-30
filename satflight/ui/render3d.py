@@ -50,6 +50,8 @@ class SceneRenderer:
         self._sat_lit = np.zeros(0)
         self.label_rects: list[pygame.Rect] = []    # where this frame's 3-D labels went
         self._sat_start = 0         # index of the first satellite marker
+        self._overlay = range(0)    # markers of the selected orbit's geometry overlay
+        self.legend_rect = None     # where the overlay's key went (clicking it folds it)
         self.sat_screen = None      # (sx, sy, visible) of last frame, for picking
 
     def _build_sky(self):
@@ -179,15 +181,22 @@ class SceneRenderer:
         if opts.stations and sim.stations:
             self._stations(sim, W, world_to_ecef, sel, lines, markers)
         from . import orbitviz  # imports Line from this module
-        fills = []
+        fills, legend = [], []
+        self._overlay = range(0)
         info = app.orbit_info() if sel >= 0 else None
         if info is not None:
             lines.extend(self._selected_extras(sim, sel, W, world_to_ecef, opts, markers))
-            ol, om, fills = orbitviz.build(info, sim.y[sel, :3], sim.y[sel, 3:],
-                                           sim.sats[sel].color, W, cam, opts.geometry)
+            ol, om, fills, legend = orbitviz.build(info, sim.y[sel, :3], sim.y[sel, 3:],
+                                                   sim.sats[sel].color, W, cam, opts.geometry,
+                                                   app.view_rect())
             lines.extend(ol)
+            self._overlay = range(len(markers), len(markers) + len(om))
             markers.extend(om)
         self._satellites(sim, opts, W, sun, sel, lines, markers)
+        key = self.legend_rect = orbitviz.legend_rect(app.fonts, legend, app.view_rect(),
+                                                      opts.legend)
+        if key is not None:
+            self.label_rects.append(key)        # labels keep clear of the key
 
         # hidden pass, the Earth (orbit-plane fills split around it), visible pass
         cache: dict = {}
@@ -208,6 +217,8 @@ class SceneRenderer:
         self.sat_screen = (sx[-n:], sy[-n:], vis[-n:]) if n else None
         if info is not None and opts.geometry == "full" and self.sat_screen is not None:
             self._callout(surf, app, info, sel)
+        if key is not None:
+            orbitviz.draw_legend(surf, app.fonts, legend, key, opts.legend)
 
     # --- scene content ------------------------------------------------------------------------
     def _guides(self, opts, world_to_ecef, lines, markers):
@@ -351,16 +362,16 @@ class SceneRenderer:
         plain = opts.geometry == "off"
         if plain and el.e > 1e-4:
             pe, _ = coe2rv(el.a, el.e, el.i, el.raan, el.argp, 0.0)
-            markers.append((W @ pe, (255, 255, 255), -2, "Pe", False))
+            markers.append((W @ pe, (255, 255, 255), -2, "perigee", False))
             if el.e < 1:
                 ap, _ = coe2rv(el.a, el.e, el.i, el.raan, el.argp, math.pi)
-                markers.append((W @ ap, (255, 255, 255), -2, "Ap", False))
+                markers.append((W @ ap, (255, 255, 255), -2, "apogee", False))
         if plain and math.sin(el.i) > 1e-3:
             nu_an = (-el.argp) % (2 * math.pi)
             rr = el.p / (1 + el.e * math.cos(nu_an))
             if rr > 0 and (el.e < 1 or math.cos(nu_an) > -1 / el.e):
                 an, _ = coe2rv(el.a, el.e, el.i, el.raan, el.argp, nu_an)
-                markers.append((W @ an, (255, 220, 120), -2, "AN", False))
+                markers.append((W @ an, (255, 220, 120), -2, "ascending node", False))
         # coverage footprint on the ground
         if opts.footprint:
             theta = sim.gmst()
@@ -420,6 +431,10 @@ class SceneRenderer:
             if abs(sx[k]) > CLIP or abs(sy[k]) > CLIP:
                 continue
             if behind == bool(vis[k]):
+                # the overlay's point labels (apsides, nodes) still show, dimmed, behind the Earth
+                if not behind and label and rad < 0 and k in self._overlay:
+                    labels.append((k, int(sx[k]), int(sy[k]), theme.dim(col, 0.6), label, False,
+                                   True, rad))
                 continue
             x, y = int(sx[k]), int(sy[k])
             if rad > 0 and glow and k >= start and not behind:
@@ -434,7 +449,8 @@ class SceneRenderer:
             elif rad < 0:
                 pygame.draw.rect(surf, col, (x + rad, y + rad, -2 * rad, -2 * rad), 1)
             if label and not behind:
-                labels.append((k, x, y, col, label, selected))
+                tie = rad if k in self._overlay else None
+                labels.append((k, x, y, col, label, selected, False, tie))
         if labels:
             self._draw_labels(surf, app.fonts, labels, start, app.view_rect())
 
@@ -443,14 +459,19 @@ class SceneRenderer:
         panels) and overlapping no label placed before it, trying right, left,
         below-right and below-left; a label with no free spot is left out. The
         selected satellite goes first, then the other satellites, the selected
-        orbit's annotations, stations and axes."""
+        orbit's annotations, stations and axes; labels of points hidden by the
+        Earth come last. The orbit overlay's labels (``tie`` is their marker's
+        radius) may also sit further off, joined to their point by a leader line."""
         placed = self.label_rects
-        order = sorted(labels, key=lambda m: (not m[5], m[0] < start,
+        order = sorted(labels, key=lambda m: (m[6], not m[5], m[0] < start,
                                               m[0] if m[0] >= start else -m[0]))
-        for _, x, y, col, label, selected in order:
+        for _, x, y, col, label, selected, _, tie in order:
             txt = fonts.render(label, theme.mix(col, (255, 255, 255), 0.35), fonts.small)
             w, h = txt.get_size()
             spots = [(x + 8, y - 8), (x - 8 - w, y - 8), (x + 8, y + 4), (x - 8 - w, y + 4)]
+            if tie is not None:
+                spots += [(x + 16, y - 26), (x - 16 - w, y - 26), (x + 16, y + 14),
+                          (x - 16 - w, y + 14), (x - w // 2, y - 34), (x - w // 2, y + 22)]
             rect = next((r for r in (pygame.Rect(sx_, sy_, w, h) for sx_, sy_ in spots)
                          if bounds.contains(r) and r.inflate(4, 0).collidelist(placed) < 0),
                         None)
@@ -459,9 +480,15 @@ class SceneRenderer:
                     continue
                 rect = pygame.Rect(spots[0], (w, h))    # the selected name always shows
             placed.append(rect)
-            back = pygame.Surface((w + 6, h), pygame.SRCALPHA)
-            back.fill((0, 0, 0, 120))                   # keeps text legible over the Earth
-            surf.blit(back, (rect.x - 3, rect.y))
+            if tie is not None:
+                # a leader from the labelled point to the label's nearest edge
+                end = (min(max(x, rect.left - 3), rect.right + 3),
+                       min(max(y, rect.top), rect.bottom))
+                pygame.draw.aaline(surf, theme.dim(col, 0.9), (x, y), end)
+                if tie == 0:
+                    pygame.draw.circle(surf, col, (x, y), 3)
+            # a dark backing keeps the text legible over the Earth and bright orbits
+            theme.panel(surf, rect.inflate(6, 0), (4, 7, 16, 190), None, 3)
             surf.blit(txt, rect)
 
     def _stars(self, surf, cam):

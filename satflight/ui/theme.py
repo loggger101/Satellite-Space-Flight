@@ -17,6 +17,7 @@ WARN = (255, 196, 90)
 BAD = (255, 110, 110)
 FIELD = (22, 30, 50)
 FIELD_FOCUS = (32, 46, 78)
+SCROLL_THUMB = (92, 114, 152)
 SUN = (255, 222, 120)
 AXIS_X = (230, 90, 90)
 AXIS_Y = (110, 220, 120)
@@ -92,7 +93,8 @@ def scrollbar(surface: pygame.Surface, x: int, area: pygame.Rect, first: float, 
     shown, starting at ``first``."""
     bar_h = max(min_len, int(area.h * visible / total))
     y = area.y + int((area.h - bar_h) * first / max(1, total - visible))
-    pygame.draw.rect(surface, PANEL_EDGE, (x, y, 3, bar_h), border_radius=2)
+    pygame.draw.rect(surface, FIELD, (x, area.y, 3, area.h), border_radius=2)
+    pygame.draw.rect(surface, SCROLL_THUMB, (x, y, 3, bar_h), border_radius=2)
 
 
 def dim(color, k: float):

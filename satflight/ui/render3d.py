@@ -23,7 +23,7 @@ from ..ephemeris import sun_position
 from ..frames import eci_to_ecef, rot3
 from ..simulation import ACTIVE
 from ..timeutil import format_duration
-from . import theme
+from . import theme, tips
 from .earth import EarthRenderer
 from .theme import px
 
@@ -54,6 +54,21 @@ class SceneRenderer:
         self._overlay = range(0)    # markers of the selected orbit's geometry overlay
         self.legend_rect = None     # where the overlay's key went (clicking it folds it)
         self.sat_screen = None      # (sx, sy, visible) of last frame, for picking
+        self.world_to_ecef = np.eye(3)
+
+    def ground_at(self, cam, pos):
+        """(latitude, longitude) in degrees of the drawn globe under screen point
+        ``pos``, or None off the Earth. The globe is a sphere of equatorial radius,
+        so these are geocentric."""
+        d = cam.ray_dirs(np.array([[float(pos[0])]]), np.array([[float(pos[1])]]))[0, 0]
+        c = cam.position
+        b = float(d @ c)
+        disc = b * b - float(c @ c) + R_EARTH * R_EARTH
+        if disc < 0 or -b - math.sqrt(disc) <= 0:
+            return None
+        p = self.world_to_ecef @ (c + (-b - math.sqrt(disc)) * d)
+        return (math.degrees(math.asin(max(-1.0, min(1.0, p[2] / R_EARTH)))),
+                math.degrees(math.atan2(p[1], p[0])))
 
     def _build_sky(self):
         """Random field stars with stellar colours plus a Milky Way band laid
@@ -163,7 +178,7 @@ class SceneRenderer:
         """
         sim, cam, opts = app.sim, app.camera, app.opts
         W = self.world_rotation(sim, opts.frame)
-        world_to_ecef = rot3(sim.gmst()) @ W.T
+        world_to_ecef = self.world_to_ecef = rot3(sim.gmst()) @ W.T
         sun = sun_position(sim.jd())
         sun_dir = W @ (sun / np.linalg.norm(sun))
         sel = app.selected if 0 <= app.selected < sim.n else -1
@@ -520,7 +535,11 @@ class SceneRenderer:
         if -m < x < cam.width + m and -m < y < cam.height + m:
             spr = self._sprite("sun", (255, 236, 190), r)
             surf.blit(spr, (x - r, y - r), special_flags=pygame.BLEND_ADD)
-            app.fonts.draw(surf, "Sun", (x + px(18), y + px(12)), theme.SUN, app.fonts.small)
+            label = app.fonts.draw(surf, "Sun", (x + px(18), y + px(12)), theme.SUN,
+                                   app.fonts.small)
+            tips.add(label.union(pygame.Rect(x - px(12), y - px(12), px(24), px(24))),
+                     "The Sun's direction. It lights the Earth and casts the shadow that "
+                     "satellites pass through (eclipses).")
 
 
 def _occluded(cam, pts):

@@ -13,9 +13,9 @@ from ..eclipse import shadow_state
 from ..elements import rv2coe
 from ..ephemeris import sun_position
 from ..frames import OMEGA_VEC, ecef_to_geodetic, eci_to_ecef
-from ..simulation import ACTIVE
+from ..simulation import ACTIVE, DECAYED, ESCAPED, IMPACTED, REENTRY_ALT, SCRUBBED
 from ..timeutil import format_duration, format_period
-from . import theme
+from . import glossary, theme, tips
 from .launchui import draw_ascent_tab, launch_rows
 from .orbitpanel import draw_orbit_tab, draw_section, num
 from .theme import px
@@ -28,6 +28,17 @@ TOP_H = 38
 LOG_H = 132
 GAP = 8          # between panels and window edges
 PAGE_KEYS = (pygame.K_PAGEUP, pygame.K_PAGEDOWN, pygame.K_HOME, pygame.K_END)
+TAB_TIPS = ("Diagrams and properties of the orbit (the ascent while a rocket climbs).",
+            "Live readings: position, orbital elements, forces, spacecraft and ground "
+            "contact.")
+STATUS_TIPS = {
+    ACTIVE: "Active: the satellite is flying and being simulated.",
+    DECAYED: f"Re-entered: it sank below {REENTRY_ALT:.0f} km and burned up in the "
+             "atmosphere.",
+    IMPACTED: "Impacted: its path met the ground.",
+    ESCAPED: "Escaped: it left the Earth's sphere of influence.",
+    SCRUBBED: "Scrubbed: the launch never left the pad.",
+}
 
 
 # --- Top bar -------------------------------------------------------------------------------
@@ -102,27 +113,47 @@ class TopBar:
         self.buttons[4].text = app.opts.frame
         top_h, room = px(TOP_H), self.left_of_buttons - px(8)
         theme.panel(surf, pygame.Rect(0, 0, w, top_h), (8, 12, 22, 235), None, 0)
+        tips.block(pygame.Rect(0, 0, w, top_h))
         pygame.draw.line(surf, theme.PANEL_EDGE, (0, top_h), (w, top_h))
-        x = fonts.draw(surf, "SATELLITE SPACE FLIGHT", (px(12), top_h // 2), theme.ACCENT,
-                       fonts.bold, "midleft").right + px(18)
+        title = fonts.draw(surf, "SATELLITE SPACE FLIGHT", (px(12), top_h // 2), theme.ACCENT,
+                           fonts.bold, "midleft")
+        tips.add(title, "An Earth-orbit simulator. Rest the mouse on any part of the window "
+                        "to see what it is; H lists every control.", "H")
+        x = title.right + px(18)
         dt = sim.datetime()
         stamp = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         if x + fonts.mono.size(stamp)[0] > room:
             stamp = dt.strftime("%H:%M:%S UTC")         # narrow window: the time matters most
+        cowell = sim.propagator == "cowell"
         parts = [
-            (stamp, theme.TEXT),
-            (f"T+{format_duration(sim.t)}", theme.DIM),
-            ("PAUSED", theme.WARN) if app.paused else (f"x{app.warp:g}", theme.GOOD),
+            (stamp, theme.TEXT, f"Simulation date and time (UTC): "
+                                f"{dt.strftime('%A %d %B %Y, %H:%M:%S')}.", ""),
+            (f"T+{format_duration(sim.t)}", theme.DIM,
+             "Time simulated since the scenario started; Ctrl+R starts it again.", "Ctrl+R"),
+            ("PAUSED", theme.WARN, "The simulation is paused.", "Space") if app.paused else
+            (f"x{app.warp:g}", theme.GOOD, f"Time warp: {app.warp:g} simulated seconds pass "
+                                           "every real second.", ", ."),
             (sim.propagator + (f"/{sim.integrator.method} h={sim.integrator.stats.last_h:.1f}s"
-                               if sim.propagator == "cowell" else ""), theme.DIM),
-            (sim.forces.label(), theme.DIM),
-            (f"{int(sim.active.sum())}/{sim.n} sats", theme.DIM),
-            (f"{app.clock.get_fps():.0f} fps", theme.FAINT),
+                               if cowell else ""), theme.DIM,
+             "Propagator" + (f": Cowell integrates every force numerically with "
+                             f"{sim.integrator.method}; h is its last time step." if cowell
+                             else f" {sim.propagator}: an analytic orbit formula, no "
+                                  "numerical integration.") + " Change it in Physics.", "P"),
+            (sim.forces.label(), theme.DIM, "Forces acting: 2B is the Earth's central gravity, "
+                                            "J2-J4 its uneven shape, DRAG the upper atmosphere.",
+             "P"),
+            (f"{int(sim.active.sum())}/{sim.n} sats", theme.DIM,
+             "Satellites still flying / all objects in the scenario (re-entered, crashed "
+             "and escaped ones included).", ""),
+            (f"{app.clock.get_fps():.0f} fps", theme.FAINT,
+             "Frames drawn per second. The physics keeps the same steps however slow the "
+             "drawing is.", ""),
         ]
-        for text, col in parts:
+        for text, col, tip, keys in parts:
             if x + fonts.mono.size(text)[0] > room:
                 break                   # only whole items, never one cut by the buttons
             r = fonts.draw(surf, text, (x, top_h // 2), col, fonts.mono, "midleft")
+            tips.add(r.inflate(px(8), px(12)), tip, keys)
             x = r.right + px(16)
         for b in self.buttons:
             b.draw(surf, fonts)
@@ -205,15 +236,23 @@ class SatList:
         app, sim, fonts = self.app, self.app.sim, self.app.fonts
         self.layout(surf.get_height())
         theme.panel(surf, self.rect)
-        fonts.draw(surf, "SCENARIO", (self.rect.x + px(10), self.rect.y + px(9)), theme.FAINT,
-                   fonts.small)
+        tips.block(self.rect)                           # the panel hides the 3-D view
+        head = fonts.draw(surf, "SCENARIO", (self.rect.x + px(10), self.rect.y + px(9)),
+                          theme.FAINT, fonts.small)
         name = fonts.fit(sim.scenario.name, px(LEFT_W) - px(92), fonts.bold)
-        fonts.draw(surf, name, (self.rect.x + px(80), self.rect.y + px(7)), theme.TEXT, fonts.bold)
+        r = fonts.draw(surf, name, (self.rect.x + px(80), self.rect.y + px(7)), theme.TEXT,
+                       fonts.bold)
+        about = sim.scenario.description or "The scenario now running."
+        tips.add(head.union(r).inflate(px(4), px(6)),
+                 f"{sim.scenario.name}: {about}\nScenarios (Ctrl+O) loads another one.", "Ctrl+O")
         for b in self.buttons:
             b.draw(surf, fonts)
         lr, row_h = self.list_rect, px(self.ROW)
         rows = max(1, lr.h // row_h)
         self.scroll = max(0, min(self.scroll, max(0, sim.n - rows)))
+        tips.add(lr, f"Every object in the scenario ({sim.n}): satellites, rockets and spent "
+                     "stages, with their altitude. Click one to select it; the wheel scrolls.",
+                 "Tab")
         clip = surf.get_clip()
         surf.set_clip(lr)
         for k in range(self.scroll, min(sim.n, self.scroll + rows)):
@@ -227,21 +266,30 @@ class SatList:
             asc = sim.ascent_of(k) if sim.ascents else None
             if asc is not None and asc.phase == "pad":
                 txt, col = f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN
+                what = "a rocket on its pad; the countdown to lift-off"
             elif asc is not None:
                 alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
                 txt, col = f"{alt:,.0f} km ^", theme.WARN
+                what = "a rocket climbing (^); its altitude"
             elif s.status == ACTIVE:
                 alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
                 txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
                 col = theme.DIM if s.shadow > 0.5 else (150, 140, 230)
+                what = ("altitude, grey in sunlight" if s.shadow > 0.5
+                        else "altitude, violet while in the Earth's shadow")
             else:
                 txt, col = s.status, theme.BAD
+                what = f"no longer flying ({s.status})"
             r = fonts.draw(surf, txt, (row.right - px(6), row.centery), col, fonts.small,
                            "midright")
             # the name gets whatever the value leaves, so long names never run into it
             name = fonts.fit(s.name, r.x - px(10) - (row.x + px(22)))
             fonts.draw(surf, name, (row.x + px(22), row.centery),
                        theme.TEXT if s.status == ACTIVE else theme.FAINT, fonts.ui, "midleft")
+            act = ("Selected: its details are in the right panel." if k == app.selected
+                   else "Click to select it.")
+            tips.add(row, f"{s.name} - {what}.\n{act} Tab / Shift+Tab steps through the list, "
+                          "the wheel scrolls it.", clip=lr)
         surf.set_clip(clip)
         if sim.n > rows:
             theme.scrollbar(surf, lr.right - px(3), lr, self.scroll, rows, sim.n, 20)
@@ -419,6 +467,7 @@ class InfoPanel:
         app, sim, fonts = self.app, self.app.sim, self.app.fonts
         self.layout(*surf.get_size())
         theme.panel(surf, self.rect)
+        tips.block(self.rect)
         x, y = self.rect.x + px(12), self.rect.y + px(10)
         i = app.selected
         if not 0 <= i < sim.n:
@@ -429,10 +478,14 @@ class InfoPanel:
             return
         s = sim.sats[i]
         pygame.draw.circle(surf, s.color, (x + px(6), y + px(11)), px(6))
-        fonts.draw(surf, s.name, (x + px(20), y), theme.TEXT, fonts.title)
+        r = fonts.draw(surf, s.name, (x + px(20), y), theme.TEXT, fonts.title)
+        tips.add(r.union(pygame.Rect(x, y, px(20), r.h)),
+                 "The selected satellite, drawn in its colour. Ctrl+E renames it or changes "
+                 "its mass and drag area.", "Ctrl+E")
         status_col = theme.GOOD if s.status == ACTIVE else theme.BAD
-        fonts.draw(surf, s.status.upper(), (self.rect.right - px(12), y + px(4)), status_col,
-                   fonts.small, "topright")
+        r = fonts.draw(surf, s.status.upper(), (self.rect.right - px(12), y + px(4)), status_col,
+                       fonts.small, "topright")
+        tips.add(r, STATUS_TIPS.get(s.status, ""))
         for k, (name, r) in enumerate(zip(self.TABS, self.tab_rects, strict=True)):
             on = k == self.tab
             pygame.draw.rect(surf, theme.ACCENT_DARK if on else theme.FIELD, r,
@@ -440,9 +493,14 @@ class InfoPanel:
             if on:
                 pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=px(5))
             fonts.draw(surf, name, r.center, theme.TEXT if on else theme.DIM, fonts.small, "center")
-        fonts.draw(surf, "Q", (self.rect.right - px(12), self.tab_rects[0].centery), theme.FAINT,
-                   fonts.small, "midright")
+            tips.add(r, TAB_TIPS[k], "Q")
+        q = fonts.draw(surf, "Q", (self.rect.right - px(12), self.tab_rects[0].centery),
+                       theme.FAINT, fonts.small, "midright")
+        tips.add(q.inflate(px(8), px(8)), "Q switches tab; PgUp / PgDn / Home / End or the wheel "
+                                          "scroll it.", "Q")
         body = self.body
+        tips.add(body, f"Details of {s.name}. {TAB_TIPS[self.tab]}\nQ switches tab; the wheel "
+                       "or PgUp / PgDn scroll it.", "Q")
         top = self.scroll[self.tab] = max(0, min(self.scroll[self.tab], self.content_h - body.h))
         clip = surf.get_clip()
         surf.set_clip(body)
@@ -463,6 +521,8 @@ class InfoPanel:
             pygame.draw.rect(surf, theme.FIELD, track, border_radius=px(3))
             pygame.draw.rect(surf, theme.ACCENT if self._drag is not None else theme.SCROLL_THUMB,
                              thumb, border_radius=px(3))
+            tips.add(track.inflate(px(10), 0), "Drag the bar or click the track to scroll; "
+                                               "the wheel and PgUp / PgDn work too.")
         self._closest(surf, x, self.rect.bottom - px(22))
 
     def _closest(self, surf, x, y):
@@ -476,7 +536,11 @@ class InfoPanel:
                            "topright")
             pair = fonts.fit(f"Closest: {sim.sats[a].name} - {sim.sats[b].name}",
                              r.x - px(10) - x, fonts.small)
-            fonts.draw(surf, pair, (x, y), col, fonts.small)
+            left = fonts.draw(surf, pair, (x, y), col, fonts.small)
+            tips.add(left.union(r), f"The two satellites nearest each other now: "
+                                    f"{sim.sats[a].name} and {sim.sats[b].name}, {d:,.1f} km "
+                                    f"apart. It turns red below the close-approach alert "
+                                    f"distance ({sim.conjunction_km:g} km, set in Physics).")
 
 
 # --- Bottom: event log ----------------------------------------------------------------------------
@@ -498,6 +562,8 @@ class EventLog:
         sim, fonts = self.app.sim, self.app.fonts
         self.layout(*surf.get_size())
         theme.panel(surf, self.rect)
+        tips.add(self.rect, "The simulation's log: launches, burns, eclipses, station passes "
+                            "and alerts, newest at the bottom.")
         x = self.rect.x + px(10)
         fonts.draw(surf, "EVENTS", (x, self.rect.y + px(6)), theme.FAINT, fonts.small)
         y = self.rect.bottom - px(20)
@@ -508,6 +574,8 @@ class EventLog:
             fonts.draw(surf, f"{'T+' + format_duration(ev.t):>15}", (x, y), theme.FAINT,
                        fonts.small)
             fonts.draw(surf, fonts.fit(ev.text, text_w, fonts.small), (tx, y), col, fonts.small)
+            tips.add(pygame.Rect(x, y, self.rect.right - px(10) - x, px(16)),
+                     f"T+{format_duration(ev.t)}: {ev.text}\n{glossary.EVENTS.get(ev.kind, '')}")
             y -= px(16)
             if y < self.rect.y + px(22):
                 break
@@ -515,8 +583,8 @@ class EventLog:
 
 HELP = [
     ("Mouse", ""),
-    ("Left-drag", "orbit the camera"),
-    ("Wheel", "zoom"),
+    ("Drag  Wheel", "orbit the camera / zoom"),
+    ("Rest on a part", "a tip says what it is and does"),
     ("Click satellite", "select it (list or 3-D view)"),
     ("Keyboard", ""),
     ("Arrows  + -", "rotate / zoom the camera"),
@@ -552,6 +620,7 @@ def draw_help(surf, app):
     rect = pygame.Rect(0, 0, px(520), px(34) + line * len(HELP) + px(20))
     rect.center = (w // 2, h // 2)
     theme.panel(surf, rect, (14, 20, 36, 245), theme.ACCENT)
+    tips.block(rect)                     # it explains itself; a tip would hide the text
     y = rect.y + px(14)
     fonts.draw(surf, "Controls", (rect.x + px(18), y), theme.TEXT, fonts.title)
     y += px(30)

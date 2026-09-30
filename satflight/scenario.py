@@ -203,10 +203,12 @@ class Scenario:
 
     @classmethod
     def load(cls, path) -> Scenario:
+        """Read a scenario JSON file."""
         with open(path, encoding="utf-8") as fh:
             return cls.from_dict(json.load(fh))
 
     def save(self, path):
+        """Write the scenario as JSON, creating the folder if needed."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(self.to_dict(), fh, indent=2)

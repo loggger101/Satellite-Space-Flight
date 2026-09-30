@@ -52,7 +52,8 @@ def plan_hohmann(sim, sat: str, target_alt: float, timing: str = "now", delay: f
 
 def plan_bielliptic(sim, sat: str, rb_alt: float, target_alt: float, timing: str = "now",
                     delay: float = 0.0):
-    """Three-burn transfer to ``target_alt`` km via apoapsis ``rb_alt``. Returns (burns, summary)."""
+    """Three-burn transfer to ``target_alt`` km via apoapsis ``rb_alt`` km.
+    Returns (burns, summary)."""
     t_b, r, v = _burn_state(sim, sat, timing, delay)
     r1 = float(np.linalg.norm(r))
     rb = R_EARTH + rb_alt

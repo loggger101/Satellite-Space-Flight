@@ -113,6 +113,7 @@ class History:
         return int(np.clip(cls.BUDGET // (6 * max(n, 1)), 120, 2000))
 
     def record(self, t: float, y: np.ndarray):
+        """Store the ensemble state ``y`` sampled at time ``t``."""
         self.data[:, self.head] = y
         self.times[self.head] = t
         self.head = (self.head + 1) % self.length
@@ -186,6 +187,7 @@ class Simulation:
     # --- bookkeeping -----------------------------------------------------------------
     @property
     def n(self) -> int:
+        """Number of satellites (including re-entered ones)."""
         return len(self.sats)
 
     @property
@@ -223,12 +225,15 @@ class Simulation:
             del self.events[:100]
 
     def datetime(self):
+        """Calendar time (UTC) now."""
         return self.clock.datetime(self.t)
 
     def jd(self, t: float | None = None) -> float:
+        """Julian date at ``t`` (default: now)."""
         return self.clock.jd(self.t if t is None else t)
 
     def gmst(self, t: float | None = None) -> float:
+        """Greenwich mean sidereal time (rad) at ``t`` (default: now)."""
         return self.clock.gmst(self.t if t is None else t)
 
     # --- adding / removing ---------------------------------------------------------------
@@ -299,6 +304,7 @@ class Simulation:
         self.log(f"Removed {sat.name}")
 
     def add_station(self, st: GroundStation):
+        """Add a ground station mid-run."""
         self.stations.append(st)
         self._resize_visible()
         self.log(f"Ground station {st.name} ({st.lat:.2f}, {st.lon:.2f})")

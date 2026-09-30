@@ -25,7 +25,6 @@ from . import atmosphere
 from .constants import F_EARTH, J2, J3, J4, MU_EARTH, R_EARTH
 from .frames import OMEGA_VEC
 
-
 # --- Individual terms --------------------------------------------------------------
 
 def accel_point_mass(r, mu: float = MU_EARTH):

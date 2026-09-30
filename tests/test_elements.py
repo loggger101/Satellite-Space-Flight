@@ -1,3 +1,6 @@
+"""Orbital elements, anomalies and universal-variable Kepler propagation,
+checked against Vallado's worked examples and round trips."""
+
 import math
 
 import numpy as np

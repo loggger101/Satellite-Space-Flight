@@ -14,6 +14,7 @@ import numpy as np
 from .constants import AU, DEG
 from .timeutil import centuries_since_j2000
 
+
 def obliquity(jd):
     """Mean obliquity of the ecliptic (rad) at Julian date(s) ``jd``."""
     t = centuries_since_j2000(jd)

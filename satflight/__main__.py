@@ -22,11 +22,13 @@ def main(argv=None):
     ap.add_argument("--frames", type=int, help="quit after this many frames")
     ap.add_argument("--screenshot", help="save the last frame to this PNG")
     ap.add_argument("--warp", type=float, help="initial time warp")
-    ap.add_argument("--advance", default="0", help="simulate this long before the first frame (e.g. 3h)")
+    ap.add_argument("--advance", default="0",
+                    help="simulate this long before the first frame (e.g. 3h)")
     ap.add_argument("--select", help="name of the satellite to select")
     ap.add_argument("--follow", action="store_true", help="camera follows the selected satellite")
     ap.add_argument("--frame", choices=("ECI", "ECEF"), help="view frame")
-    ap.add_argument("--show", default="", help="comma list of panels/overlays: map,plot,help,vectors,geo_ring")
+    ap.add_argument("--show", default="",
+                    help="comma list of panels/overlays: map,plot,help,vectors,geo_ring")
     ap.add_argument("--distance", type=float, help="camera distance (km)")
     ap.add_argument("--yaw", type=float, help="camera yaw (deg)")
     ap.add_argument("--pitch", type=float, help="camera pitch (deg)")

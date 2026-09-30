@@ -28,7 +28,7 @@ class GroundTrackView:
         self._night = None
         self.rect = pygame.Rect(0, 0, 0, 0)
 
-    def _background(self, size):
+    def background(self, size):
         """Texture (or a latitude gradient), graticule and coastlines at ``size``."""
         if self._bg_key == size:
             return self._bg
@@ -55,7 +55,7 @@ class GroundTrackView:
             lat = np.degrees(np.arcsin(np.clip(cl[:, 2], -1, 1)))
             lon = np.degrees(np.arctan2(cl[:, 1], cl[:, 0]))
             coast = (95, 125, 100) if self.earth.has_image else (160, 210, 160)
-            self._polyline(bg, coast, lat, lon, (0, 0, w, h))
+            self.polyline(bg, coast, lat, lon, (0, 0, w, h))
         self._bg_key, self._bg = size, bg
         return bg
 
@@ -81,17 +81,17 @@ class GroundTrackView:
         return self._night
 
     @staticmethod
-    def _xy(lat_deg, lon_deg, r):
+    def xy(lat_deg, lon_deg, r):
         """Map pixel coordinates of lat/lon (deg) inside rectangle ``r`` (x, y, w, h)."""
         x = r[0] + (np.asarray(lon_deg) + 180.0) / 360.0 * (r[2] - 1)
         y = r[1] + (90.0 - np.asarray(lat_deg)) / 180.0 * (r[3] - 1)
         return x, y
 
-    def _polyline(self, surf, color, lat, lon, r, width=1):
+    def polyline(self, surf, color, lat, lon, r, width=1):
         """Draw a lat/lon track, breaking it where it wraps across the date line."""
         if len(lat) < 2:
             return
-        x, y = self._xy(lat, lon, r)
+        x, y = self.xy(lat, lon, r)
         breaks = np.flatnonzero(np.abs(np.diff(lon)) > 180) + 1
         for seg in np.split(np.arange(len(lat)), breaks):
             if len(seg) >= 2:
@@ -110,7 +110,7 @@ class GroundTrackView:
         mw = min(rect.w - 16, 2 * mh)
         mh = mw // 2
         mr = pygame.Rect(rect.centerx - mw // 2, rect.y + 22, mw, mh)
-        surf.blit(self._background(mr.size), mr.topleft)
+        surf.blit(self.background(mr.size), mr.topleft)
         jd = sim.jd()
         theta = sim.gmst()
         lat_s, lon_s = subsolar_point(jd, theta)
@@ -120,12 +120,12 @@ class GroundTrackView:
         surf.set_clip(mr)
 
         # sub-solar point
-        sx, sy = self._xy(math.degrees(lat_s), math.degrees(lon_s), r)
+        sx, sy = self.xy(math.degrees(lat_s), math.degrees(lon_s), r)
         pygame.draw.circle(surf, theme.SUN, (int(sx), int(sy)), 6)
 
         # stations
         for st in sim.stations:
-            x, y = self._xy(st.lat, st.lon, r)
+            x, y = self.xy(st.lat, st.lon, r)
             pygame.draw.rect(surf, (120, 255, 160), (int(x) - 3, int(y) - 3, 7, 7), 1)
             if mw > 500:
                 fonts.draw(surf, st.name, (int(x) + 6, int(y) - 6), (120, 220, 150), fonts.small)
@@ -133,7 +133,7 @@ class GroundTrackView:
         # launch pads with a vehicle waiting or climbing (labels stack when pads share a site)
         taken: list[pygame.Rect] = []
         for a in sim.ascents:
-            x, y = self._xy(a.spec.lat, a.spec.lon, r)
+            x, y = self.xy(a.spec.lat, a.spec.lon, r)
             x, y = int(x), int(y)
             pygame.draw.polygon(surf, (255, 170, 90), [(x, y - 7), (x - 5, y + 4), (x + 5, y + 4)])
             if a.phase == "pad" and mw > 500:
@@ -156,14 +156,14 @@ class GroundTrackView:
             for k, i in enumerate(ids):
                 col = sim.sats[i].color
                 col = col if i == app.selected else theme.dim(col, 0.7)
-                self._polyline(surf, col, np.degrees(lat[k]), np.degrees(lon[k]), r,
+                self.polyline(surf, col, np.degrees(lat[k]), np.degrees(lon[k]), r,
                                2 if i == app.selected else 1)
 
         # current sub-satellite points
         if sim.n:
             re = eci_to_ecef(sim.y[:, :3], theta)
             lat, lon, alt = ecef_to_geodetic(re)
-            x, y = self._xy(np.degrees(lat), np.degrees(lon), r)
+            x, y = self.xy(np.degrees(lat), np.degrees(lon), r)
             for i in range(sim.n):
                 if sim.sats[i].status != ACTIVE:
                     continue
@@ -173,7 +173,7 @@ class GroundTrackView:
             if 0 <= i < sim.n and sim.sats[i].status == ACTIVE:
                 lam = coverage_half_angle(float(alt[i]), math.radians(10.0))
                 flat, flon = footprint(float(lat[i]), float(lon[i]), lam, 180)
-                self._polyline(surf, theme.mix(sim.sats[i].color, (255, 255, 255), 0.4),
+                self.polyline(surf, theme.mix(sim.sats[i].color, (255, 255, 255), 0.4),
                                np.degrees(flat), np.degrees(flon), r)
         surf.set_clip(clip)
         pygame.draw.rect(surf, theme.PANEL_EDGE, mr, 1)

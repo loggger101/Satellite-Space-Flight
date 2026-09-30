@@ -230,10 +230,35 @@ satflight/            physics engine (numpy only)
   batch.py            headless runs and CSV export
   tle.py              TLE parsing (+ optional SGP4)
   ui/                 pygame front end
+    app.py            window, main loop, input and time control
+    camera.py         perspective camera, projection and Earth occlusion
+    render3d.py       3-D scene: stars, Sun, orbits, trails, satellites, stations
+    earth.py          ray-traced, textured and sunlit Earth
+    orbitviz.py       orbit-geometry overlay and callout for the selected satellite
+    panels.py         top bar, satellite list, right panel, event log, help
+    orbitpanel.py     Orbit tab: diagrams, timeline, gauges and property sheet
+    launchui.py       Launch and Vehicle dialogs, ascent view
+    dialogs.py        add satellite, Walker, manoeuvre, station, physics, scenarios
+    groundtrack.py    2-D ground-track map
+    plots.py          telemetry time-history plot
+    widgets.py        buttons, text fields, choices and the form dialog
+    theme.py          colours, fonts and drawing helpers
 scenarios/            example scenarios
 tools/                scenario generator, asset downloader
 tests/                pytest suite
 ```
+
+## Development
+
+```bash
+pip install -r requirements.txt
+python -m pytest -q          # the test suite (the UI tests run headless)
+python -m ruff check .       # lint: errors, bugs, import order, 100-column lines
+```
+
+The code is formatted by hand in a compact style, so `ruff format` is not
+used. Scenario files are generated: change `tools/make_scenarios.py` and rerun
+it rather than editing the JSON.
 
 ## License
 

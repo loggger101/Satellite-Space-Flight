@@ -133,9 +133,11 @@ class History:
         return self.times[idx], self.data[i, idx]
 
     def remove_row(self, i: int):
+        """Forget satellite ``i``'s history (its row shifts the later ones up)."""
         self.data = np.delete(self.data, i, axis=0)
 
     def clear(self):
+        """Drop every sample; the buffer keeps its size."""
         self.head = 0
         self.count = 0
 

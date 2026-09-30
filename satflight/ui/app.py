@@ -151,10 +151,12 @@ class App:
             self.satlist.ensure_visible(self.selected)
 
     def cycle_selection(self, step: int):
+        """Select the satellite ``step`` places along the list (wrapping; key Tab)."""
         if self.sim.n:
             self.select((self.selected + step) % self.sim.n)
 
     def delete_selected(self):
+        """Remove the selected satellite and select its neighbour (key Delete)."""
         if 0 <= self.selected < self.sim.n:
             self.sim.remove(self.selected)
             self.select(min(self.selected, self.sim.n - 1))
@@ -183,14 +185,17 @@ class App:
         self.opts.orbits = ORBIT_MODES[(k + 1) % len(ORBIT_MODES)]
 
     def cycle_geometry(self):
+        """Step through the orbit-geometry overlay modes (key D)."""
         k = GEOMETRY_MODES.index(self.opts.geometry)
         self.opts.geometry = GEOMETRY_MODES[(k + 1) % len(GEOMETRY_MODES)]
         self.toast(f"Orbit geometry: {self.opts.geometry}")
 
     def toggle(self, name: str):
+        """Flip the boolean view option ``name`` of :class:`Options`."""
         setattr(self.opts, name, not getattr(self.opts, name))
 
     def toggle_pause(self):
+        """Pause or resume the simulation (key Space)."""
         self.paused = not self.paused
 
     def change_warp(self, step: int):
@@ -200,9 +205,11 @@ class App:
         self.warp = float(WARPS[max(0, min(len(WARPS) - 1, k + step))])
 
     def real_time(self):
+        """Run at 1x real time (key 1)."""
         self.warp = 1.0
 
     def toggle_frame(self):
+        """Switch the view between inertial (ECI) and Earth-fixed (ECEF) axes (key E)."""
         self.opts.frame = "ECEF" if self.opts.frame == "ECI" else "ECI"
 
     def toggle_follow(self):
@@ -229,6 +236,7 @@ class App:
             pygame.key.start_text_input()
 
     def close_dialog(self, dlg):
+        """Remove ``dlg`` from the dialog stack (dialogs call this themselves)."""
         if dlg in self.dialogs:
             self.dialogs.remove(dlg)
 
@@ -391,11 +399,13 @@ class App:
         return h - LOG_H - 2 * GAP if self.opts.panels else h - GAP
 
     def _map_rect(self):
+        """Where the ground-track map sits: along the bottom of the view."""
         x0, x1, _ = self.center_span()
         mh = int(min((x1 - x0) / 2 + 26, 330))
         return pygame.Rect(x0, self._bottom() - mh, x1 - x0, mh)
 
     def _plot_rect(self):
+        """Where the plot sits: above the map, or along the bottom of the view."""
         x0, x1, _ = self.center_span()
         bottom = self._map_rect().y - GAP if self.opts.map else self._bottom()
         return pygame.Rect(x0, bottom - 190, x1 - x0, 190)

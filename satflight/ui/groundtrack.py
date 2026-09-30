@@ -102,6 +102,9 @@ class GroundTrackView:
                     pygame.draw.lines(surf, color, False, pts, width)
 
     def draw(self, surf, rect: pygame.Rect, app):
+        """The map panel in ``rect``: a 2:1 map with night shading, the sub-solar
+        point, stations, launch pads, history tracks, sub-satellite points and
+        the selected satellite's coverage circle."""
         sim, fonts = app.sim, app.fonts
         self.rect = rect
         theme.panel(surf, rect)

@@ -205,41 +205,7 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
         c = color if lit[k] > 0.5 else dark
         pygame.draw.line(surf, c, pts[k], pts[k + 1], 2)
 
-    # apsides and line of nodes
-    pe = S(el.rp, 0)
-    if info.closed:
-        ap = S(-el.ra, 0)
-        _dashed(surf, theme.dim(APSIS, 0.6), ap, pe)
-        c0 = S(-info.c, 0)
-        pygame.draw.line(surf, APSIS, (c0[0] - 3, c0[1]), (c0[0] + 3, c0[1]))
-        pygame.draw.line(surf, APSIS, (c0[0], c0[1] - 3), (c0[0], c0[1] + 3))
-    else:
-        _dashed(surf, theme.dim(APSIS, 0.6), ecen, pe)
-    if not info.equatorial:
-        ends = []
-        for nu_n in (-el.argp, math.pi - el.argp):
-            den = 1.0 + e * math.cos(nu_n)
-            ends.append(None if den <= 1e-6
-                        else (p / den * math.cos(nu_n), p / den * math.sin(nu_n)))
-        an, dn = ends
-        a_s = S(*an) if an else ecen
-        d_s = S(*dn) if dn else ecen
-        _dashed(surf, theme.dim(NODE, 0.8), a_s, d_s)
-        if an:
-            pygame.draw.circle(surf, NODE, a_s, 3)
-            _label(surf, fonts, "AN", (a_s[0], a_s[1] - 10), NODE, bounds=rect)
-        if dn:
-            pygame.draw.circle(surf, NODE, d_s, 3, 1)
-            _label(surf, fonts, "DN", (d_s[0], d_s[1] - 10), NODE, bounds=rect)
-    if not info.circular:
-        pygame.draw.circle(surf, APSIS, pe, 3)
-        _label(surf, fonts, f"Pe {num(info.rp_alt, 'km', 0)}", (pe[0] + 6, pe[1] + 4), APSIS,
-               "topleft", rect)
-        if info.closed:
-            ap = S(-el.ra, 0)
-            pygame.draw.circle(surf, APSIS, ap, 3)
-            _label(surf, fonts, f"Ap {num(info.ra_alt, 'km', 0)}", (ap[0] - 6, ap[1] + 4), APSIS,
-                   "topright", rect)
+    _plane_apsides_nodes(surf, fonts, rect, info, S)
 
     # Sun direction, radius vector, satellite and velocity
     if spn > 0.1:
@@ -258,6 +224,47 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     pygame.draw.circle(surf, (255, 255, 255), sat, 8, 1)
     surf.set_clip(clip)
     _legend(surf, fonts, rect, color, dark)
+
+
+def _plane_apsides_nodes(surf, fonts, rect, info: OrbitInfo, S):
+    """Orbit-plane diagram: the line of apsides (with the ellipse centre), the
+    line of nodes and their labelled end points. ``S(x, y)`` maps perifocal km
+    to screen."""
+    el = info.el
+    e, p = float(el.e), float(el.p)
+    ecen, pe = S(0, 0), S(el.rp, 0)
+    ap = S(-el.ra, 0) if info.closed else None
+    if info.closed:
+        _dashed(surf, theme.dim(APSIS, 0.6), ap, pe)
+        c0 = S(-info.c, 0)
+        pygame.draw.line(surf, APSIS, (c0[0] - 3, c0[1]), (c0[0] + 3, c0[1]))
+        pygame.draw.line(surf, APSIS, (c0[0], c0[1] - 3), (c0[0], c0[1] + 3))
+    else:
+        _dashed(surf, theme.dim(APSIS, 0.6), ecen, pe)
+    if not info.equatorial:
+        ends = []
+        for nu_n in (-el.argp, math.pi - el.argp):          # ascending, descending node
+            den = 1.0 + e * math.cos(nu_n)
+            ends.append(None if den <= 1e-6           # beyond an open orbit's asymptote
+                        else (p / den * math.cos(nu_n), p / den * math.sin(nu_n)))
+        an, dn = ends
+        a_s = S(*an) if an else ecen
+        d_s = S(*dn) if dn else ecen
+        _dashed(surf, theme.dim(NODE, 0.8), a_s, d_s)
+        if an:
+            pygame.draw.circle(surf, NODE, a_s, 3)
+            _label(surf, fonts, "AN", (a_s[0], a_s[1] - 10), NODE, bounds=rect)
+        if dn:
+            pygame.draw.circle(surf, NODE, d_s, 3, 1)
+            _label(surf, fonts, "DN", (d_s[0], d_s[1] - 10), NODE, bounds=rect)
+    if not info.circular:
+        pygame.draw.circle(surf, APSIS, pe, 3)
+        _label(surf, fonts, f"Pe {num(info.rp_alt, 'km', 0)}", (pe[0] + 6, pe[1] + 4), APSIS,
+               "topleft", rect)
+        if ap is not None:
+            pygame.draw.circle(surf, APSIS, ap, 3)
+            _label(surf, fonts, f"Ap {num(info.ra_alt, 'km', 0)}", (ap[0] - 6, ap[1] + 4), APSIS,
+                   "topright", rect)
 
 
 def _legend(surf, fonts, rect, color, dark):

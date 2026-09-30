@@ -57,9 +57,11 @@ class TopBar:
         self.left_of_buttons = x
 
     def handle(self, ev):
+        """Pass the event to the buttons; True if one used it."""
         return any(b.handle(ev) for b in self.buttons)
 
     def draw(self, surf):
+        """Title, UTC and mission time, warp, propagator, forces, counts, fps and the buttons."""
         app, sim, fonts = self.app, self.app.sim, self.app.fonts
         w = surf.get_width()
         self.layout(w)
@@ -126,6 +128,7 @@ class SatList:
         self.list_rect = pygame.Rect(self.rect.x + 6, top, LEFT_W - 12, self.rect.bottom - top - 8)
 
     def handle(self, ev):
+        """Buttons, then list scrolling and selection; swallows clicks on the panel."""
         if any(b.handle(ev) for b in self.buttons):
             return True
         if ev.type == pygame.MOUSEWHEEL and self.list_rect.collidepoint(pygame.mouse.get_pos()):
@@ -148,6 +151,7 @@ class SatList:
             self.scroll = i - rows + 1
 
     def draw(self, surf):
+        """Scenario name, buttons and the scrolling satellite list."""
         app, sim, fonts = self.app, self.app.sim, self.app.fonts
         self.layout(surf.get_height())
         theme.panel(surf, self.rect)
@@ -226,6 +230,7 @@ class InfoPanel:
         self.tab = (self.tab + 1) % len(self.TABS)
 
     def handle(self, ev):
+        """Scroll the current tab, or switch tabs on a click; swallows clicks on the panel."""
         if ev.type == pygame.MOUSEWHEEL and self.rect.collidepoint(pygame.mouse.get_pos()):
             self.scroll[self.tab] = max(0, self.scroll[self.tab] - ev.y * 48)
             return True
@@ -317,6 +322,7 @@ class InfoPanel:
         return sections
 
     def draw(self, surf):
+        """Tab buttons and the scrolled content of the current tab."""
         app, sim, fonts = self.app, self.app.sim, self.app.fonts
         self.layout(*surf.get_size())
         theme.panel(surf, self.rect)
@@ -385,10 +391,12 @@ class EventLog:
         self.rect = pygame.Rect(0, 0, 0, 0)
 
     def layout(self, w, h):
+        """Span the view between the side panels, at the bottom of the window."""
         x0, x1, _ = self.app.center_span()
         self.rect = pygame.Rect(x0, h - LOG_H - GAP, x1 - x0, LOG_H)
 
     def draw(self, surf):
+        """The latest events that fit, newest at the bottom."""
         sim, fonts = self.app.sim, self.app.fonts
         self.layout(*surf.get_size())
         theme.panel(surf, self.rect)
@@ -410,6 +418,7 @@ HELP = [
     ("Wheel", "zoom"),
     ("Click satellite", "select it (list or 3-D view)"),
     ("Keyboard", ""),
+    ("Arrows  + -", "rotate / zoom the camera"),
     ("Space", "pause / resume"),
     (", .", "slower / faster time warp"),
     ("1", "real time"),
@@ -427,15 +436,15 @@ HELP = [
     ("P", "physics & integrator settings"),
     ("Ctrl+O / Ctrl+S", "scenarios / save snapshot"),
     ("Ctrl+E  Del", "edit / delete selected satellite"),
-    ("Ctrl+R", "reset scenario"),
+    ("Ctrl+R  Ctrl+Q", "reset scenario / quit"),
     ("I", "hide / show panels"),
     ("F12", "screenshot to screenshots/"),
-    ("H or F1", "this help"),
-]
+    ("H or F1  Esc", "this help / close it"),
+]   # draw_help needs 54 + 20 px per row: keep it within the 600 px minimum window height
 
 
 def draw_help(surf, app):
-    """The controls overlay (key H)."""
+    """The controls overlay (key H), centred; returns its rect."""
     fonts = app.fonts
     w, h = surf.get_size()
     rect = pygame.Rect(0, 0, 520, 34 + 20 * len(HELP) + 20)
@@ -451,3 +460,4 @@ def draw_help(surf, app):
             fonts.draw(surf, key, (rect.x + 30, y + 10), theme.TEXT, fonts.mono, "midleft")
             fonts.draw(surf, desc, (rect.x + 200, y + 10), theme.DIM, fonts.ui, "midleft")
         y += 20
+    return rect

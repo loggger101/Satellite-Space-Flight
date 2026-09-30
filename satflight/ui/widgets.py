@@ -394,6 +394,7 @@ class FormDialog:
             self.close()
 
     def close(self):
+        """Close without submitting (Cancel, Esc)."""
         pygame.key.stop_text_input()
         self.app.close_dialog(self)
 
@@ -440,6 +441,7 @@ class FormDialog:
         return True    # modal: swallow everything
 
     def draw(self, surf):
+        """Shade the window, then draw the frame, rows, side panel, buttons and error."""
         fonts = self.app.fonts
         shade = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 110))

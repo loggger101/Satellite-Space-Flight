@@ -129,6 +129,20 @@ class GroundTrackView:
             if mw > 500:
                 fonts.draw(surf, st.name, (int(x) + 6, int(y) - 6), (120, 220, 150), fonts.small)
 
+        # launch pads with a vehicle waiting or climbing (labels stack when pads share a site)
+        taken: list[pygame.Rect] = []
+        for a in sim.ascents:
+            x, y = self._xy(a.spec.lat, a.spec.lon, r)
+            x, y = int(x), int(y)
+            pygame.draw.polygon(surf, (255, 170, 90), [(x, y - 7), (x - 5, y + 4), (x + 5, y + 4)], 0)
+            if a.phase == "pad" and mw > 500:
+                text = f"{a.spec.name} T-{int(a.t0 - sim.t) // 60} min"
+                box = pygame.Rect((x + 7, y + 6), fonts.small.size(text))
+                while box.collidelist(taken) >= 0:
+                    box.y += box.h
+                taken.append(box)
+                fonts.draw(surf, text, box.topleft, (255, 190, 120), fonts.small)
+
         # tracks
         times, data = sim.history.series()
         ids = list(range(sim.n)) if sim.n <= 30 else ([app.selected] if 0 <= app.selected < sim.n else [])

@@ -257,3 +257,103 @@ def test_orbit_inspector_draws_every_bundled_orbit(app):
             for mode in ("full", "basic"):
                 app.opts.geometry = mode
                 frame(app, 1, dt=0.0)
+
+
+# --- launches ------------------------------------------------------------------------------
+
+def test_launch_dialog_map_pick_preview_and_flight(app):
+    app.paused = True
+    key(app, pygame.K_u)
+    dlg = app.dialogs[-1]
+    prev = dlg.preview
+    assert prev.plan is not None and prev.plan.ok          # default: Falcon 9 from the Cape
+    frame(app)
+    # click the map somewhere in the tropical Pacific: a custom site
+    r = prev.map_rect
+    pos = (r.x + int((-150 + 180) / 360 * (r.w - 1)), r.y + int((90 - 5) / 180 * (r.h - 1)))
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert dlg.widgets["site"].value == "Custom location"
+    v = dlg.values()
+    assert v["lat"] == pytest.approx(5, abs=1) and v["lon"] == pytest.approx(-150, abs=1)
+    fill(dlg, "inc", 10)
+    prev.refresh(dlg)
+    assert prev.plan.ok and prev.plan.flight.insertion["i"] == pytest.approx(10, abs=0.05)
+    frame(app)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    i = app.selected
+    asc = app.sim.ascent_of(i)
+    assert asc is not None and app.sim.sats[i].name == "Launch 1"
+    assert asc.kick_deg == pytest.approx(prev.plan.kick)   # the optimised kick is flown
+    app.paused = False
+    for t, tab in ((30, 0), (200, 1), (200, 0)):
+        app.sim.advance(t)
+        app.info.tab = tab
+        app.opts.map = True
+        frame(app, 2, dt=0.0)
+    app.sim.advance(600)
+    assert app.sim.ascent_of(i) is None and app.sim.sats[i].launch_report["outcome"] == "orbit"
+    app.info.tab = 1
+    frame(app, 2, dt=0.0)
+
+
+def test_launch_dialog_reports_impossible_launches(app):
+    app.open("launch")
+    dlg = app.dialogs[-1]
+    dlg.set("site", "Plesetsk (Russia)")
+    dlg._changed("site")
+    fill(dlg, "inc", 28.5)
+    dlg.preview.refresh(dlg)
+    assert dlg.preview.plan is None and "cannot be reached" in dlg.preview.error
+    frame(app)
+    dlg.submit()
+    assert app.dialogs and "cannot be reached" in dlg.error
+    fill(dlg, "inc", 63)
+    fill(dlg, "payload_mass", 60000)
+    dlg.preview.refresh(dlg)
+    assert dlg.preview.plan.flight.outcome == "short"
+    frame(app)
+    lines = " ".join(t for t, _ in dlg.preview._lines())
+    assert "FAILS" in lines
+
+
+def test_vehicle_dialog_builds_a_custom_three_stage_rocket(app):
+    app.open("launch")
+    dlg = app.dialogs[-1]
+    [b for b in dlg.buttons if b.text == "Vehicle..."][0].callback()
+    vd = app.dialogs[-1]
+    assert vd is not dlg
+    vd.set("count", "3")
+    vd.set("edit", "3")
+    vd._changed("count")
+    fill(vd, "s3_thrust", 60)
+    fill(vd, "s3_propellant", 4)
+    fill(vd, "s3_dry", 0.5)
+    vd._changed("s3_thrust")
+    assert "Stage 3" in " ".join(vd.info.values())
+    frame(app)
+    vd.submit()
+    assert app.dialogs[-1] is dlg
+    assert len(dlg.preview.vehicle.stages) == 3 and dlg.widgets["vehicle"].value == "Custom"
+    dlg.preview.refresh(dlg)
+    assert dlg.preview.plan.ok
+
+
+def test_following_a_rocket_on_the_pad_keeps_the_camera_above_ground(app):
+    from satflight.launch import LaunchSpec
+    sat = app.sim.launch(LaunchSpec(name="Pad", timing="delay", delay=3600, lat=62.9, lon=40.6,
+                                    inclination=63, kick=2.0))
+    app.select(app.sim.sats.index(sat))
+    app.toggle_follow()
+    cam = app.camera
+    for yaw in range(0, 360, 30):
+        for pitch in (-80, -30, 0, 30, 80):
+            cam.yaw, cam.pitch = np.radians(yaw), np.radians(pitch)
+            for d in (300, 3000, 30000):
+                cam.distance = d
+                app.update(0.0)
+                assert np.linalg.norm(cam.position) >= cam.FLOOR - 1e-6
+    frame(app, 2, dt=0.0)
+    k = app.selected
+    sx, sy, vis = app.renderer.sat_screen
+    assert vis[k]                               # the pad vehicle is in sight, not behind the globe

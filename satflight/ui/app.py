@@ -15,7 +15,7 @@ from ..constants import R_EARTH
 from ..orbitinfo import orbit_info
 from ..scenario import Scenario
 from ..simulation import ACTIVE, Simulation
-from . import dialogs, theme
+from . import dialogs, launchui, theme
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .panels import GAP, LEFT_W, LOG_H, RIGHT_W, TOP_H, EventLog, InfoPanel, SatList, TopBar, draw_help
@@ -142,6 +142,9 @@ class App:
         i = self.selected
         if not 0 <= i < self.sim.n or self.sim.sats[i].status != ACTIVE:
             return None
+        asc = self.sim.ascent_of(i)
+        if asc is not None and asc.phase == "pad":
+            return None                 # a rocket on its pad has no orbit to inspect
         s = self.sim.sats[i]
         key = (i, self.sim.t, self.sim.n, self.sim.y[i].tobytes(), id(self.sim),
                s.mass, s.area, s.cd, self.sim.forces.density_scale)
@@ -187,7 +190,7 @@ class App:
         factory = {"add": dialogs.add_satellite_dialog, "walker": dialogs.walker_dialog,
                    "maneuver": dialogs.maneuver_dialog, "station": dialogs.station_dialog,
                    "physics": dialogs.physics_dialog, "scenario": dialogs.scenario_dialog,
-                   "edit": dialogs.edit_satellite_dialog}[name]
+                   "edit": dialogs.edit_satellite_dialog, "launch": launchui.launch_dialog}[name]
         dlg = factory(self)
         if dlg is not None:
             self.dialogs.append(dlg)
@@ -296,6 +299,7 @@ class App:
             pygame.K_h: lambda: self.toggle("help"),
             pygame.K_F1: lambda: self.toggle("help"),
             pygame.K_a: lambda: self.open("add"),
+            pygame.K_u: lambda: self.open("launch"),
             pygame.K_w: lambda: self.open("walker"),
             pygame.K_b: lambda: self.open("maneuver"),
             pygame.K_n: lambda: self.open("station"),

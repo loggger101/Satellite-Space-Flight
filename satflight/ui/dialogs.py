@@ -231,7 +231,8 @@ def _kind(*names):
 
 def maneuver_dialog(app):
     sim = app.sim
-    names = [s.name for s in sim.sats if s.status == "active"]
+    # a payload still riding its rocket cannot manoeuvre until it separates
+    names = [s.name for i, s in enumerate(sim.sats) if s.status == "active" and sim.ascent_of(i) is None]
     if not names:
         app.toast("No active satellites to manoeuvre")
         return None

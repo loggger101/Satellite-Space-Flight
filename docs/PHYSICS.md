@@ -100,6 +100,81 @@ including retrograde-equatorial and hyperbolic orbits.
   the lowest total delta-v whose arc stays above 150 km, then schedules a
   velocity-matching burn at arrival.
 
+## Launch and ascent
+
+`satflight/launch.py`. A launch is a stack of stages plus fairing and
+payload on a pad at geodetic latitude, longitude and height. Before lift-off
+its state is the pad's, rotating with the Earth. From lift-off it leaves the
+ensemble and is integrated on its own with RK4 at 1 s steps (shortened to end
+exactly at burnout, cut-off and ignition), under
+
+    r'' = -mu r / r^3 + a_J2..J4 + a_drag + (T / m) u
+    T   = mdot g0 Isp(h),   mdot = throttle T_vac / (g0 Isp_vac)
+    Isp(h) = Isp_vac - (Isp_vac - Isp_sl) p(h)/p0,   p(h)/p0 = exp(-h / 7 km)
+
+The mass flow is fixed by the vacuum rating, so thrust rises with altitude as
+the nozzle back-pressure falls. Drag uses the vehicle's `Cd` and frontal area
+and is always applied during ascent, whatever the scenario's drag switch.
+An acceleration limit, if set, throttles between 40 and 100 %.
+
+**Steering.**
+
+1. Vertical rise along the local plumb line: minus (gravity + centrifugal
+   acceleration), the geodetic vertical with J2. The geocentric radius is
+   about 0.2 deg off at mid-latitudes, enough to tip a rocket with a
+   thrust-to-weight of 1.2 over before it has any speed.
+2. Pitch kick: thrust leans by the kick angle toward the launch azimuth until
+   the air-relative velocity has leaned as far.
+3. Gravity turn: thrust along the air-relative velocity (zero angle of attack).
+4. Closed-loop guidance (orbit launches), from the first staging or 50 km.
+   With `r`, `v_r`, `v_h` the radius and the vertical and in-plane horizontal
+   speeds, the net radial acceleration is shaped as `A + B t`, with
+
+       B = -12 (r_T - r - v_r t_go / 2) / t_go^3,   A = (-v_r - B t_go^2 / 2) / t_go
+
+   so that `r(t_go) = r_T` and `v_r(t_go) = 0`. The thrust's radial share is
+   `(A + mu/r^2 - v_h^2/r) / (T/m)`. The same law, with target 0, drives the
+   position and velocity out of the target plane to zero. The time to go
+   comes from the rocket equation over the remaining stages, with coasts
+   between them, for the velocity still to gain plus the gravity to hold off.
+   Steering is frozen for the last 4 s. The engines cut off when the
+   specific energy reaches the target orbit's, `-mu / (2 a_T)`, so the payload
+   is at perigee of the requested orbit.
+
+Open-loop launches skip step 4 and burn every stage along a fixed azimuth.
+
+**Plane and azimuth.** The orbit plane is the one of the requested
+inclination that contains the pad at lift-off and crosses it northbound or
+southbound. That is possible only for `|lat| <= i <= 180 - |lat|` (geocentric),
+because dog-leg ascents are not modelled. A **window** launch waits until the
+pad rotates into a fixed plane (given RAAN), or into another satellite's
+plane regressing with J2, found by scanning the pad's signed distance from
+the plane and bisecting its zero crossings. The azimuth flown relative to the
+rotating Earth, `atan2(v sin(b) - w R cos(lat), v cos(b))`, turns the inertial
+in-plane azimuth `b` into one that ends in the plane once the orbital speed
+`v` is reached. Guidance removes the remaining out-of-plane error.
+
+**Kick optimisation.** Left on `auto`, the kick is chosen by flying
+candidates from 0.05 to 16 deg (grid, then golden-section) and keeping the
+one that reaches the target with the most propellant left. For open-loop
+flights it keeps the highest perigee, or, for sub-orbital ones, the highest
+apogee. One flight takes about 10 ms: the ascent uses plain Python floats,
+not numpy.
+
+**Book-keeping.** Staging drops each stage's dry mass. At cut-off the last
+stage, with its leftover propellant, separates from the payload. Spent stages
+are coasted to the ensemble's time and added as satellites of the same
+launch "family"; close-approach alerts inside a family are suppressed. The
+delta-v budget integrates `T/m` (ideal), `-g . v_hat` (gravity loss), drag
+along `v_hat`, and `(T/m)(1 - cos alpha)` (steering loss, measured against
+the inertial velocity, so it includes the vertical rise across the Earth's
+rotation). Ideal minus losses equals the speed gained, to about 1 %.
+
+**Accuracy.** For the preset vehicles, insertion is within 5 km of the
+target perigee and apogee (0.2 % on GTO apogee) and 0.05 deg in inclination.
+Launch windows put the RAAN within 0.1 deg. Vehicle figures are approximate
+public numbers: performance is realistic in kind, not for mission design.
+
 ## Events and limits
 
 - Re-entry: altitude < 80 km while descending. Impact: altitude <= 0.
@@ -118,6 +193,11 @@ including retrograde-equatorial and hyperbolic orbits.
   [SCOPE.md](SCOPE.md)); the low-precision Sun ephemeris is used for lighting
   and eclipses only.
 - Static exponential atmosphere (no diurnal bulge, no space-weather input).
+- Launch vehicles: point mass with instantaneous attitude (no rotational
+  dynamics or aerodynamic loads, no winds), serial staging only (no strap-on
+  boosters burning alongside a core), no engine-out, a single burn to orbit
+  (no parking-orbit coast and restart; schedule manoeuvres for that), and an
+  ambient-pressure model of `exp(-h / 7 km)`.
 - Cannonball drag (no attitude-dependent areas).
 - Without the optional `sgp4` package, TLE mean elements are used as
   osculating elements (a few km of error).

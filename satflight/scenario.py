@@ -16,6 +16,9 @@ the propagator settings. Orbit specs are dicts with a ``type``:
 ``tle``       ``line1`` / ``line2``.
 
 ``count`` > 1 on a satellite spreads copies evenly in mean anomaly.
+
+``launches`` lists rockets that lift off from a pad during the run (see
+``satflight.launch.LaunchSpec``): vehicle stages, site, target orbit, timing.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import numpy as np
 from .constants import OMEGA_EARTH, R_EARTH, R_GEO
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
+from .launch import LaunchSpec
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef
 from .maneuvers import Maneuver, sun_synchronous_inclination
 from .timeutil import Clock, format_epoch, parse_epoch, UTC
@@ -128,6 +132,7 @@ class Scenario:
     constellations: list = field(default_factory=list)
     stations: list = field(default_factory=list)
     maneuvers: list = field(default_factory=list)
+    launches: list = field(default_factory=list)      # LaunchSpec
     forces: ForceModel = field(default_factory=ForceModel)
     propagator: str = "cowell"           # cowell | kepler | j2mean
     integrator: IntegratorSettings = field(default_factory=IntegratorSettings)
@@ -151,6 +156,7 @@ class Scenario:
             "constellations": [c.to_dict() for c in self.constellations],
             "stations": [g.to_dict() for g in self.stations],
             "maneuvers": [m.to_dict() for m in self.maneuvers],
+            "launches": [s.to_dict() for s in self.launches],
         }
 
     @classmethod
@@ -168,6 +174,7 @@ class Scenario:
             constellations=[_from_dict(ConstellationSpec, c) for c in d.get("constellations", [])],
             stations=[_from_dict(GroundStation, g) for g in d.get("stations", [])],
             maneuvers=[Maneuver.from_dict(m) for m in d.get("maneuvers", [])],
+            launches=[LaunchSpec.from_dict(s) for s in d.get("launches", [])],
             out_of_scope=ForceModel.ignored_terms(d.get("forces", {})),
         )
 

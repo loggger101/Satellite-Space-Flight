@@ -87,18 +87,18 @@ def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool 
 def summary(sim: Simulation, out=sys.stdout):
     print(f"Scenario: {sim.scenario.name}   elapsed {format_duration(sim.t)}   "
           f"({sim.forces.label()}, {sim.propagator})", file=out)
-    print(f"{'name':<22}{'status':<12}{'alt km':>11}{'a km':>12}{'e':>10}{'i deg':>9}"
+    print(f"{'name':<28}{'status':<12}{'alt km':>11}{'a km':>12}{'e':>10}{'i deg':>9}"
           f"{'dV m/s':>9}", file=out)
     for i, s in enumerate(sim.sats):
         r, v = sim.y[i, :3], sim.y[i, 3:]
         el = rv2coe(r, v)
         alt = np.linalg.norm(r) - 6378.137
-        print(f"{s.name[:21]:<22}{s.status:<12}{alt:>11.1f}{el.a:>12.1f}{el.e:>10.5f}"
+        print(f"{s.name[:27]:<28}{s.status:<12}{alt:>11.1f}{el.a:>12.1f}{el.e:>10.5f}"
               f"{math.degrees(el.i):>9.3f}{s.dv_used * 1000:>9.1f}", file=out)
-    events = [e for e in sim.events if e.kind in ("maneuver", "alert", "warn")]
+    events = [e for e in sim.events if e.kind in ("maneuver", "alert", "warn", "launch")]
     if events:
         print("\nKey events:", file=out)
-        for e in events[-25:]:
+        for e in events[-40:]:
             print(f"  T+{format_duration(e.t):>13}  {e.text}", file=out)
 
 

@@ -1,0 +1,388 @@
+{
+  "name": "Launch day",
+  "description": "Six launches from four continents: a sounding rocket over Norway, Falcon 9 to a 53 deg shell, Electron to sun-synchronous orbit, a Saturn V parking orbit, a Kourou GTO that circularises at apogee, and a Crew Dragon that waits for the window into the ISS plane. Spent stages fall back or stay in orbit.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "drag": true,
+    "density_scale": 1.0
+  },
+  "record_dt": 5.0,
+  "warp": 10,
+  "satellites": [
+    {
+      "name": "ISS",
+      "orbit": {
+        "type": "elements",
+        "altitude": 420,
+        "i": 51.64,
+        "raan": 88.617,
+        "argp": 0,
+        "nu": 0
+      },
+      "color": null,
+      "mass": 420000,
+      "area": 1600,
+      "cd": 2.2,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [
+    {
+      "name": "Cape Canaveral",
+      "lat": 28.39,
+      "lon": -80.61,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Canberra",
+      "lat": -35.4,
+      "lon": 148.98,
+      "alt": 0.7,
+      "min_el": 10.0,
+      "color": null
+    },
+    {
+      "name": "Kourou",
+      "lat": 5.25,
+      "lon": -52.8,
+      "alt": 0.0,
+      "min_el": 10.0,
+      "color": null
+    }
+  ],
+  "maneuvers": [],
+  "launches": [
+    {
+      "name": "Aurora probe",
+      "vehicle": {
+        "name": "Sounding rocket",
+        "stages": [
+          {
+            "name": "Motor",
+            "thrust": 60.0,
+            "isp_vac": 255.0,
+            "isp_sl": 230.0,
+            "propellant": 1100.0,
+            "dry": 280.0
+          }
+        ],
+        "fairing": 0.0,
+        "fairing_alt": 110.0,
+        "diameter": 0.56,
+        "cd": 0.35,
+        "max_g": 0.0,
+        "stage_coast": 0.0
+      },
+      "site": "Andoya (Norway)",
+      "lat": 69.294,
+      "lon": 16.021,
+      "alt": 0.0,
+      "timing": "delay",
+      "delay": 60.0,
+      "t0": null,
+      "guidance": "open",
+      "perigee_alt": 400.0,
+      "apogee_alt": 400.0,
+      "inclination": 51.6,
+      "direction": "north",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 0.0,
+      "vertical_time": 10.0,
+      "kick": 1.0,
+      "payload_mass": 150.0,
+      "payload_area": 0.3,
+      "payload_cd": 2.2,
+      "circularize": false,
+      "track_stages": true,
+      "color": null
+    },
+    {
+      "name": "Starlink batch",
+      "vehicle": {
+        "name": "Falcon 9",
+        "stages": [
+          {
+            "name": "Stage 1",
+            "thrust": 8227.0,
+            "isp_vac": 311.0,
+            "isp_sl": 282.0,
+            "propellant": 395700.0,
+            "dry": 25600.0
+          },
+          {
+            "name": "Stage 2",
+            "thrust": 981.0,
+            "isp_vac": 348.0,
+            "isp_sl": 0.0,
+            "propellant": 92670.0,
+            "dry": 3900.0
+          }
+        ],
+        "fairing": 1900.0,
+        "fairing_alt": 110.0,
+        "diameter": 3.7,
+        "cd": 0.45,
+        "max_g": 0.0,
+        "stage_coast": 8.0
+      },
+      "site": "Cape Canaveral SLC-40 (USA)",
+      "lat": 28.562,
+      "lon": -80.577,
+      "alt": 0.0,
+      "timing": "delay",
+      "delay": 120.0,
+      "t0": null,
+      "guidance": "orbit",
+      "perigee_alt": 300.0,
+      "apogee_alt": 300.0,
+      "inclination": 53.0,
+      "direction": "north",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 2.511,
+      "payload_mass": 15000.0,
+      "payload_area": 20.0,
+      "payload_cd": 2.2,
+      "circularize": false,
+      "track_stages": true,
+      "color": null
+    },
+    {
+      "name": "Rocket Lab sat",
+      "vehicle": {
+        "name": "Electron",
+        "stages": [
+          {
+            "name": "Stage 1",
+            "thrust": 224.0,
+            "isp_vac": 311.0,
+            "isp_sl": 282.0,
+            "propellant": 9250.0,
+            "dry": 950.0
+          },
+          {
+            "name": "Stage 2",
+            "thrust": 25.8,
+            "isp_vac": 343.0,
+            "isp_sl": 0.0,
+            "propellant": 2050.0,
+            "dry": 250.0
+          }
+        ],
+        "fairing": 50.0,
+        "fairing_alt": 105.0,
+        "diameter": 1.2,
+        "cd": 0.45,
+        "max_g": 0.0,
+        "stage_coast": 3.0
+      },
+      "site": "Mahia LC-1 (New Zealand)",
+      "lat": -39.262,
+      "lon": 177.865,
+      "alt": 0.1,
+      "timing": "delay",
+      "delay": 300.0,
+      "t0": null,
+      "guidance": "orbit",
+      "perigee_alt": 200.0,
+      "apogee_alt": 500.0,
+      "inclination": 97.4,
+      "direction": "south",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 10.369,
+      "payload_mass": 150.0,
+      "payload_area": 1.0,
+      "payload_cd": 2.2,
+      "circularize": true,
+      "track_stages": true,
+      "color": null
+    },
+    {
+      "name": "Apollo stack",
+      "vehicle": {
+        "name": "Saturn V",
+        "stages": [
+          {
+            "name": "S-IC",
+            "thrust": 38700.0,
+            "isp_vac": 304.0,
+            "isp_sl": 263.0,
+            "propellant": 2077000.0,
+            "dry": 131000.0
+          },
+          {
+            "name": "S-II",
+            "thrust": 5141.0,
+            "isp_vac": 421.0,
+            "isp_sl": 0.0,
+            "propellant": 444000.0,
+            "dry": 40000.0
+          },
+          {
+            "name": "S-IVB",
+            "thrust": 1033.0,
+            "isp_vac": 421.0,
+            "isp_sl": 0.0,
+            "propellant": 109000.0,
+            "dry": 13500.0
+          }
+        ],
+        "fairing": 4000.0,
+        "fairing_alt": 90.0,
+        "diameter": 10.1,
+        "cd": 0.5,
+        "max_g": 4.0,
+        "stage_coast": 4.0
+      },
+      "site": "Kennedy LC-39A (USA)",
+      "lat": 28.608,
+      "lon": -80.604,
+      "alt": 0.0,
+      "timing": "delay",
+      "delay": 480.0,
+      "t0": null,
+      "guidance": "orbit",
+      "perigee_alt": 190.0,
+      "apogee_alt": 190.0,
+      "inclination": 32.5,
+      "direction": "north",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 0.151,
+      "payload_mass": 45000.0,
+      "payload_area": 30.0,
+      "payload_cd": 2.2,
+      "circularize": false,
+      "track_stages": true,
+      "color": null
+    },
+    {
+      "name": "Comsat",
+      "vehicle": {
+        "name": "Falcon 9",
+        "stages": [
+          {
+            "name": "Stage 1",
+            "thrust": 8227.0,
+            "isp_vac": 311.0,
+            "isp_sl": 282.0,
+            "propellant": 395700.0,
+            "dry": 25600.0
+          },
+          {
+            "name": "Stage 2",
+            "thrust": 981.0,
+            "isp_vac": 348.0,
+            "isp_sl": 0.0,
+            "propellant": 92670.0,
+            "dry": 3900.0
+          }
+        ],
+        "fairing": 1900.0,
+        "fairing_alt": 110.0,
+        "diameter": 3.7,
+        "cd": 0.45,
+        "max_g": 0.0,
+        "stage_coast": 8.0
+      },
+      "site": "Kourou ELA-3 (French Guiana)",
+      "lat": 5.239,
+      "lon": -52.768,
+      "alt": 0.0,
+      "timing": "delay",
+      "delay": 720.0,
+      "t0": null,
+      "guidance": "orbit",
+      "perigee_alt": 250.0,
+      "apogee_alt": 35786.0,
+      "inclination": 6.0,
+      "direction": "north",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 4.32,
+      "payload_mass": 5500.0,
+      "payload_area": 15.0,
+      "payload_cd": 2.2,
+      "circularize": true,
+      "track_stages": true,
+      "color": null
+    },
+    {
+      "name": "Crew Dragon",
+      "vehicle": {
+        "name": "Falcon 9",
+        "stages": [
+          {
+            "name": "Stage 1",
+            "thrust": 8227.0,
+            "isp_vac": 311.0,
+            "isp_sl": 282.0,
+            "propellant": 395700.0,
+            "dry": 25600.0
+          },
+          {
+            "name": "Stage 2",
+            "thrust": 981.0,
+            "isp_vac": 348.0,
+            "isp_sl": 0.0,
+            "propellant": 92670.0,
+            "dry": 3900.0
+          }
+        ],
+        "fairing": 1900.0,
+        "fairing_alt": 110.0,
+        "diameter": 3.7,
+        "cd": 0.45,
+        "max_g": 0.0,
+        "stage_coast": 8.0
+      },
+      "site": "Cape Canaveral SLC-40 (USA)",
+      "lat": 28.562,
+      "lon": -80.577,
+      "alt": 0.0,
+      "timing": "plane",
+      "delay": 0.0,
+      "t0": null,
+      "guidance": "orbit",
+      "perigee_alt": 300.0,
+      "apogee_alt": 300.0,
+      "inclination": 51.6,
+      "direction": "north",
+      "raan": 0.0,
+      "target": "ISS",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 2.584,
+      "payload_mass": 12500.0,
+      "payload_area": 12.0,
+      "payload_cd": 2.2,
+      "circularize": false,
+      "track_stages": true,
+      "color": null
+    }
+  ]
+}

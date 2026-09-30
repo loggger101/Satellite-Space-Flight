@@ -1,5 +1,5 @@
 """3-D scene renderer: stars, Sun, Earth, axes, orbits, trails,
-satellites, ground stations and annotations.
+satellites, ground stations, rocket exhaust and annotations.
 
 Occlusion by the Earth is handled with two passes: every line segment or
 marker whose sight line is blocked by the Earth sphere is drawn *before*
@@ -22,6 +22,7 @@ from ..frames import eci_to_ecef, look_angles, rot3
 from ..analysis import coverage_half_angle, footprint
 from ..eclipse import shadow_fraction
 from ..simulation import ACTIVE
+from ..timeutil import format_duration
 from . import theme
 from .earth import EarthRenderer
 
@@ -220,6 +221,7 @@ class SceneRenderer:
         # satellites (dimmed while in Earth's shadow)
         self._sat_lit = shadow_fraction(sim.y[:, :3], sun) if sim.n else np.zeros(0)
         self._sat_start = len(markers)
+        pads = {sim.sats.index(a.sat): a for a in sim.ascents if a.phase == "pad"}
         for i, s in enumerate(sim.sats):
             p = W @ sim.y[i, :3]
             if s.status != ACTIVE:
@@ -227,6 +229,8 @@ class SceneRenderer:
                                 if (sim.n <= 40 or i == sel) else None, i == sel))
                 continue
             label = s.name if (opts.labels and (sim.n <= 40 or i == sel)) else None
+            if label and i in pads:
+                label += f"  T-{format_duration(pads[i].t0 - sim.t).split('.')[0]}"
             lit = float(self._sat_lit[i])
             col = theme.mix(theme.dim(s.color, 0.32), s.color, lit)
             markers.append((p, col, 5 if i == sel else 3, label, i == sel))
@@ -246,6 +250,7 @@ class SceneRenderer:
             orbitviz.draw_fill(surf, cam, poly, rgba, "near")
         self._draw_lines(surf, cam, lines, False, cache)
         self._draw_markers(surf, app, markers, mpos, behind=False)
+        self._exhaust(surf, sim, cam, W)
 
         # picking data
         # satellites are the last markers appended
@@ -265,7 +270,8 @@ class SceneRenderer:
     # --- pieces -----------------------------------------------------------------------------
     def _orbit_indices(self, app):
         sim, mode = app.sim, app.opts.orbits
-        act = [i for i, s in enumerate(sim.sats) if s.status == ACTIVE]
+        pads = {id(a.sat) for a in sim.ascents if a.phase == "pad"}
+        act = [i for i, s in enumerate(sim.sats) if s.status == ACTIVE and id(s) not in pads]
         if mode == "none":
             return []
         if mode == "all" or (mode == "auto" and sim.n <= 60):
@@ -337,12 +343,33 @@ class SceneRenderer:
             out.append(Line(ring * R_EARTH * 1.003 @ world_to_ecef, theme.mix(col, (255, 255, 255), 0.3), 2, 0.0))
         return out
 
+    def _exhaust(self, surf, sim, cam, W):
+        """A flame behind every vehicle whose engines are running, sized to
+        the view so it shows at any zoom."""
+        for a in sim.ascents:
+            if not a.burning:
+                continue
+            p = W @ sim.y[sim.sats.index(a.sat), :3]
+            d = W @ np.asarray(a.thrust_dir)
+            length = cam.distance * 0.03 * (0.5 + 0.5 * a.throttle)
+            pts = np.stack([p, p - d * length, p - d * length * 0.45])
+            sx, sy, _ = cam.project(pts)
+            if not np.all(np.isfinite(sx)) or _occluded(cam, pts[:1])[0]:
+                continue
+            if np.any(np.abs(sx) > CLIP) or np.any(np.abs(sy) > CLIP):
+                continue
+            head, tail, mid = (int(sx[0]), int(sy[0])), (int(sx[1]), int(sy[1])), (int(sx[2]), int(sy[2]))
+            flicker = 0.85 + 0.15 * math.sin(pygame.time.get_ticks() * 0.05)
+            pygame.draw.line(surf, theme.dim((255, 110, 40), flicker), head, tail, 6)
+            pygame.draw.line(surf, (255, 200, 90), head, mid, 3)
+            pygame.draw.circle(surf, (255, 245, 210), head, 3)
+
     def _project_markers(self, cam, markers):
         if not markers:
             return (np.zeros(0), np.zeros(0), np.zeros(0, bool))
         pts = np.stack([m[0] for m in markers])
         sx, sy, _ = cam.project(pts)
-        hid = cam.hidden_by_sphere(pts)
+        hid = _occluded(cam, pts)
         ok = np.isfinite(sx) & np.isfinite(sy)
         return sx, sy, ok & ~hid
 
@@ -399,6 +426,18 @@ class SceneRenderer:
             spr = self._sprite("sun", (255, 236, 190), 150)
             surf.blit(spr, (x - 150, y - 150), special_flags=pygame.BLEND_ADD)
             app.fonts.draw(surf, "Sun", (x + 18, y + 12), theme.SUN, app.fonts.small)
+
+
+def _occluded(cam, pts):
+    """Earth occlusion of markers. The globe is drawn as a sphere of
+    equatorial radius, but the WGS-84 surface is up to 21 km lower: a launch
+    pad (or ground station) away from the equator sits inside that sphere, so
+    such points are tested against a sphere just beneath them."""
+    hid = cam.hidden_by_sphere(pts)
+    rm = np.linalg.norm(pts, axis=-1)
+    for k in np.flatnonzero(rm < R_EARTH * 1.002):
+        hid[k] = cam.hidden_by_sphere(pts[k:k + 1], min(R_EARTH, rm[k]) * 0.998)[0]
+    return hid
 
 
 def _runs(surf, color, xs, ys, mask, width):

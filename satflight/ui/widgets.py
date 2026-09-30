@@ -164,7 +164,8 @@ class Choice(Widget):
         pygame.draw.rect(surf, bg, self.rect, border_radius=4)
         pygame.draw.rect(surf, theme.PANEL_EDGE, self.rect, 1, border_radius=4)
         clip = surf.get_clip()
-        surf.set_clip(self.rect.inflate(-24, 0))
+        # clip on the right only (for the arrows): a symmetric inset cut the first letter
+        surf.set_clip(pygame.Rect(self.rect.x + 2, self.rect.y, self.rect.w - 26, self.rect.h))
         fonts.draw(surf, self.value, (self.rect.x + 8, self.rect.centery), theme.TEXT, fonts.ui, "midleft")
         surf.set_clip(clip)
         fonts.draw(surf, "<>", (self.rect.right - 8, self.rect.centery), theme.DIM, fonts.small, "midright")
@@ -207,10 +208,16 @@ class FieldSpec:
 
 
 class FormDialog:
+    """A modal form. ``side`` is an optional panel drawn to the right of the
+    fields: any object with ``width``, ``min_height``, ``draw(surf, rect,
+    dialog)`` and ``handle(ev, dialog) -> bool``. It is left out when the
+    window is too narrow for it."""
     ROW = 32
+    MIN_ROW = 22
 
     def __init__(self, app, title: str, specs: list[FieldSpec], on_ok, ok_text: str = "OK",
-                 width: int = 520, on_change=None, extra_buttons=None, subtitle: str = ""):
+                 width: int = 520, on_change=None, extra_buttons=None, subtitle: str = "",
+                 side=None):
         self.app = app
         self.title = title
         self.subtitle = subtitle
@@ -218,6 +225,9 @@ class FormDialog:
         self.on_ok = on_ok
         self.on_change = on_change
         self.width = width
+        self.side = side
+        self.side_rect = None
+        self.row_h = self.ROW
         self.error = ""
         self.info: dict[str, str] = {}
         self.widgets: dict[str, Widget] = {}
@@ -300,28 +310,44 @@ class FormDialog:
     def layout(self):
         raw = self.raw()
         rows = [s for s in self.specs if self._visible(s, raw)]
-        h = 64 + (22 if self.subtitle else 0) + self.ROW * len(rows) + 78
         sw, sh = self.app.screen.get_size()
-        h = min(h, sh - 20)
-        self.rect = pygame.Rect((sw - self.width) // 2, max(10, (sh - h) // 2), self.width, h)
-        y = self.rect.y + 52 + (22 if self.subtitle else 0)
+        side_w = 0
+        if self.side is not None:
+            side_w = min(self.side.width, sw - self.width - 34)
+            side_w = side_w if side_w >= 260 else 0
+        total_w = self.width + (side_w + 6 if side_w else 0)
+        top = 52 + (22 if self.subtitle else 0)
+        avail = sh - 20 - top - 90
+        # squeeze the rows (never below MIN_ROW) rather than run off the screen
+        row = max(self.MIN_ROW, min(self.ROW, avail // max(1, len(rows))))
+        body = row * len(rows) + 12
+        if side_w:
+            body = max(body, min(self.side.min_height, avail + 12))
+        h = min(top + body + 78, sh - 20)
+        self.row_h = row
+        self.rect = pygame.Rect((sw - total_w) // 2, max(10, (sh - h) // 2), total_w, h)
+        self.side_rect = (pygame.Rect(self.rect.x + self.width, self.rect.y + top - 6, side_w,
+                                      self.rect.bottom - 56 - (self.rect.y + top - 6))
+                          if side_w else None)
+        y = self.rect.y + top
         lx = self.rect.x + 18
+        right = self.rect.x + self.width - 18
         wx = self.rect.x + int(self.width * 0.44)
-        ww = self.rect.right - 18 - wx
+        ww = right - wx
         self._rows = []
         for s in rows:
             if s.kind == "info":
-                self._rows.append((s, pygame.Rect(lx, y, self.width - 36, self.ROW - 6)))
+                self._rows.append((s, pygame.Rect(lx, y, self.width - 36, row - 6)))
             else:
                 w = self.widgets[s.key]
                 if s.wide:
-                    w.rect = pygame.Rect(lx + 60, y, self.rect.right - 18 - lx - 60, self.ROW - 6)
+                    w.rect = pygame.Rect(lx + 60, y, right - lx - 60, row - 6)
                 elif s.kind == "bool":
-                    w.rect = pygame.Rect(wx, y, 24, self.ROW - 6)
+                    w.rect = pygame.Rect(wx, y, 24, row - 6)
                 else:
-                    w.rect = pygame.Rect(wx, y, ww, self.ROW - 6)
+                    w.rect = pygame.Rect(wx, y, ww, row - 6)
                 self._rows.append((s, w.rect))
-            y += self.ROW
+            y += row
         bx = self.rect.right - 18
         for b in reversed(self.buttons):
             bw = max(90, self.app.fonts.ui.size(b.text)[0] + 28)
@@ -370,6 +396,8 @@ class FormDialog:
         for b in self.buttons:
             if b.handle(ev):
                 return True
+        if self.side_rect is not None and self.side.handle(ev, self):
+            return True
         visible = [s for s in self.specs if s.key in self._visible_keys and s.key in self.widgets]
         if ev.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEMOTION):
             # every widget sees clicks so text fields can lose focus
@@ -399,6 +427,8 @@ class FormDialog:
                 continue
             fonts.draw(surf, s.label, (self.rect.x + 18, r.centery), theme.DIM, fonts.ui, "midleft")
             self.widgets[s.key].draw(surf, fonts)
+        if self.side_rect is not None:
+            self.side.draw(surf, self.side_rect, self)
         for b in self.buttons:
             b.draw(surf, fonts)
         if self.error:

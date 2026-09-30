@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -13,11 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from satflight.forces import ForceModel  # noqa: E402
+from satflight.launch import LAUNCH_SITES, LaunchSpec, pad_state, vehicle_preset  # noqa: E402
 from satflight.planner import plan_hohmann, plan_rendezvous, scan_rendezvous  # noqa: E402
 from satflight.scenario import (DEFAULT_STATIONS, ConstellationSpec, GroundStation,  # noqa: E402
                                 SatSpec, Scenario, preset_spec)
 from satflight.simulation import Simulation  # noqa: E402
-from satflight.timeutil import UTC  # noqa: E402
+from satflight.timeutil import UTC, Clock  # noqa: E402
 
 EPOCH = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
 OUT = ROOT / "scenarios"
@@ -157,10 +159,62 @@ def launches():
         stations=[DEFAULT_STATIONS[0], DEFAULT_STATIONS[4]])
 
 
+def launch_day():
+    def site(name, **kw):
+        lat, lon, alt = LAUNCH_SITES[name]
+        return dict(site=name, lat=lat, lon=lon, alt=alt, **kw)
+
+    launches_ = [
+        LaunchSpec("Aurora probe", vehicle_preset("Sounding rocket"), guidance="open", azimuth=0.0,
+                   timing="delay", delay=60.0, kick=1.0, payload_mass=150.0, payload_area=0.3,
+                   **site("Andoya (Norway)")),
+        LaunchSpec("Starlink batch", vehicle_preset("Falcon 9 (approx.)"), timing="delay", delay=120.0,
+                   perigee_alt=300.0, apogee_alt=300.0, inclination=53.0, payload_mass=15000.0,
+                   payload_area=20.0, **site("Cape Canaveral SLC-40 (USA)")),
+        LaunchSpec("Rocket Lab sat", vehicle_preset("Electron (approx.)"), timing="delay", delay=300.0,
+                   perigee_alt=200.0, apogee_alt=500.0, inclination=97.4, direction="south",
+                   circularize=True, payload_mass=150.0, payload_area=1.0,
+                   **site("Mahia LC-1 (New Zealand)")),
+        LaunchSpec("Apollo stack", vehicle_preset("Saturn V (approx.)"), timing="delay", delay=480.0,
+                   perigee_alt=190.0, apogee_alt=190.0, inclination=32.5, payload_mass=45000.0,
+                   payload_area=30.0, **site("Kennedy LC-39A (USA)")),
+        LaunchSpec("Comsat", vehicle_preset("Falcon 9 (approx.)"), timing="delay", delay=720.0,
+                   perigee_alt=250.0, apogee_alt=35786.0, inclination=6.0, circularize=True,
+                   payload_mass=5500.0, payload_area=15.0, **site("Kourou ELA-3 (French Guiana)")),
+        LaunchSpec("Crew Dragon", vehicle_preset("Falcon 9 (approx.)"), timing="plane", target="ISS",
+                   perigee_alt=300.0, apogee_alt=300.0, payload_mass=12500.0, payload_area=12.0,
+                   **site("Cape Canaveral SLC-40 (USA)")),
+    ]
+    # put the ISS plane over the Cape (northbound) 25 minutes in, so the Crew
+    # Dragon's launch window comes up during the show
+    iss = preset_spec("ISS (LEO 420 km, 51.6 deg)")
+    r, _ = pad_state(*LAUNCH_SITES["Cape Canaveral SLC-40 (USA)"], float(Clock(EPOCH).gmst(1500.0)))
+    inc = math.radians(iss.orbit["i"])
+    u = math.asin(r[2] / math.hypot(*r) / math.sin(inc))
+    iss.orbit["raan"] = round(math.degrees(math.atan2(r[1], r[0]) - math.atan2(math.cos(inc) * math.sin(u),
+                                                                                math.cos(u))) % 360, 3)
+    sc = Scenario(
+        name="Launch day",
+        description="Six launches from four continents: a sounding rocket over Norway, Falcon 9 to "
+                    "a 53 deg shell, Electron to sun-synchronous orbit, a Saturn V parking orbit, a "
+                    "Kourou GTO that circularises at apogee, and a Crew Dragon that waits for the "
+                    "window into the ISS plane. Spent stages fall back or stay in orbit.",
+        epoch=EPOCH, forces=ForceModel(j2=True, drag=True), warp=10, record_dt=5.0,
+        satellites=[iss],
+        stations=[DEFAULT_STATIONS[0], DEFAULT_STATIONS[2], DEFAULT_STATIONS[4]],
+        launches=launches_)
+    # fly every launch once and store the optimised pitch kick, so loading is quick
+    sim = Simulation(sc)
+    kicks = {a.spec.name: a.kick_deg for a in sim.ascents}
+    for spec in sc.launches:
+        spec.kick = round(kicks[spec.name], 3)
+    return sc
+
+
 ALL = {"default": default, "hohmann_to_geo": hohmann, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
-       "launches_and_arcs": launches}
+       "launches_and_arcs": launches, "launch_day": launch_day}
 
 
 if __name__ == "__main__":

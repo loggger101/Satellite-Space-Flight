@@ -137,10 +137,10 @@ def test_physics_dialog_switches_models(app):
     app.open("physics")
     dlg = app.dialogs[-1]
     dlg.set("drag", True)
-    dlg.set("moon", True)
+    dlg.set("j3", True)
     dlg.set("propagator", "kepler")
     dlg.submit()
-    assert app.sim.forces.drag and app.sim.forces.moon and app.sim.propagator == "kepler"
+    assert app.sim.forces.drag and app.sim.forces.j3 and app.sim.propagator == "kepler"
     frame(app, 3)
 
 
@@ -222,3 +222,38 @@ def test_ocean_detection_on_synthetic_texture():
     assert water[5, 5] > 0.99 and water[60, 32] < 0.01
     assert out[60, 32, 1] > out[60, 32, 2]        # land stays green
     assert out[5, 5, 2] > out[5, 5, 0]            # sea stays blue
+
+
+def test_orbit_inspector_tabs_scroll_and_geometry_modes(app):
+    frame(app, 2)
+    assert app.info.tab == 0                       # the Orbit tab is the default
+    info = app.orbit_info()
+    assert info is not None and info is app.orbit_info()   # cached per state
+    body = app.info.body
+    assert app.info.content_h > body.h             # the property sheet scrolls
+    pygame.mouse.set_pos(body.center)
+    app.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-5))
+    frame(app)
+    assert app.info.scroll[0] > 0
+    tab = app.info.tab_rects[1]
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=tab.center))
+    assert app.info.tab == 1
+    key(app, pygame.K_q)
+    assert app.info.tab == 0
+    for mode in ("basic", "off", "full"):
+        key(app, pygame.K_d)
+        assert app.opts.geometry == mode
+        frame(app)
+
+
+def test_orbit_inspector_draws_every_bundled_orbit(app):
+    """Every satellite of every scenario (circular, equatorial, HEO,
+    suborbital, hyperbolic, re-entered) in every geometry mode."""
+    for p in app.scenario_files():
+        app.load_scenario(p)
+        app.sim.advance(300)
+        for i in range(min(app.sim.n, 8)):
+            app.select(i)
+            for mode in ("full", "basic"):
+                app.opts.geometry = mode
+                frame(app, 1, dt=0.0)

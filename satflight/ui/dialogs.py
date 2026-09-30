@@ -88,7 +88,6 @@ def add_satellite_dialog(app):
         F("mass", "Mass (kg)", "float", "500"),
         F("area", "Area (m^2)", "float", "5"),
         F("cd", "Drag coefficient Cd", "float", "2.2"),
-        F("cr", "Reflectivity Cr", "float", "1.5"),
         F("preview", "", "info", ""),
     ]
 
@@ -99,7 +98,7 @@ def add_satellite_dialog(app):
 
     def on_ok(v):
         orbit = _orbit_from(v)
-        props = dict(mass=v["mass"], area=v["area"], cd=v["cd"], cr=v["cr"])
+        props = dict(mass=v["mass"], area=v["area"], cd=v["cd"])
         if min(props.values()) <= 0 or v["mass"] <= 0:
             return "mass, area and coefficients must be positive"
         added = sim.add_satellites(orbit, v["name"] or "Sat", count=max(1, v["count"]), **props)
@@ -119,7 +118,7 @@ def _apply_preset(dlg):
     p = PRESETS[name]
     o = p["orbit"]
     dlg.set("name", name.split(" (")[0])
-    for k in ("mass", "area", "cd", "cr"):
+    for k in ("mass", "area", "cd"):
         if k in p:
             dlg.set(k, p[k])
     t = o["type"]
@@ -201,7 +200,7 @@ def walker_dialog(app):
         states = walker_states(c)
         from ..scenario import palette_color
         color = palette_color(sim.n)
-        props = dict(mass=c.mass, area=c.area, cd=c.cd, cr=c.cr)
+        props = dict(mass=c.mass, area=c.area, cd=c.cd)
         n0 = sim.n
         sim.add_many([(name, color, props, r, v_) for name, r, v_ in states])
         app.select(n0)
@@ -362,9 +361,6 @@ def physics_dialog(app):
         F("j4", "J4", "bool", fm.j4),
         F("drag", "Atmospheric drag", "bool", fm.drag),
         F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}"),
-        F("sun", "Sun third-body", "bool", fm.sun),
-        F("moon", "Moon third-body", "bool", fm.moon),
-        F("srp", "Solar radiation pressure", "bool", fm.srp),
         F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}"),
         F("conj", "Close-approach alert (km)", "float", f"{sim.conjunction_km:g}"),
     ]
@@ -372,8 +368,8 @@ def physics_dialog(app):
     def on_ok(v):
         if v["rtol"] <= 0 or v["atol"] <= 0 or v["h_max"] <= 0 or v["h_fixed"] <= 0:
             return "tolerances and steps must be positive"
-        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], drag=v["drag"], sun=v["sun"],
-                                moon=v["moon"], srp=v["srp"], density_scale=v["density_scale"])
+        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], drag=v["drag"],
+                                density_scale=v["density_scale"])
         sim.set_propagator(v["propagator"])
         it.method = v["method"]
         it.rtol, it.atol, it.h_max, it.h_fixed = v["rtol"], v["atol"], v["h_max"], v["h_fixed"]
@@ -462,11 +458,10 @@ def edit_satellite_dialog(app):
         F("mass", "Mass (kg)", "float", f"{s.mass:g}"),
         F("area", "Area (m^2)", "float", f"{s.area:g}"),
         F("cd", "Drag coefficient Cd", "float", f"{s.cd:g}"),
-        F("cr", "Reflectivity Cr", "float", f"{s.cr:g}"),
     ]
 
     def on_ok(v):
-        if min(v["mass"], v["area"], v["cd"], v["cr"]) <= 0:
+        if min(v["mass"], v["area"], v["cd"]) <= 0:
             return "values must be positive"
         new = v["name"] or s.name
         if new != s.name:
@@ -477,7 +472,7 @@ def edit_satellite_dialog(app):
                 if m.target == s.name:
                     m.target = new
             s.name = new
-        s.mass, s.area, s.cd, s.cr = v["mass"], v["area"], v["cd"], v["cr"]
+        s.mass, s.area, s.cd = v["mass"], v["area"], v["cd"]
         return None
 
     return FormDialog(app, "Edit satellite", specs, on_ok, "Apply")

@@ -1,4 +1,4 @@
-"""3-D scene renderer: stars, Sun, Moon, Earth, axes, orbits, trails,
+"""3-D scene renderer: stars, Sun, Earth, axes, orbits, trails,
 satellites, ground stations and annotations.
 
 Occlusion by the Earth is handled with two passes: every line segment or
@@ -15,9 +15,9 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from ..constants import R_EARTH, R_GEO, R_MOON
+from ..constants import R_EARTH, R_GEO
 from ..elements import coe2rv, conic_points, rv2coe
-from ..ephemeris import moon_position, sun_position
+from ..ephemeris import sun_position
 from ..frames import eci_to_ecef, look_angles, rot3
 from ..analysis import coverage_half_angle, footprint
 from ..eclipse import shadow_fraction
@@ -206,9 +206,16 @@ class SceneRenderer:
                         lines.append(Line(np.linspace(p_world, W @ sim.y[i, :3], 12),
                                           (80, 220, 130), 1, 0.4))
 
-        # selected-satellite annotations
-        if sel >= 0 and sim.sats[sel].status == ACTIVE:
+        # selected-satellite annotations and orbit geometry
+        from . import orbitviz          # imports Line from this module
+        fills = []
+        info = app.orbit_info() if sel >= 0 else None
+        if info is not None:
             lines.extend(self._selected_extras(sim, sel, W, world_to_ecef, opts, markers))
+            ol, om, fills = orbitviz.build(info, sim.y[sel, :3], sim.y[sel, 3:], sim.sats[sel].color,
+                                           W, cam, opts.geometry)
+            lines.extend(ol)
+            markers.extend(om)
 
         # satellites (dimmed while in Earth's shadow)
         self._sat_lit = shadow_fraction(sim.y[:, :3], sun) if sim.n else np.zeros(0)
@@ -228,19 +235,15 @@ class SceneRenderer:
                 tip = sim.y[i, :3] + v * 180.0
                 lines.append(Line(np.linspace(p, W @ tip, 8), theme.mix(s.color, (255, 255, 255), 0.4), 2))
 
-        # the Moon (drawn in depth order relative to Earth)
-        moon_world = W @ moon_position(jd)
         cache: dict = {}
         mpos = self._project_markers(cam, markers)
         self._draw_lines(surf, cam, lines, True, cache)
         self._draw_markers(surf, app, markers, mpos, behind=True)
-        earth_depth = float(cam.to_camera(np.zeros(3))[2])
-        moon_depth = float(cam.to_camera(moon_world)[2])
-        if opts.moon and moon_depth > earth_depth:
-            self._moon(surf, cam, moon_world, sun_dir, app)
+        for poly, rgba in fills:
+            orbitviz.draw_fill(surf, cam, poly, rgba, "far")
         self.earth.render(surf, cam, world_to_ecef, sun_dir)
-        if opts.moon and moon_depth <= earth_depth:
-            self._moon(surf, cam, moon_world, sun_dir, app)
+        for poly, rgba in fills:
+            orbitviz.draw_fill(surf, cam, poly, rgba, "near")
         self._draw_lines(surf, cam, lines, False, cache)
         self._draw_markers(surf, app, markers, mpos, behind=False)
 
@@ -252,6 +255,12 @@ class SceneRenderer:
             self.sat_screen = (sx[-nsat:], sy[-nsat:], vis[-nsat:])
         else:
             self.sat_screen = None
+        if info is not None and opts.geometry == "full" and self.sat_screen is not None:
+            sx, sy, vis = self.sat_screen
+            if vis[sel] and np.isfinite(sx[sel]):
+                bounds = app.view_rect()
+                if bounds.collidepoint(sx[sel], sy[sel]):
+                    orbitviz.draw_callout(surf, app, info, sim.sats[sel], (sx[sel], sy[sel]), bounds)
 
     # --- pieces -----------------------------------------------------------------------------
     def _orbit_indices(self, app):
@@ -301,14 +310,15 @@ class SceneRenderer:
         # nadir line
         rn = r / np.linalg.norm(r)
         out.append(Line(np.linspace(W @ r, W @ (rn * R_EARTH), 16), theme.dim(col, 0.6), 1, 0.4))
-        # apsides and ascending node
-        if el.e > 1e-4:
+        # apsides and ascending node (the orbit-geometry overlay labels these itself)
+        plain = opts.geometry == "off"
+        if plain and el.e > 1e-4:
             pe, _ = coe2rv(el.a, el.e, el.i, el.raan, el.argp, 0.0)
             markers.append((W @ pe, (255, 255, 255), -2, "Pe", False))
             if el.e < 1:
                 ap, _ = coe2rv(el.a, el.e, el.i, el.raan, el.argp, math.pi)
                 markers.append((W @ ap, (255, 255, 255), -2, "Ap", False))
-        if math.sin(el.i) > 1e-3:
+        if plain and math.sin(el.i) > 1e-3:
             nu_an = (-el.argp) % (2 * math.pi)
             rr = el.p / (1 + el.e * math.cos(nu_an))
             if rr > 0 and (el.e < 1 or math.cos(nu_an) > -1 / el.e):
@@ -389,27 +399,6 @@ class SceneRenderer:
             spr = self._sprite("sun", (255, 236, 190), 150)
             surf.blit(spr, (x - 150, y - 150), special_flags=pygame.BLEND_ADD)
             app.fonts.draw(surf, "Sun", (x + 18, y + 12), theme.SUN, app.fonts.small)
-
-    def _moon(self, surf, cam, moon_world, sun_dir, app):
-        sx, sy, z = cam.project(moon_world[None, :])
-        if not np.isfinite(sx[0]):
-            return
-        rad = max(3, int(cam.screen_radius(moon_world, R_MOON)))
-        x, y = int(sx[0]), int(sy[0])
-        if -rad < x < cam.width + rad and -rad < y < cam.height + rad and rad < 4000:
-            pygame.draw.circle(surf, (70, 70, 78), (x, y), rad)
-            # lit half: offset disc towards the Sun's screen direction
-            sdx = float(sun_dir @ cam.right)
-            sdy = -float(sun_dir @ cam.up)
-            n = math.hypot(sdx, sdy) or 1.0
-            lit = pygame.Surface((2 * rad + 2, 2 * rad + 2), pygame.SRCALPHA)
-            pygame.draw.circle(lit, (*theme.MOON, 255), (rad + 1, rad + 1), rad)
-            mask = pygame.Surface((2 * rad + 2, 2 * rad + 2), pygame.SRCALPHA)
-            off = (int(rad * 0.9 * sdx / n), int(rad * 0.9 * sdy / n))
-            pygame.draw.circle(mask, (255, 255, 255, 255), (rad + 1 + off[0], rad + 1 + off[1]), rad)
-            lit.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-            surf.blit(lit, (x - rad - 1, y - rad - 1))
-            app.fonts.draw(surf, "Moon", (x + rad + 6, y), theme.MOON, app.fonts.small)
 
 
 def _runs(surf, color, xs, ys, mask, width):

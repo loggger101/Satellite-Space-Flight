@@ -15,9 +15,6 @@
     "j3": false,
     "j4": false,
     "drag": false,
-    "sun": false,
-    "moon": false,
-    "srp": false,
     "density_scale": 1.0
   },
   "record_dt": 20.0,
@@ -40,7 +37,6 @@
       "mass": 260.0,
       "area": 4.0,
       "cd": 2.2,
-      "cr": 1.3,
       "raan0": 0.0
     }
   ],

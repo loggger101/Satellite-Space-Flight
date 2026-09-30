@@ -48,7 +48,6 @@ class Satellite:
     mass: float = 500.0
     area: float = 5.0
     cd: float = 2.2
-    cr: float = 1.5
     status: str = ACTIVE
     dv_used: float = 0.0          # km/s
     shadow: float = 1.0           # illuminated fraction
@@ -144,6 +143,8 @@ class Simulation:
         self._post_step(self.t, force_record=True)
         self.log(f"Scenario '{scenario.name}' loaded: {len(self.sats)} satellites, "
                  f"{len(self.stations)} stations, propagator {self.propagator}")
+        if scenario.out_of_scope:
+            self.log("Ignored (out of scope): " + ", ".join(scenario.out_of_scope), "warn")
 
     # --- bookkeeping -----------------------------------------------------------------
     @property
@@ -338,20 +339,18 @@ class Simulation:
 
     # --- dynamics ------------------------------------------------------------------------
     def _props(self, idx):
-        cd_am = np.array([self.sats[i].cd * self.sats[i].area / self.sats[i].mass for i in idx])
-        cr_am = np.array([self.sats[i].cr * self.sats[i].area / self.sats[i].mass for i in idx])
-        return cd_am, cr_am
+        return np.array([self.sats[i].cd * self.sats[i].area / self.sats[i].mass for i in idx])
 
     def _derivative(self, idx: np.ndarray, burns: list):
-        cd_am, cr_am = self._props(idx)
+        cd_am = self._props(idx)
         rows = {int(i): k for k, i in enumerate(idx)}
         burn_rows = [(rows[self.index_of(b.man.sat)], b) for b in burns
                      if self.index_of(b.man.sat) in rows]
-        clock, forces = self.clock, self.forces
+        forces = self.forces
 
         def f(t, y):
             r, v = y[:, :3], y[:, 3:]
-            a = forces.acceleration(clock.jd(t), r, v, cd_am, cr_am)
+            a = forces.acceleration(r, v, cd_am)
             for k, b in burn_rows:
                 m = b.m0 - b.mdot * (t - b.t0)
                 d = finite_direction(b.man, r[k:k + 1], v[k:k + 1])[0]
@@ -532,7 +531,7 @@ class Simulation:
                 continue
             sc.satellites.append(SatSpec(
                 s.name, {"type": "state", "r": self.y[i, :3].tolist(), "v": self.y[i, 3:].tolist()},
-                list(s.color), s.mass, s.area, s.cd, s.cr))
+                list(s.color), s.mass, s.area, s.cd))
         sc.stations = list(self.stations)
         sc.forces = ForceModel.from_dict(self.forces.to_dict())
         sc.propagator = self.propagator

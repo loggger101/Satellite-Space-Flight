@@ -15,9 +15,6 @@
     "j3": true,
     "j4": true,
     "drag": false,
-    "sun": true,
-    "moon": true,
-    "srp": false,
     "density_scale": 1.0
   },
   "record_dt": 20.0,
@@ -38,7 +35,6 @@
       "mass": 1600,
       "area": 10,
       "cd": 2.2,
-      "cr": 1.5,
       "count": 3
     },
     {
@@ -56,7 +52,6 @@
       "mass": 2000,
       "area": 15,
       "cd": 2.2,
-      "cr": 1.5,
       "count": 3
     }
   ],

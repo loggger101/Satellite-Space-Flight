@@ -107,4 +107,5 @@ class PlotView:
         fonts.draw(surf, f"-{span / div:.1f} {unit_t}", (pr.x, pr.bottom + 3), theme.FAINT,
                    fonts.small)
         fonts.draw(surf, "now", (pr.right, pr.bottom + 3), theme.FAINT, fonts.small, "topright")
-        fonts.draw(surf, f"{y[-1]:.6g}", (pr.right, pr.y), theme.TEXT, fonts.small, "topright")
+        fonts.draw(surf, f"{y[-1]:.6g}" + (f" {unit}" if unit else ""), (pr.right, pr.y),
+                   theme.TEXT, fonts.small, "topright")

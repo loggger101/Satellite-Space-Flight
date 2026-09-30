@@ -48,6 +48,7 @@ class SceneRenderer:
         self._build_sky()
         self._sprites: dict = {}
         self._sat_lit = np.zeros(0)
+        self.label_rects: list[pygame.Rect] = []    # where this frame's 3-D labels went
         self._sat_start = 0         # index of the first satellite marker
         self.sat_screen = None      # (sx, sy, visible) of last frame, for picking
 
@@ -165,6 +166,7 @@ class SceneRenderer:
         sel = app.selected if 0 <= app.selected < sim.n else -1
 
         surf.fill(theme.BG)
+        self.label_rects = []
         self._stars(surf, cam)
         self._sun(surf, cam, sun_dir, app)
 
@@ -409,9 +411,9 @@ class SceneRenderer:
         """Draw hidden or visible markers: dots (radius > 0) with glows for sunlit
         satellites, squares (radius < 0) and labels."""
         sx, sy, vis = mpos
-        fonts = app.fonts
         start = self._sat_start
         glow = len(markers) - start <= 300
+        labels = []
         for k, (_, col, rad, label, selected) in enumerate(markers):
             if not np.isfinite(sx[k]) or not np.isfinite(sy[k]):
                 continue
@@ -432,9 +434,35 @@ class SceneRenderer:
             elif rad < 0:
                 pygame.draw.rect(surf, col, (x + rad, y + rad, -2 * rad, -2 * rad), 1)
             if label and not behind:
-                fonts.draw(surf, label, (x + 9, y - 7), (0, 0, 0), fonts.small)
-                fonts.draw(surf, label, (x + 8, y - 8), theme.mix(col, (255, 255, 255), 0.35),
-                           fonts.small)
+                labels.append((k, x, y, col, label, selected))
+        if labels:
+            self._draw_labels(surf, app.fonts, labels, start, app.view_rect())
+
+    def _draw_labels(self, surf, fonts, labels, start, bounds):
+        """Place each label beside its marker, inside ``bounds`` (clear of the
+        panels) and overlapping no label placed before it, trying right, left,
+        below-right and below-left; a label with no free spot is left out. The
+        selected satellite goes first, then the other satellites, the selected
+        orbit's annotations, stations and axes."""
+        placed = self.label_rects
+        order = sorted(labels, key=lambda m: (not m[5], m[0] < start,
+                                              m[0] if m[0] >= start else -m[0]))
+        for _, x, y, col, label, selected in order:
+            txt = fonts.render(label, theme.mix(col, (255, 255, 255), 0.35), fonts.small)
+            w, h = txt.get_size()
+            spots = [(x + 8, y - 8), (x - 8 - w, y - 8), (x + 8, y + 4), (x - 8 - w, y + 4)]
+            rect = next((r for r in (pygame.Rect(sx_, sy_, w, h) for sx_, sy_ in spots)
+                         if bounds.contains(r) and r.inflate(4, 0).collidelist(placed) < 0),
+                        None)
+            if rect is None:
+                if not selected:
+                    continue
+                rect = pygame.Rect(spots[0], (w, h))    # the selected name always shows
+            placed.append(rect)
+            back = pygame.Surface((w + 6, h), pygame.SRCALPHA)
+            back.fill((0, 0, 0, 120))                   # keeps text legible over the Earth
+            surf.blit(back, (rect.x - 3, rect.y))
+            surf.blit(txt, rect)
 
     def _stars(self, surf, cam):
         """Plot the star field directly into the pixel buffer (bright stars as 2x2)."""

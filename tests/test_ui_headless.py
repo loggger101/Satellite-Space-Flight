@@ -418,3 +418,45 @@ def test_start_screen_keys_clicks_and_buttons(app):
     [b for b in app.dialogs[-1].buttons if b.text == "Launch a rocket"][0].callback()
     assert len(app.dialogs) == 1 and app.dialogs[0].title == "Launch"
     frame(app)
+
+
+# --- readability ---------------------------------------------------------------------------
+
+def hover(app, pos):
+    app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
+
+
+def test_every_button_explains_itself_in_a_tooltip_inside_the_window(app):
+    for size in ((1400, 850), (900, 600)):
+        app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=size[0], h=size[1]))
+        frame(app)
+        for b in app._buttons():
+            assert b.hint and b.tooltip, b.text
+            hover(app, b.rect.center)
+            assert app._tooltip(app.screen) is None           # only after a short rest
+            app._hover = (b, app._hover[1] - 1.0)
+            box = app._tooltip(app.screen)
+            assert box is not None and app.screen.get_rect().contains(box), b.text
+    app.open("walker")
+    assert not any(b.hover for b in app._buttons())           # none left over afterwards
+
+
+def test_scene_labels_never_overlap(app):
+    """Crowded scenes (a launch cluster, a constellation) keep every label legible."""
+    for name in ("launch_day", "launches_and_arcs", "gps_constellation", "default"):
+        app.load_scenario(app.scenario_dir / f"{name}.json")
+        app.sim.advance(1200)
+        frame(app, 2, dt=0.0)
+        rects = app.renderer.label_rects
+        assert rects, name
+        for k, r in enumerate(rects):
+            assert r.collidelist(rects[k + 1:]) < 0, (name, r)
+
+
+def test_long_names_are_shortened_to_fit(app):
+    f = app.fonts
+    assert f.fit("ISS", 200) == "ISS"
+    s = f.fit("Sun-synchronous 700 km with a much longer name", 120, f.small)
+    assert s.endswith("...") and f.small.size(s)[0] <= 120
+    app.sim.sats[0].name = "A satellite with a name far too long for the list"
+    frame(app)                                                # the list row must not overflow

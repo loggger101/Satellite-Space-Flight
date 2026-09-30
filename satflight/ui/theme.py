@@ -5,11 +5,11 @@ from __future__ import annotations
 import pygame
 
 BG = (4, 6, 14)
-PANEL = (12, 17, 30, 215)
+PANEL = (12, 17, 30, 238)     # nearly opaque: the 3-D scene must not show through text
 PANEL_EDGE = (48, 64, 96)
 TEXT = (222, 230, 244)
 DIM = (140, 152, 176)
-FAINT = (86, 98, 122)
+FAINT = (114, 128, 154)       # ~4.7:1 on PANEL, the WCAG minimum for small text
 ACCENT = (96, 180, 255)
 ACCENT_DARK = (34, 70, 120)
 GOOD = (120, 230, 140)
@@ -53,6 +53,20 @@ class Fonts:
             surf = font.render(text, True, color)
             self._cache[key] = surf
         return surf
+
+    def fit(self, text: str, max_w: int, font=None) -> str:
+        """``text`` shortened with "..." so it is at most ``max_w`` px wide."""
+        font = font or self.ui
+        key = ("fit", text, max_w, id(font))
+        out = self._cache.get(key)
+        if out is None:
+            out = text
+            if font.size(text)[0] > max_w:
+                while out and font.size(out + "...")[0] > max_w:
+                    out = out[:-1]
+                out = out.rstrip() + "..."
+            self._cache[key] = out
+        return out
 
     def draw(self, target, text, pos, color=TEXT, font=None, anchor="topleft"):
         """Blit ``text`` with its ``anchor`` point at ``pos``; returns the rect used."""

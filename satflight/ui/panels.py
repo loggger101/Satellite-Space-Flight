@@ -36,15 +36,21 @@ class TopBar:
         self.app = app
         a = app
         self.buttons = [
-            Button("Play", a.toggle_pause, active=lambda: not a.paused, tooltip="Space"),
-            Button("<<", lambda: a.change_warp(-1), tooltip=","),
-            Button(">>", lambda: a.change_warp(1), tooltip="."),
-            Button("1x", a.real_time, tooltip="1"),
-            Button("ECI", a.toggle_frame, tooltip="E"),
-            Button("Map", lambda: a.toggle("map"), active=lambda: a.opts.map, tooltip="M"),
-            Button("Plot", lambda: a.toggle("plot"), active=lambda: a.opts.plot, tooltip="G"),
-            Button("Follow", a.toggle_follow, active=lambda: a.follow, tooltip="F"),
-            Button("Help", lambda: a.toggle("help"), active=lambda: a.opts.help, tooltip="H"),
+            Button("Play", a.toggle_pause, active=lambda: not a.paused, tooltip="Space",
+                   hint="Pause or resume the simulation"),
+            Button("<<", lambda: a.change_warp(-1), tooltip=",", hint="Slower time warp"),
+            Button(">>", lambda: a.change_warp(1), tooltip=".", hint="Faster time warp"),
+            Button("1x", a.real_time, tooltip="1", hint="Real time"),
+            Button("ECI", a.toggle_frame, tooltip="E",
+                   hint="View axes: inertial (ECI) or Earth-fixed (ECEF)"),
+            Button("Map", lambda: a.toggle("map"), active=lambda: a.opts.map, tooltip="M",
+                   hint="Ground-track map"),
+            Button("Plot", lambda: a.toggle("plot"), active=lambda: a.opts.plot, tooltip="G",
+                   hint="Telemetry plot (click the plot to change what it shows)"),
+            Button("Follow", a.toggle_follow, active=lambda: a.follow, tooltip="F",
+                   hint="Camera follows the selected satellite"),
+            Button("Help", lambda: a.toggle("help"), active=lambda: a.opts.help, tooltip="H",
+                   hint="Mouse and keyboard controls"),
         ]
 
     def layout(self, w):
@@ -72,8 +78,11 @@ class TopBar:
         x = fonts.draw(surf, "SATELLITE SPACE FLIGHT", (12, TOP_H // 2), theme.ACCENT, fonts.bold,
                        "midleft").right + 18
         dt = sim.datetime()
+        stamp = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        if x + fonts.mono.size(stamp)[0] > self.left_of_buttons - 8:
+            stamp = dt.strftime("%H:%M:%S UTC")         # narrow window: the time matters most
         parts = [
-            (dt.strftime("%Y-%m-%d %H:%M:%S UTC"), theme.TEXT),
+            (stamp, theme.TEXT),
             (f"T+{format_duration(sim.t)}", theme.DIM),
             ("PAUSED", theme.WARN) if app.paused else (f"x{app.warp:g}", theme.GOOD),
             (sim.propagator + (f"/{sim.integrator.method} h={sim.integrator.stats.last_h:.1f}s"
@@ -83,10 +92,10 @@ class TopBar:
             (f"{app.clock.get_fps():.0f} fps", theme.FAINT),
         ]
         for text, col in parts:
+            if x + fonts.mono.size(text)[0] > self.left_of_buttons - 8:
+                break                   # only whole items, never one cut by the buttons
             r = fonts.draw(surf, text, (x, TOP_H // 2), col, fonts.mono, "midleft")
             x = r.right + 16
-            if x > self.left_of_buttons - 60:
-                break
         for b in self.buttons:
             b.draw(surf, fonts)
 
@@ -102,16 +111,25 @@ class SatList:
         self.app = app
         a = app
         self.buttons = [
-            Button("+ Satellite", lambda: a.open("add"), tooltip="A"),
-            Button("Launch", lambda: a.open("launch"), tooltip="U", accent=True),
-            Button("Walker", lambda: a.open("walker"), tooltip="W"),
-            Button("Manoeuvre", lambda: a.open("maneuver"), tooltip="B"),
-            Button("Station", lambda: a.open("station"), tooltip="N"),
-            Button("Physics", lambda: a.open("physics"), tooltip="P"),
-            Button("Scenarios", lambda: a.open("scenario"), tooltip="Ctrl+O"),
-            Button("Start screen", lambda: a.open("start"), tooltip="Ctrl+N"),
-            Button("Edit", lambda: a.open("edit"), tooltip="Ctrl+E"),
-            Button("Delete", a.delete_selected, tooltip="Del"),
+            Button("+ Satellite", lambda: a.open("add"), tooltip="A",
+                   hint="Add a satellite: preset, orbit elements, state vector or TLE"),
+            Button("Launch", lambda: a.open("launch"), tooltip="U", accent=True,
+                   hint="Launch a rocket from anywhere on Earth"),
+            Button("Walker", lambda: a.open("walker"), tooltip="W",
+                   hint="Add a Walker constellation"),
+            Button("Manoeuvre", lambda: a.open("maneuver"), tooltip="B",
+                   hint="Plan a burn for the selected satellite"),
+            Button("Station", lambda: a.open("station"), tooltip="N", hint="Add a ground station"),
+            Button("Physics", lambda: a.open("physics"), tooltip="P",
+                   hint="Force models and integrator"),
+            Button("Scenarios", lambda: a.open("scenario"), tooltip="Ctrl+O",
+                   hint="Load, save or export a scenario"),
+            Button("Start screen", lambda: a.open("start"), tooltip="Ctrl+N",
+                   hint="Choose a bundled scenario"),
+            Button("Edit", lambda: a.open("edit"), tooltip="Ctrl+E",
+                   hint="Edit the selected satellite"),
+            Button("Delete", a.delete_selected, tooltip="Del",
+                   hint="Remove the selected satellite"),
         ]
         self.scroll = 0
         self.rect = pygame.Rect(0, 0, 0, 0)
@@ -157,11 +175,7 @@ class SatList:
         self.layout(surf.get_height())
         theme.panel(surf, self.rect)
         fonts.draw(surf, "SCENARIO", (self.rect.x + 10, self.rect.y + 9), theme.FAINT, fonts.small)
-        name = sim.scenario.name
-        if fonts.bold.size(name)[0] > LEFT_W - 92:
-            while len(name) > 4 and fonts.bold.size(name + '...')[0] > LEFT_W - 92:
-                name = name[:-1]
-            name = name.rstrip() + '...'
+        name = fonts.fit(sim.scenario.name, LEFT_W - 92, fonts.bold)
         fonts.draw(surf, name, (self.rect.x + 80, self.rect.y + 7), theme.TEXT, fonts.bold)
         for b in self.buttons:
             b.draw(surf, fonts)
@@ -178,8 +192,6 @@ class SatList:
                 pygame.draw.rect(surf, theme.ACCENT_DARK, row, border_radius=4)
             pygame.draw.circle(surf, s.color if s.status == ACTIVE else (100, 100, 100),
                                (row.x + 10, row.centery), 5)
-            fonts.draw(surf, s.name[:20], (row.x + 22, row.centery),
-                       theme.TEXT if s.status == ACTIVE else theme.FAINT, fonts.ui, "midleft")
             asc = sim.ascent_of(k) if sim.ascents else None
             if asc is not None and asc.phase == "pad":
                 txt, col = f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN
@@ -192,7 +204,11 @@ class SatList:
                 col = theme.DIM if s.shadow > 0.5 else (150, 140, 230)
             else:
                 txt, col = s.status, theme.BAD
-            fonts.draw(surf, txt, (row.right - 6, row.centery), col, fonts.small, "midright")
+            r = fonts.draw(surf, txt, (row.right - 6, row.centery), col, fonts.small, "midright")
+            # the name gets whatever the value leaves, so long names never run into it
+            name = fonts.fit(s.name, r.x - 10 - (row.x + 22))
+            fonts.draw(surf, name, (row.x + 22, row.centery),
+                       theme.TEXT if s.status == ACTIVE else theme.FAINT, fonts.ui, "midleft")
         surf.set_clip(clip)
         if sim.n > rows:
             theme.scrollbar(surf, lr.right - 3, lr, self.scroll, rows, sim.n, 20)
@@ -375,11 +391,12 @@ class InfoPanel:
         d, a, b = sim.closest
         if a >= 0 and math.isfinite(d):
             col = theme.BAD if d < sim.conjunction_km else theme.FAINT
-            clip = surf.get_clip()
-            surf.set_clip(self.rect.inflate(-8, 0))
-            fonts.draw(surf, f"Closest: {sim.sats[a].name} - {sim.sats[b].name}  {d:,.1f} km",
-                       (x, y), col, fonts.small)
-            surf.set_clip(clip)
+            # the distance stays whole on the right; the pair's names shorten to fit
+            r = fonts.draw(surf, f"{d:,.1f} km", (self.rect.right - 12, y), col, fonts.small,
+                           "topright")
+            pair = fonts.fit(f"Closest: {sim.sats[a].name} - {sim.sats[b].name}",
+                             r.x - 10 - x, fonts.small)
+            fonts.draw(surf, pair, (x, y), col, fonts.small)
 
 
 # --- Bottom: event log ----------------------------------------------------------------------------
@@ -403,11 +420,13 @@ class EventLog:
         theme.panel(surf, self.rect)
         fonts.draw(surf, "EVENTS", (self.rect.x + 10, self.rect.y + 6), theme.FAINT, fonts.small)
         y = self.rect.bottom - 20
+        text_w = self.rect.right - 10 - (self.rect.x + 130)
         for ev in reversed(sim.events[-7:]):
             col = theme.EVENT_COLORS.get(ev.kind, theme.DIM)
-            fonts.draw(surf, f"T+{format_duration(ev.t):>13}", (self.rect.x + 10, y), theme.FAINT,
+            fonts.draw(surf, f"{'T+' + format_duration(ev.t):>15}", (self.rect.x + 10, y),
+                       theme.FAINT, fonts.small)
+            fonts.draw(surf, fonts.fit(ev.text, text_w, fonts.small), (self.rect.x + 130, y), col,
                        fonts.small)
-            fonts.draw(surf, ev.text[:110], (self.rect.x + 130, y), col, fonts.small)
             y -= 16
             if y < self.rect.y + 22:
                 break

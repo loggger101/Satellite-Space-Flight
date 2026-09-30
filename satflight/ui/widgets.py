@@ -31,16 +31,18 @@ class Widget:
 
 class Button(Widget):
     """Push button. ``active()`` highlights it as a toggle that is on; ``tooltip``
-    records the matching keyboard shortcut; ``accent`` marks the primary action."""
+    records the matching keyboard shortcut and ``hint`` says what the button
+    does (both shown by :func:`draw_tooltip`); ``accent`` marks the primary action."""
 
     def __init__(self, text: str, callback: Callable[[], Any],
                  active: Callable[[], bool] | None = None, tooltip: str = "",
-                 accent: bool = False):
+                 accent: bool = False, hint: str = ""):
         super().__init__()
         self.text = text
         self.callback = callback
         self.active = active
         self.tooltip = tooltip
+        self.hint = hint
         self.accent = accent
 
     def handle(self, ev):
@@ -61,6 +63,27 @@ class Button(Widget):
         edge = theme.ACCENT if on else theme.PANEL_EDGE
         pygame.draw.rect(surf, edge, self.rect, 1, border_radius=5)
         fonts.draw(surf, self.text, self.rect.center, theme.TEXT, fonts.ui, "center")
+
+
+def draw_tooltip(surf, fonts, button: Button):
+    """A box under ``button`` with its ``hint`` and keyboard shortcut, kept
+    inside the window; returns its rect (None if there is nothing to say)."""
+    hint = fonts.render(button.hint, theme.TEXT, fonts.ui) if button.hint else None
+    key = fonts.render(button.tooltip, theme.ACCENT, fonts.mono) if button.tooltip else None
+    if hint is None and key is None:
+        return None
+    parts = [p for p in (hint, key) if p is not None]
+    w = sum(p.get_width() for p in parts) + 14 * (len(parts) - 1) + 20
+    h = max(p.get_height() for p in parts) + 10
+    box = pygame.Rect(0, 0, w, h)
+    box.midtop = (button.rect.centerx, button.rect.bottom + 6)
+    box.clamp_ip(surf.get_rect().inflate(-8, -8))
+    theme.panel(surf, box, (20, 30, 55, 245), theme.ACCENT, 5)
+    x = box.x + 10
+    for p in parts:
+        surf.blit(p, (x, box.centery - p.get_height() // 2))
+        x += p.get_width() + 14
+    return box
 
 
 class TextField(Widget):

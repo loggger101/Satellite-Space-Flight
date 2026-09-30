@@ -368,3 +368,53 @@ def test_following_a_rocket_on_the_pad_keeps_the_camera_above_ground(app):
     k = app.selected
     sx, sy, vis = app.renderer.sat_screen
     assert vis[k]                               # the pad vehicle is in sight, not behind the globe
+
+
+def test_start_screen_opens_on_request_and_covers_every_bundled_scenario(tmp_path):
+    from satflight.ui.welcome import CARDS, StartScreen
+    a = App(size=(1400, 850), welcome=True)
+    try:
+        assert isinstance(a.dialogs[-1], StartScreen)
+        assert not a.toasts                              # nothing drawn over it
+        frame(a, 2)
+        bundled = {p.stem for p in a.scenario_dir.glob("*.json")}
+        assert bundled == {stem for stem, _ in CARDS}    # a new scenario needs a blurb
+        assert len(a.dialogs[-1].cards) == len(bundled)
+    finally:
+        pygame.quit()
+
+
+def test_start_screen_fits_the_smallest_window_without_cutting_text(app):
+    app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))
+    app.open("start")
+    scr = app.dialogs[-1]
+    assert app.screen.get_rect().contains(scr.rect)
+    assert all(scr.rect.contains(r) for r in scr.card_rects + [b.rect for b in scr.buttons])
+    for k in range(len(scr.cards)):
+        assert not scr.blurb_lines(k)[-1].endswith("..."), scr.cards[k][1]
+    frame(app)
+
+
+def test_start_screen_keys_clicks_and_buttons(app):
+    key(app, pygame.K_n, pygame.KMOD_CTRL)
+    scr = app.dialogs[-1]
+    assert scr.cards[scr.focus][0] == app.scenario_path          # starts on the loaded one
+    key(app, pygame.K_RIGHT)
+    key(app, pygame.K_RETURN)
+    assert not app.dialogs and app.sim.scenario.name == "Launch day"
+    app.open("start")
+    scr = app.dialogs[-1]
+    pos = scr.card_rects[2].center
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert not app.dialogs and app.scenario_path.stem == scr.cards[2][0].stem
+    app.open("start")
+    key(app, pygame.K_ESCAPE)                                     # keeps the scenario
+    assert not app.dialogs and app.scenario_path.stem == scr.cards[2][0].stem
+    app.open("start")
+    key(app, pygame.K_a)                                          # build your own
+    assert app.sim.n == 0 and app.dialogs[-1].title == "Add satellite"
+    app.dialogs[-1].close()
+    app.open("start")
+    [b for b in app.dialogs[-1].buttons if b.text == "Launch a rocket"][0].callback()
+    assert len(app.dialogs) == 1 and app.dialogs[0].title == "Launch"
+    frame(app)

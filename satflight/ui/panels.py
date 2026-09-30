@@ -109,6 +109,7 @@ class SatList:
             Button("Station", lambda: a.open("station"), tooltip="N"),
             Button("Physics", lambda: a.open("physics"), tooltip="P"),
             Button("Scenarios", lambda: a.open("scenario"), tooltip="Ctrl+O"),
+            Button("Start screen", lambda: a.open("start"), tooltip="Ctrl+N"),
             Button("Edit", lambda: a.open("edit"), tooltip="Ctrl+E"),
             Button("Delete", a.delete_selected, tooltip="Del"),
         ]
@@ -434,7 +435,7 @@ HELP = [
     ("A  W  B  N", "add satellite, Walker, manoeuvre, station"),
     ("U", "launch a rocket from anywhere on Earth"),
     ("P", "physics & integrator settings"),
-    ("Ctrl+O / Ctrl+S", "scenarios / save snapshot"),
+    ("Ctrl+N  O  S", "start screen / scenarios / save snapshot"),
     ("Ctrl+E  Del", "edit / delete selected satellite"),
     ("Ctrl+R  Ctrl+Q", "reset scenario / quit"),
     ("I", "hide / show panels"),

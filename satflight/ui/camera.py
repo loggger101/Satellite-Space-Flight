@@ -43,10 +43,12 @@ class Camera:
                 tuple(np.round(self.target, 3)), self.width, self.height)
 
     # --- basis ----------------------------------------------------------------------
+    FLOOR = R_EARTH * 1.002      # the camera never goes below ~13 km
+
     def update(self):
         cp, sp = math.cos(self.pitch), math.sin(self.pitch)
         cy, sy = math.cos(self.yaw), math.sin(self.yaw)
-        offset = np.array([cp * cy, cp * sy, sp]) * self.distance
+        offset = self._above_ground(np.array([cp * cy, cp * sy, sp])) * self.distance
         self.position = self.target + offset
         f = -offset / np.linalg.norm(offset)
         r = np.cross(f, [0.0, 0.0, 1.0])
@@ -57,6 +59,50 @@ class Camera:
         self.right, self.up, self.forward = r, u, f
         self.basis = np.stack([r, u, f])       # rows: camera x, y, z (depth)
         self.near = max(0.5, self.distance * 1e-4)
+
+    def _above_ground(self, d: np.ndarray) -> np.ndarray:
+        """Unit view offset ``d``, tilted toward the target's local vertical
+        just enough that the camera is above the ground and sees the target
+        past the Earth. Following a rocket on its pad would otherwise put the
+        camera inside the planet, or behind it, for most viewing directions."""
+        t = self.target
+        tn = float(np.linalg.norm(t))
+        if tn < 1.0:
+            return d
+        rb = min(R_EARTH, tn * 0.998)          # sphere the sight line must clear
+
+        def clear(pos):
+            if np.linalg.norm(pos) < self.FLOOR:
+                return False
+            seg = t - pos                          # camera -> target
+            a = float(seg @ seg)
+            b = 2.0 * float(seg @ pos)
+            c = float(pos @ pos) - rb * rb
+            disc = b * b - 4.0 * a * c
+            if disc <= 0:
+                return True
+            s1 = (-b - math.sqrt(disc)) / (2.0 * a)
+            return not 0.0 < s1 < 1.0
+
+        if clear(t + d * self.distance):
+            return d
+        up = t / tn
+
+        def blend(a):
+            v = (1.0 - a) * d + a * up
+            n = np.linalg.norm(v)
+            return v / n if n > 1e-9 else up
+
+        if not clear(t + up * self.distance):
+            return up
+        lo, hi = 0.0, 1.0
+        for _ in range(30):
+            mid = 0.5 * (lo + hi)
+            if clear(t + blend(mid) * self.distance):
+                hi = mid
+            else:
+                lo = mid
+        return blend(hi)
 
     # --- projection -----------------------------------------------------------------
     def to_camera(self, pts: np.ndarray) -> np.ndarray:

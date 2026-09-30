@@ -16,6 +16,7 @@ from ..frames import eci_to_ecef, ecef_to_geodetic
 from ..simulation import ACTIVE
 from ..timeutil import format_duration, format_period
 from . import theme
+from .launchui import draw_ascent_tab, launch_rows
 from .orbitpanel import draw_orbit_tab
 from .widgets import Button
 
@@ -101,6 +102,7 @@ class SatList:
         a = app
         self.buttons = [
             Button("+ Satellite", lambda: a.open("add"), tooltip="A"),
+            Button("Launch", lambda: a.open("launch"), tooltip="U", accent=True),
             Button("Walker", lambda: a.open("walker"), tooltip="W"),
             Button("Manoeuvre", lambda: a.open("maneuver"), tooltip="B"),
             Button("Station", lambda: a.open("station"), tooltip="N"),
@@ -119,7 +121,7 @@ class SatList:
         for k, b in enumerate(self.buttons):
             col, row = k % 2, k // 2
             b.rect = pygame.Rect(self.rect.x + 8 + col * (bw + 8), self.rect.y + 34 + row * 34, bw, 28)
-        top = self.rect.y + 34 + 4 * 34 + 8
+        top = self.rect.y + 34 + (len(self.buttons) + 1) // 2 * 34 + 8
         self.list_rect = pygame.Rect(self.rect.x + 6, top, LEFT_W - 12, self.rect.bottom - top - 8)
 
     def handle(self, ev):
@@ -170,7 +172,13 @@ class SatList:
                                (row.x + 10, row.centery), 5)
             fonts.draw(surf, s.name[:20], (row.x + 22, row.centery), theme.TEXT if s.status == ACTIVE else theme.FAINT,
                        fonts.ui, "midleft")
-            if s.status == ACTIVE:
+            asc = sim.ascent_of(k) if sim.ascents else None
+            if asc is not None and asc.phase == "pad":
+                txt, col = f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN
+            elif asc is not None:
+                alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
+                txt, col = f"{alt:,.0f} km ^", theme.WARN
+            elif s.status == ACTIVE:
                 alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
                 txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
                 col = theme.DIM if s.shadow > 0.5 else (150, 140, 230)
@@ -284,6 +292,9 @@ class InfoPanel:
                     f"{(e_now - e_ref) / abs(e_ref):+.2e}"))
         sections.append(("ENVIRONMENT", env))
 
+        launch = launch_rows(sim, i)
+        if launch:
+            sections.insert(0, ("LAUNCH", launch))
         craft = [("Mass", fmt(s.mass, "kg", 2)), ("dV spent", fmt(s.dv_used * 1000, "m/s", 2)),
                  ("Cd*A/m", f"{cd_am:.4f} m^2/kg")]
         pending = [m for m in sim.maneuvers if m.sat == s.name]
@@ -329,7 +340,10 @@ class InfoPanel:
         clip = surf.get_clip()
         surf.set_clip(body)
         y0 = body.y + 2 - top
-        if self.tab == 0:
+        asc = sim.ascent_of(i) if sim.ascents else None
+        if self.tab == 0 and asc is not None:
+            y = draw_ascent_tab(surf, x, y0, RIGHT_W - 24, app, i, asc)
+        elif self.tab == 0:
             y = draw_orbit_tab(surf, x, y0, RIGHT_W - 24, app, i)
         else:
             y = y0
@@ -408,6 +422,7 @@ HELP = [
     ("Q", "right panel: orbit / telemetry tab"),
     ("M  G", "ground-track map, telemetry plot"),
     ("A  W  B  N", "add satellite, Walker, manoeuvre, station"),
+    ("U", "launch a rocket from anywhere on Earth"),
     ("P", "physics & integrator settings"),
     ("Ctrl+O / Ctrl+S", "scenarios / save snapshot"),
     ("Ctrl+E  Del", "edit / delete selected satellite"),

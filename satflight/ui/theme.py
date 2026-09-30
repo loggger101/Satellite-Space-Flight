@@ -24,7 +24,7 @@ AXIS_Z = (100, 150, 255)
 
 EVENT_COLORS = {
     "info": DIM, "maneuver": ACCENT, "eclipse": (170, 150, 255), "station": GOOD,
-    "alert": BAD, "warn": WARN,
+    "alert": BAD, "warn": WARN, "launch": (255, 170, 90),
 }
 
 

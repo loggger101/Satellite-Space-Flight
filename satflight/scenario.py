@@ -76,6 +76,7 @@ class SatSpec:
     count: int = 1
 
     def to_dict(self):
+        """JSON-ready dict (the colour as a list)."""
         d = asdict(self)
         if d["color"] is not None:
             d["color"] = list(d["color"])
@@ -100,6 +101,7 @@ class ConstellationSpec:
     raan0: float = 0.0
 
     def to_dict(self):
+        """JSON-ready dict of the constellation's fields."""
         return asdict(self)
 
 
@@ -127,6 +129,7 @@ class GroundStation:
         return self.look_angles(r_ecef)[1] >= math.radians(self.min_el)
 
     def to_dict(self):
+        """JSON-ready dict of the station's fields."""
         return asdict(self)
 
 
@@ -141,6 +144,7 @@ class IntegratorSettings:
     h_fixed: float = 10.0
 
     def to_dict(self):
+        """JSON-ready dict of the settings."""
         return asdict(self)
 
 
@@ -166,6 +170,7 @@ class Scenario:
 
     # --- serialisation ---
     def to_dict(self):
+        """The JSON form written by :meth:`save` (out-of-scope requests are dropped)."""
         return {
             "name": self.name,
             "description": self.description,
@@ -184,6 +189,7 @@ class Scenario:
 
     @classmethod
     def from_dict(cls, d: dict) -> Scenario:
+        """Build from the JSON form; missing keys take their defaults."""
         return cls(
             name=d.get("name", "Untitled"),
             description=d.get("description", ""),

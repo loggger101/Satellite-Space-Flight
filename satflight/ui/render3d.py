@@ -150,78 +150,32 @@ class SceneRenderer:
     # --- main entry -----------------------------------------------------------------------
     def draw(self, surf: pygame.Surface, app):
         """Sky and Sun, then everything hidden by the Earth, the Earth itself, then
-        everything in front of it; finally the selected satellite's callout."""
+        everything in front of it; finally the selected satellite's callout.
+
+        The scene is first collected as world-space ``lines`` and ``markers``
+        (``(position, color, radius, label, is_selected)``; radius > 0 is a dot,
+        < 0 a square, 0 a bare label). List order is draw order, and the
+        satellites are always the last markers (picking relies on it).
+        """
         sim, cam, opts = app.sim, app.camera, app.opts
         W = self.world_rotation(sim, opts.frame)
         world_to_ecef = rot3(sim.gmst()) @ W.T
-        jd = sim.jd()
-        sun = sun_position(jd)
+        sun = sun_position(sim.jd())
         sun_dir = W @ (sun / np.linalg.norm(sun))
+        sel = app.selected if 0 <= app.selected < sim.n else -1
 
         surf.fill(theme.BG)
         self._stars(surf, cam)
         self._sun(surf, cam, sun_dir, app)
 
         lines: list[Line] = []
-        markers = []   # (pos world, color, radius, label, is_selected)
-        sel = app.selected if 0 <= app.selected < sim.n else -1
-
-        if opts.axes:
-            if opts.frame == "ECI":
-                names = ("X (vernal equinox)", "Y", "Z (north pole)")
-            else:
-                names = ("X (Greenwich)", "Y (90E)", "Z (north pole)")
-            for k, col in enumerate((theme.AXIS_X, theme.AXIS_Y, theme.AXIS_Z)):
-                end = np.zeros(3)
-                end[k] = 2.3 * R_EARTH
-                lines.append(Line(np.linspace(np.zeros(3), end, 24), col, 2, 0.5))
-                markers.append((end, col, 0, names[k], False))
-        if opts.geo_ring:
-            a = np.linspace(0, 2 * np.pi, 181)
-            ring = np.stack([np.cos(a), np.sin(a), 0 * a], 1) * R_GEO
-            lines.append(Line(ring, (60, 70, 100), 1, 0.7))
-        if opts.equator:
-            a = np.linspace(0, 2 * np.pi, 181)
-            ring = np.stack([np.cos(a), np.sin(a), 0 * a], 1) * R_EARTH * 1.002
-            lines.append(Line(ring, (70, 120, 170), 1, 0.0))
-
-        if self.earth.coastlines and opts.coastlines:
-            M = world_to_ecef           # ecef row-vector -> world: p @ M
-            for cl in self.earth.coastlines:
-                lines.append(Line(cl @ M * (R_EARTH * 1.002), (150, 200, 150), 1, 0.0))
-
-        # orbits and trails
-        active = sim.active
-        show_orbit = self._orbit_indices(app)
-        if show_orbit:
-            idx = np.array(show_orbit)
-            r_far = float(np.max(np.linalg.norm(sim.y[idx, :3], axis=1)))
-            pts = conic_points(sim.y[idx, :3], sim.y[idx, 3:], n=180, r_max=max(3e5, 1.5 * r_far))
-            for k, i in enumerate(idx):
-                col = sim.sats[i].color
-                w = 2 if i == sel else 1
-                colr = col if i == sel else theme.dim(col, 0.75)
-                lines.append(Line(pts[k] @ W.T, colr, w))
+        markers: list = []
+        self._guides(opts, world_to_ecef, lines, markers)
+        self._orbits(app, W, sel, lines)
         if opts.trails:
             lines.extend(self._trails(sim, app, W))
-
-        # ground stations + links
         if opts.stations and sim.stations:
-            theta = sim.gmst()
-            r_ecef = eci_to_ecef(sim.y[:, :3], theta) if sim.n else np.zeros((0, 3))
-            for st in sim.stations:
-                p_ecef = st.ecef()
-                p_ecef = p_ecef * (1 + 5 / np.linalg.norm(p_ecef))   # 5 km up, above the globe
-                p_world = p_ecef @ world_to_ecef
-                markers.append((p_world, st.color or (120, 255, 160), -3, st.name, False))
-                if sim.n:
-                    for i in np.flatnonzero(st.sees(r_ecef) & active):
-                        if sim.n > 60 and i != sel:
-                            continue
-                        lines.append(Line(np.linspace(p_world, W @ sim.y[i, :3], 12),
-                                          (80, 220, 130), 1, 0.4))
-
-        # selected-satellite annotations and orbit geometry
+            self._stations(sim, W, world_to_ecef, sel, lines, markers)
         from . import orbitviz  # imports Line from this module
         fills = []
         info = app.orbit_info() if sel >= 0 else None
@@ -231,29 +185,9 @@ class SceneRenderer:
                                            sim.sats[sel].color, W, cam, opts.geometry)
             lines.extend(ol)
             markers.extend(om)
+        self._satellites(sim, opts, W, sun, sel, lines, markers)
 
-        # satellites (dimmed while in Earth's shadow)
-        self._sat_lit = shadow_fraction(sim.y[:, :3], sun) if sim.n else np.zeros(0)
-        self._sat_start = len(markers)
-        pads = {sim.sats.index(a.sat): a for a in sim.ascents if a.phase == "pad"}
-        for i, s in enumerate(sim.sats):
-            p = W @ sim.y[i, :3]
-            if s.status != ACTIVE:
-                label = f"{s.name} ({s.status})" if sim.n <= 40 or i == sel else None
-                markers.append((p, (110, 110, 110), 2, label, i == sel))
-                continue
-            label = s.name if (opts.labels and (sim.n <= 40 or i == sel)) else None
-            if label and i in pads:
-                label += f"  T-{format_duration(pads[i].t0 - sim.t).split('.')[0]}"
-            lit = float(self._sat_lit[i])
-            col = theme.mix(theme.dim(s.color, 0.32), s.color, lit)
-            markers.append((p, col, 5 if i == sel else 3, label, i == sel))
-            if opts.vectors and (sim.n <= 40 or i == sel):
-                v = sim.y[i, 3:]
-                tip = sim.y[i, :3] + v * 180.0
-                lines.append(Line(np.linspace(p, W @ tip, 8),
-                                  theme.mix(s.color, (255, 255, 255), 0.4), 2))
-
+        # hidden pass, the Earth (orbit-plane fills split around it), visible pass
         cache: dict = {}
         mpos = self._project_markers(cam, markers)
         self._draw_lines(surf, cam, lines, True, cache)
@@ -267,22 +201,99 @@ class SceneRenderer:
         self._draw_markers(surf, app, markers, mpos, behind=False)
         self._exhaust(surf, sim, cam, W)
 
-        # picking data: the satellites are the last markers appended
-        nsat = sim.n
-        if nsat:
-            sx, sy, vis = mpos
-            self.sat_screen = (sx[-nsat:], sy[-nsat:], vis[-nsat:])
-        else:
-            self.sat_screen = None
+        sx, sy, vis = mpos
+        n = sim.n
+        self.sat_screen = (sx[-n:], sy[-n:], vis[-n:]) if n else None
         if info is not None and opts.geometry == "full" and self.sat_screen is not None:
-            sx, sy, vis = self.sat_screen
-            if vis[sel] and np.isfinite(sx[sel]):
-                bounds = app.view_rect()
-                if bounds.collidepoint(sx[sel], sy[sel]):
-                    orbitviz.draw_callout(surf, app, info, sim.sats[sel], (sx[sel], sy[sel]),
-                                          bounds)
+            self._callout(surf, app, info, sel)
 
-    # --- pieces -----------------------------------------------------------------------------
+    # --- scene content ------------------------------------------------------------------------
+    def _guides(self, opts, world_to_ecef, lines, markers):
+        """Frame axes, GEO ring, equator and coastlines, as the options ask."""
+        if opts.axes:
+            if opts.frame == "ECI":
+                names = ("X (vernal equinox)", "Y", "Z (north pole)")
+            else:
+                names = ("X (Greenwich)", "Y (90E)", "Z (north pole)")
+            for k, col in enumerate((theme.AXIS_X, theme.AXIS_Y, theme.AXIS_Z)):
+                end = np.zeros(3)
+                end[k] = 2.3 * R_EARTH
+                lines.append(Line(np.linspace(np.zeros(3), end, 24), col, 2, 0.5))
+                markers.append((end, col, 0, names[k], False))
+        a = np.linspace(0, 2 * np.pi, 181)
+        circle = np.stack([np.cos(a), np.sin(a), 0 * a], 1)
+        if opts.geo_ring:
+            lines.append(Line(circle * R_GEO, (60, 70, 100), 1, 0.7))
+        if opts.equator:
+            lines.append(Line(circle * R_EARTH * 1.002, (70, 120, 170), 1, 0.0))
+        if self.earth.coastlines and opts.coastlines:
+            for cl in self.earth.coastlines:     # ECEF row vectors: world = p @ world_to_ecef
+                lines.append(Line(cl @ world_to_ecef * (R_EARTH * 1.002), (150, 200, 150), 1, 0.0))
+
+    def _orbits(self, app, W, sel, lines):
+        """Osculating conics of the satellites picked by :meth:`_orbit_indices`;
+        the selected one bright and thicker."""
+        sim = app.sim
+        idx = np.array(self._orbit_indices(app), int)
+        if not idx.size:
+            return
+        r_far = float(np.max(np.linalg.norm(sim.y[idx, :3], axis=1)))
+        pts = conic_points(sim.y[idx, :3], sim.y[idx, 3:], n=180, r_max=max(3e5, 1.5 * r_far))
+        for k, i in enumerate(idx):
+            col = sim.sats[i].color
+            if i == sel:
+                lines.append(Line(pts[k] @ W.T, col, 2))
+            else:
+                lines.append(Line(pts[k] @ W.T, theme.dim(col, 0.75), 1))
+
+    def _stations(self, sim, W, world_to_ecef, sel, lines, markers):
+        """Ground-station squares and a link line to every active satellite in
+        view (only the selected one's in large constellations)."""
+        r_ecef = eci_to_ecef(sim.y[:, :3], sim.gmst()) if sim.n else np.zeros((0, 3))
+        for st in sim.stations:
+            p_ecef = st.ecef()
+            p_ecef = p_ecef * (1 + 5 / np.linalg.norm(p_ecef))   # 5 km up, above the globe
+            p_world = p_ecef @ world_to_ecef
+            markers.append((p_world, st.color or (120, 255, 160), -3, st.name, False))
+            if not sim.n:
+                continue
+            for i in np.flatnonzero(st.sees(r_ecef) & sim.active):
+                if sim.n > 60 and i != sel:
+                    continue
+                lines.append(Line(np.linspace(p_world, W @ sim.y[i, :3], 12),
+                                  (80, 220, 130), 1, 0.4))
+
+    def _satellites(self, sim, opts, W, sun, sel, lines, markers):
+        """A marker per satellite (dimmed in the Earth's shadow, grey once
+        inactive, a countdown on rockets still on the pad) and velocity arrows."""
+        self._sat_lit = shadow_fraction(sim.y[:, :3], sun) if sim.n else np.zeros(0)
+        self._sat_start = len(markers)
+        pads = {sim.sats.index(a.sat): a for a in sim.ascents if a.phase == "pad"}
+        for i, s in enumerate(sim.sats):
+            p = W @ sim.y[i, :3]
+            few = sim.n <= 40 or i == sel           # label only when it will not clutter
+            if s.status != ACTIVE:
+                markers.append((p, (110, 110, 110), 2, f"{s.name} ({s.status})" if few else None,
+                                i == sel))
+                continue
+            label = s.name if opts.labels and few else None
+            if label and i in pads:
+                label += f"  T-{format_duration(pads[i].t0 - sim.t).split('.')[0]}"
+            col = theme.mix(theme.dim(s.color, 0.32), s.color, float(self._sat_lit[i]))
+            markers.append((p, col, 5 if i == sel else 3, label, i == sel))
+            if opts.vectors and few:
+                tip = sim.y[i, :3] + sim.y[i, 3:] * 180.0     # 3 minutes of velocity
+                lines.append(Line(np.linspace(p, W @ tip, 8),
+                                  theme.mix(s.color, (255, 255, 255), 0.4), 2))
+
+    def _callout(self, surf, app, info, sel):
+        """The orbit-data callout beside the selected satellite, if it is on screen."""
+        from . import orbitviz
+        sx, sy, vis = self.sat_screen
+        bounds = app.view_rect()
+        if vis[sel] and np.isfinite(sx[sel]) and bounds.collidepoint(sx[sel], sy[sel]):
+            orbitviz.draw_callout(surf, app, info, app.sim.sats[sel], (sx[sel], sy[sel]), bounds)
+
     def _orbit_indices(self, app):
         """Satellites whose osculating orbit is drawn, per the ``orbits`` option."""
         sim, mode = app.sim, app.opts.orbits
@@ -362,6 +373,7 @@ class SceneRenderer:
                             theme.mix(col, (255, 255, 255), 0.3), 2, 0.0))
         return out
 
+    # --- drawing ------------------------------------------------------------------------------
     def _exhaust(self, surf, sim, cam, W):
         """A flame behind every vehicle whose engines are running, sized to
         the view so it shows at any zoom."""

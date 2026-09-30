@@ -50,6 +50,7 @@ class PlotView:
         self.title_rect = pygame.Rect(0, 0, 0, 0)
 
     def handle(self, ev):
+        """Left click / wheel down: next metric; right click / wheel up: previous."""
         if ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
             if ev.button in (1, 5):
                 self.metric = (self.metric + 1) % len(METRICS)
@@ -59,6 +60,7 @@ class PlotView:
         return False
 
     def draw(self, surf, rect: pygame.Rect, app):
+        """The selected satellite's metric over the history buffer up to now, with a value grid."""
         sim, fonts = app.sim, app.fonts
         self.rect = rect
         theme.panel(surf, rect)

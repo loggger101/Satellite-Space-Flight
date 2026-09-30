@@ -88,8 +88,7 @@ def test_energy_with_zonals_is_conserved():
     y0 = np.concatenate([r0, v0])[None, :]
 
     def f(t, y):
-        return np.concatenate([y[:, 3:], model.acceleration(2451545.0, y[:, :3], y[:, 3:],
-                                                            np.zeros(1), np.zeros(1))], axis=1)
+        return np.concatenate([y[:, 3:], model.acceleration(y[:, :3], y[:, 3:], np.zeros(1))], axis=1)
     prop = Propagator("dopri5", rtol=1e-12, atol=1e-10, h_max=60.0)
     _, y = prop.integrate(f, 0.0, y0, 86400.0)
     e0 = conservative_energy(y0[:, :3], y0[:, 3:], model)[0]

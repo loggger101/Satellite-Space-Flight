@@ -1,4 +1,4 @@
-"""3-D scene renderer: stars, Sun, Moon, Earth, axes, orbits, trails,
+"""3-D scene renderer: stars, Sun, Earth, axes, orbits, trails,
 satellites, ground stations and annotations.
 
 Occlusion by the Earth is handled with two passes: every line segment or
@@ -15,9 +15,9 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from ..constants import R_EARTH, R_GEO, R_MOON
+from ..constants import R_EARTH, R_GEO
 from ..elements import coe2rv, conic_points, rv2coe
-from ..ephemeris import moon_position, sun_position
+from ..ephemeris import sun_position
 from ..frames import eci_to_ecef, look_angles, rot3
 from ..analysis import coverage_half_angle, footprint
 from ..eclipse import shadow_fraction
@@ -235,21 +235,13 @@ class SceneRenderer:
                 tip = sim.y[i, :3] + v * 180.0
                 lines.append(Line(np.linspace(p, W @ tip, 8), theme.mix(s.color, (255, 255, 255), 0.4), 2))
 
-        # the Moon (drawn in depth order relative to Earth)
-        moon_world = W @ moon_position(jd)
         cache: dict = {}
         mpos = self._project_markers(cam, markers)
         self._draw_lines(surf, cam, lines, True, cache)
         self._draw_markers(surf, app, markers, mpos, behind=True)
         for poly, rgba in fills:
             orbitviz.draw_fill(surf, cam, poly, rgba, "far")
-        earth_depth = float(cam.to_camera(np.zeros(3))[2])
-        moon_depth = float(cam.to_camera(moon_world)[2])
-        if opts.moon and moon_depth > earth_depth:
-            self._moon(surf, cam, moon_world, sun_dir, app)
         self.earth.render(surf, cam, world_to_ecef, sun_dir)
-        if opts.moon and moon_depth <= earth_depth:
-            self._moon(surf, cam, moon_world, sun_dir, app)
         for poly, rgba in fills:
             orbitviz.draw_fill(surf, cam, poly, rgba, "near")
         self._draw_lines(surf, cam, lines, False, cache)
@@ -407,27 +399,6 @@ class SceneRenderer:
             spr = self._sprite("sun", (255, 236, 190), 150)
             surf.blit(spr, (x - 150, y - 150), special_flags=pygame.BLEND_ADD)
             app.fonts.draw(surf, "Sun", (x + 18, y + 12), theme.SUN, app.fonts.small)
-
-    def _moon(self, surf, cam, moon_world, sun_dir, app):
-        sx, sy, z = cam.project(moon_world[None, :])
-        if not np.isfinite(sx[0]):
-            return
-        rad = max(3, int(cam.screen_radius(moon_world, R_MOON)))
-        x, y = int(sx[0]), int(sy[0])
-        if -rad < x < cam.width + rad and -rad < y < cam.height + rad and rad < 4000:
-            pygame.draw.circle(surf, (70, 70, 78), (x, y), rad)
-            # lit half: offset disc towards the Sun's screen direction
-            sdx = float(sun_dir @ cam.right)
-            sdy = -float(sun_dir @ cam.up)
-            n = math.hypot(sdx, sdy) or 1.0
-            lit = pygame.Surface((2 * rad + 2, 2 * rad + 2), pygame.SRCALPHA)
-            pygame.draw.circle(lit, (*theme.MOON, 255), (rad + 1, rad + 1), rad)
-            mask = pygame.Surface((2 * rad + 2, 2 * rad + 2), pygame.SRCALPHA)
-            off = (int(rad * 0.9 * sdx / n), int(rad * 0.9 * sdy / n))
-            pygame.draw.circle(mask, (255, 255, 255, 255), (rad + 1 + off[0], rad + 1 + off[1]), rad)
-            lit.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-            surf.blit(lit, (x - rad - 1, y - rad - 1))
-            app.fonts.draw(surf, "Moon", (x + rad + 6, y), theme.MOON, app.fonts.small)
 
 
 def _runs(surf, color, xs, ys, mask, width):

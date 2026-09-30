@@ -467,12 +467,11 @@ def property_sections(info: OrbitInfo, sat, dv_used: float):
     ]
     craft = [
         ("Mass", num(info.mass, "kg", 1)),
-        ("Area / Cd / Cr", f"{info.area:g} m^2 / {info.cd:g} / {info.cr:g}"),
+        ("Area / Cd", f"{info.area:g} m^2 / {info.cd:g}"),
         ("Area-to-mass", num(info.area_to_mass, "m^2/kg", 4)),
         ("Ballistic coeff m/CdA", num(info.ballistic, "kg/m^2", 1)),
         ("Air density at perigee", f"{info.rho_perigee:.3e} kg/m^3" if info.rho_perigee else "none"),
         ("Drag at perigee", f"{info.drag_perigee:.3e} m/s^2" if info.rho_perigee else "none"),
-        ("SRP acceleration", f"{info.srp_accel:.3e} m/s^2"),
         ("Delta-v spent", num(dv_used * 1000, "m/s", 2)),
         ("Horizon distance", num(info.horizon_km, "km", 0)),
         ("Coverage radius (10\N{DEGREE SIGN})", num(info.footprint_km, "km", 0)),

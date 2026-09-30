@@ -6,7 +6,7 @@ import pytest
 
 from satflight.constants import AU, R_EARTH, R_EARTH_POLAR
 from satflight.eclipse import shadow_fraction
-from satflight.ephemeris import moon_position, sun_position
+from satflight.ephemeris import sun_position
 from satflight.frames import (ecef_to_eci_state, ecef_to_geodetic, eci_to_ecef_state,
                               geodetic_to_ecef, look_angles)
 from satflight.timeutil import UTC, gmst, julian_date
@@ -59,20 +59,6 @@ def test_sun_declination_at_solstice_and_equinox():
         assert d == pytest.approx(dec, abs=0.02)
     s = sun_position(julian_date(datetime(2026, 1, 3, tzinfo=UTC)))
     assert np.linalg.norm(s) == pytest.approx(0.9833 * AU, rel=5e-4)   # perihelion
-
-
-def _elongation(when):
-    jd = julian_date(when)
-    s, m = sun_position(jd), moon_position(jd)
-    return math.degrees(math.acos(np.dot(s, m) / np.linalg.norm(s) / np.linalg.norm(m)))
-
-
-def test_moon_phases():
-    assert _elongation(datetime(2024, 1, 25, 17, 54, tzinfo=UTC)) > 174   # full moon
-    assert _elongation(datetime(2024, 1, 11, 11, 57, tzinfo=UTC)) < 6     # new moon
-    for day in range(1, 60, 3):
-        d = np.linalg.norm(moon_position(julian_date(datetime(2025, 1, 1, tzinfo=UTC)) + day))
-        assert 355000 < d < 407500
 
 
 def test_shadow_fraction():

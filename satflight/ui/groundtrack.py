@@ -9,7 +9,7 @@ import numpy as np
 import pygame
 
 from ..analysis import coverage_half_angle, footprint
-from ..ephemeris import moon_position, subsolar_point
+from ..ephemeris import subsolar_point
 from ..frames import ecef_to_geodetic, eci_to_ecef
 from ..simulation import ACTIVE
 from . import theme
@@ -118,13 +118,9 @@ class GroundTrackView:
         clip = surf.get_clip()
         surf.set_clip(mr)
 
-        # sub-solar and sub-lunar points
+        # sub-solar point
         sx, sy = self._xy(math.degrees(lat_s), math.degrees(lon_s), r)
         pygame.draw.circle(surf, theme.SUN, (int(sx), int(sy)), 6)
-        m = eci_to_ecef(moon_position(jd), theta)
-        mlat, mlon = math.degrees(math.asin(m[2] / np.linalg.norm(m))), math.degrees(math.atan2(m[1], m[0]))
-        mx, my = self._xy(mlat, mlon, r)
-        pygame.draw.circle(surf, theme.MOON, (int(mx), int(my)), 5, 2)
 
         # stations
         for st in sim.stations:

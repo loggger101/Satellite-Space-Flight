@@ -100,12 +100,11 @@ def test_ltan_and_sun_synchronous_inclination():
 
 
 def test_physical_properties():
-    sat = Satellite("x", (255, 255, 255), mass=400.0, area=4.0, cd=2.2, cr=1.3)
+    sat = Satellite("x", (255, 255, 255), mass=400.0, area=4.0, cd=2.2)
     r, v = coe2rv(R_EARTH + 400, 0.0, D(51.6), 0, 0, 0)
     info = orbit_info(r, v, JD, sat)
     assert info.area_to_mass == pytest.approx(0.01)
     assert info.ballistic == pytest.approx(400 / (2.2 * 4))
-    assert info.srp_accel == pytest.approx(4.56e-6 * 1.3 * 0.01)
     # 0.5 rho v^2 Cd A/m with rho(400 km) = 3.725e-12
     assert info.drag_perigee == pytest.approx(0.5 * 3.725e-12 * (info.v_peri * 1e3) ** 2 * 2.2 * 0.01,
                                               rel=1e-2)

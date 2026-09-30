@@ -559,6 +559,52 @@ def test_start_screen_keys_clicks_and_buttons(app):
     frame(app)
 
 
+def test_start_menu_is_its_own_screen_with_nothing_running(monkeypatch):
+    a = App(size=(1400, 850), welcome=True)
+    try:
+        assert a.in_menu and not a.started and a.sim.n == 0     # nothing loaded yet
+        drawn = []
+        monkeypatch.setattr(a.renderer, "draw", lambda *args: drawn.append(1))
+        t = a.sim.t
+        frame(a, 3)
+        assert a.sim.t == t and not drawn                   # not stepped, scene not drawn
+        corner = a.screen.get_at((2, 2))[:3]
+        assert a.dialogs[-1]._backdrop.get_at((2, 2))[:3] == corner   # the menu covers the window
+        key(a, pygame.K_ESCAPE)
+        assert a.in_menu                                    # nothing to go back to
+        assert "Resume" not in [b.text for b in a.dialogs[-1].buttons]
+        key(a, pygame.K_h)                                  # the controls open over the menu
+        assert a.opts.help and a.in_menu
+        frame(a)
+        key(a, pygame.K_ESCAPE)
+        assert not a.opts.help and a.in_menu
+        key(a, pygame.K_o, pygame.KMOD_CTRL)                # so does the scenario picker
+        assert a.in_menu and len(a.dialogs) == 2
+        a.dialogs[-1].close()
+        assert a.in_menu
+        key(a, pygame.K_RETURN)
+        assert not a.in_menu and a.started and a.sim.n > 0
+        frame(a, 2)
+        assert a.sim.t > t and drawn
+    finally:
+        pygame.quit()
+
+
+def test_start_menu_holds_a_running_simulation_until_resumed(app):
+    frame(app, 2)
+    t = app.sim.t
+    key(app, pygame.K_n, pygame.KMOD_CTRL)
+    assert app.in_menu and not app.toasts
+    frame(app, 3)
+    assert app.sim.t == t                                   # held while on the menu
+    resume = [b for b in app.dialogs[-1].buttons if b.text == "Resume"][0]
+    assert app.dialogs[-1].rect.contains(resume.rect)
+    resume.callback()
+    assert not app.in_menu
+    frame(app)
+    assert app.sim.t > t
+
+
 # --- readability ---------------------------------------------------------------------------
 
 def hover(app, pos):

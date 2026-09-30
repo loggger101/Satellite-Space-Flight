@@ -15,7 +15,7 @@ from ..constants import R_EARTH
 from ..orbitinfo import orbit_info
 from ..scenario import Scenario
 from ..simulation import ACTIVE, Simulation
-from . import dialogs, launchui, theme, welcome
+from . import dialogs, launchui, theme, welcome, widgets
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .orbitviz import MODES as GEOMETRY_MODES
@@ -61,6 +61,7 @@ class Options:
 
 ORBIT_MODES = ("auto", "all", "selected", "none")
 WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
+TOOLTIP_DELAY = 0.4        # s the mouse rests on a button before its hint shows
 
 
 class App:
@@ -103,6 +104,7 @@ class App:
         self.scenario_path: Path | None = None
         self._info_key = None
         self._info = None
+        self._hover = (None, 0.0)    # (button under the mouse, since when)
         self.load_scenario(scenario if scenario is not None else self.scenario_dir / "default.json")
         if welcome:
             self.open("start")
@@ -238,6 +240,7 @@ class App:
                    "start": welcome.StartScreen}[name]
         dlg = factory(self)
         if dlg is not None:
+            self._clear_hover()                 # no stale tooltip once the dialog closes
             self.dialogs.append(dlg)
             if name != "start":                 # the start screen has no text fields
                 pygame.key.start_text_input()
@@ -265,6 +268,9 @@ class App:
         """Route an event: dialogs first, then panels, then the 3-D view."""
         if ev.type == pygame.QUIT:
             self.running = False
+            return
+        if ev.type == pygame.WINDOWLEAVE:
+            self._clear_hover()
             return
         if ev.type == pygame.VIDEORESIZE:
             size = (max(900, ev.w), max(600, ev.h))
@@ -302,6 +308,25 @@ class App:
                 self._pick(ev.pos)
         elif ev.type == pygame.MOUSEWHEEL:
             self._zoom(0.87 ** ev.y)
+
+    def _buttons(self):
+        """Every button of the top bar and the left panel."""
+        return self.topbar.buttons + self.satlist.buttons
+
+    def _clear_hover(self):
+        """Forget which button the mouse is over (it moved away without a motion event)."""
+        for b in self._buttons():
+            b.hover = False
+
+    def _tooltip(self, surf):
+        """The hint and shortcut of the button under the mouse, once it has rested
+        there; returns the tooltip's rect, or None."""
+        b = next((b for b in self._buttons() if b.hover), None)
+        if b is not self._hover[0]:
+            self._hover = (b, time.monotonic())
+        if b is not None and time.monotonic() - self._hover[1] >= TOOLTIP_DELAY:
+            return widgets.draw_tooltip(surf, self.fonts, b)
+        return None
 
     def _zoom(self, factor):
         self.camera.zoom(factor, 5.0 if self.follow else None)
@@ -433,6 +458,8 @@ class App:
             self.plot.draw(s, self._plot_rect(), self)
         if self.opts.help:
             draw_help(s, self)
+        if self.opts.panels and not self.dialogs:
+            self._tooltip(s)
         if self.follow and 0 <= self.selected < self.sim.n:
             self.fonts.draw(s, f"following {self.sim.sats[self.selected].name}  (F to release)",
                             (s.get_width() // 2, TOP_H + 14), theme.ACCENT, self.fonts.small,

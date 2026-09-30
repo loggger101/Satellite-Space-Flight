@@ -172,6 +172,7 @@ Earth's sphere of influence.
 | `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+R`, `Ctrl+Q` | start screen, scenarios, save snapshot, reset, quit |
 | `Ctrl+E`, `Del`, `F12`, `H` / `F1` | edit / delete satellite, screenshot, help (`Esc` closes it) |
 
+Rest the mouse on any button to see what it does and its keyboard shortcut.
 Every dialog shows a live preview (resulting orbit, transfer delta-v, burn
 duration) before you commit.
 

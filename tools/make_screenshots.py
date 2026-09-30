@@ -29,10 +29,9 @@ OUT = ROOT / "docs" / "images"
 SIZE = (1600, 900)
 
 
-def _app(scenario: str, advance: float = 0.0, select: str | None = None, size=SIZE,
-         welcome: bool = False) -> App:
+def _app(scenario: str, advance: float = 0.0, select: str | None = None, size=SIZE) -> App:
     """An App on ``scenarios/<scenario>.json``, ``advance`` seconds in."""
-    app = App(ROOT / "scenarios" / f"{scenario}.json", size=size, welcome=welcome)
+    app = App(ROOT / "scenarios" / f"{scenario}.json", size=size)
     if advance:
         app.sim.advance(advance)
     if select:
@@ -110,8 +109,8 @@ def launch_ascent():
 
 
 def start_screen():
-    """The start screen over the default scenario."""
-    return _app("default", 49, size=(1400, 860), welcome=True)
+    """The start menu as the simulator opens: nothing loaded yet."""
+    return App(size=(1400, 860), welcome=True)
 
 
 SCENES = {f.__name__: f for f in (overview, hohmann, starlink, molniya_ecef_map, j2_plot,

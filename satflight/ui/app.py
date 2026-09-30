@@ -74,9 +74,11 @@ MIN_SIZE = (900, 600)      # smallest window the panels are laid out for (design
 class App:
     """The window: owns the simulation, camera, panels and dialogs, and runs the
     event / update / draw loop. ``root`` is the repository folder holding
-    ``scenarios/`` and ``assets/``. ``welcome`` opens the start screen over the
-    scenario. ``size`` is in screen pixels; ``ui_scale`` is how many of them a
-    design pixel of the UI takes (Windows' display scaling, see :mod:`.theme`)."""
+    ``scenarios/`` and ``assets/``. ``welcome`` opens on the start menu, which
+    covers the window and holds the simulation still; with no ``scenario`` nothing
+    is loaded until one is picked there. ``size`` is in screen pixels; ``ui_scale``
+    is how many of them a design pixel of the UI takes (Windows' display scaling,
+    see :mod:`.theme`)."""
 
     def __init__(self, scenario=None, size=(1600, 900), root: Path = ROOT,
                  welcome: bool = False, fullscreen: bool = False, ui_scale: float = 1.0):
@@ -118,10 +120,15 @@ class App:
         self.tip_rect = None         # where this frame's hover tip went (tests read it)
         self.fullscreen = False
         self._windowed = (size, None)   # window size and position to return to from fullscreen
-        self.load_scenario(scenario if scenario is not None else self.scenario_dir / "default.json")
+        self.started = False    # a scenario was chosen: the start menu can go back to it
+        if welcome and scenario is None:
+            self.load_scenario(Scenario(name="Empty"))    # a placeholder the menu replaces
+            self.started = False
+        else:
+            self.load_scenario(scenario if scenario is not None
+                               else self.scenario_dir / "default.json")
         if welcome:
             self.open("start")
-            self.toasts.clear()                 # "Loaded ..." would sit on top of it
         if fullscreen:
             self.toggle_fullscreen()
 
@@ -133,7 +140,8 @@ class App:
 
     def load_scenario(self, src):
         """Start a new simulation from a :class:`Scenario` or a JSON path (a missing
-        file gives an empty scenario)."""
+        file gives an empty scenario), leaving the start menu if it is open."""
+        self.dialogs = [d for d in self.dialogs if not isinstance(d, welcome.StartScreen)]
         if isinstance(src, Scenario):
             sc, path = src, None
         else:
@@ -148,6 +156,7 @@ class App:
             rmed = float(np.median(np.linalg.norm(self.sim.y[:, :3], axis=1)))
             self.camera.distance = float(np.clip(rmed * 2.4, 4.0 * R_EARTH, 1.2e6))
         self.camera.target = np.zeros(3)
+        self.started = True
         self.toast(f"Loaded '{sc.name}'")
 
     def reset(self):
@@ -281,8 +290,15 @@ class App:
         if dlg is not None:
             self._clear_hover()                 # no stale tooltip once the dialog closes
             self.dialogs.append(dlg)
-            if name != "start":                 # the start screen has no text fields
+            if name == "start":
+                self.toasts.clear()             # "Loaded ..." would sit on top of the menu
+            else:                               # the start menu has no text fields
                 pygame.key.start_text_input()
+
+    @property
+    def in_menu(self) -> bool:
+        """The start menu is open: it fills the window and the simulation stands still."""
+        return any(isinstance(d, welcome.StartScreen) for d in self.dialogs)
 
     def close_dialog(self, dlg):
         """Remove ``dlg`` from the dialog stack (dialogs call this themselves)."""
@@ -490,7 +506,10 @@ class App:
     # --- frame ---------------------------------------------------------------------------------
     def update(self, dt_real: float):
         """Advance the simulation by ``warp`` times the real frame time and move the camera.
-        The frame only sets how far; the physics keeps its own time steps."""
+        The frame only sets how far; the physics keeps its own time steps. Nothing
+        moves while the start menu is open."""
+        if self.in_menu:
+            return
         if not self.paused:
             t0 = time.perf_counter()
             self.sim.advance(self.warp * min(dt_real, MAX_FRAME_DT))
@@ -535,9 +554,13 @@ class App:
         return pygame.Rect(x0, bottom - px(190), x1 - x0, px(190))
 
     def draw(self):
-        """Draw one frame: 3-D scene, panels, map/plot, help, dialogs and toasts."""
+        """Draw one frame: 3-D scene, panels, map/plot, help, dialogs and toasts;
+        or, on the start menu, only the menu and what is open over it."""
         s = self.screen
         tips.begin()
+        if self.in_menu:
+            self._draw_menu(s)
+            return
         self.renderer.draw(s, self)
         self._scene_tips()
         if self.opts.panels:
@@ -558,6 +581,19 @@ class App:
             tips.add(r, "The camera moves with the selected satellite.", "F")
         for d in self.dialogs:
             d.draw(s)
+        self._draw_overlays(s)
+
+    def _draw_menu(self, s):
+        """The start menu paints the whole window; dialogs it opened and the
+        controls sit on top. The scene and panels are not drawn at all."""
+        for d in self.dialogs:
+            d.draw(s)
+        if self.opts.help:
+            draw_help(s, self)
+        self._draw_overlays(s)
+
+    def _draw_overlays(self, s):
+        """Toasts, then the hover tip."""
         now = time.monotonic()
         self.toasts = [(t, m) for t, m in self.toasts if t > now][-4:]
         for k, (_, msg) in enumerate(self.toasts):

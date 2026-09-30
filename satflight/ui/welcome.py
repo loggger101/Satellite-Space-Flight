@@ -1,10 +1,12 @@
-"""The start screen shown when the simulator opens: pick a scenario, launch a
-rocket or build your own (Ctrl+N brings it back)."""
+"""The start menu shown when the simulator opens: pick a scenario, launch a
+rocket or build your own (Ctrl+N brings it back). It fills the window and the
+simulation stands still behind it (see ``App.in_menu``)."""
 
 from __future__ import annotations
 
 import json
 import math
+import random
 from pathlib import Path
 
 import pygame
@@ -14,7 +16,7 @@ from . import theme, tips
 from .theme import px
 from .widgets import Button
 
-# Bundled scenarios in the order the start screen shows them, each with a plain-language
+# Bundled scenarios in the order the start menu shows them, each with a plain-language
 # blurb (the files' own descriptions are written for people who know the jargon).
 CARDS = [
     ("default", "One satellite in every classic orbit, from low to geostationary."),
@@ -82,9 +84,39 @@ def wrap(text: str, font, width: int, max_lines: int) -> list[str]:
     return lines
 
 
+def backdrop(size: tuple[int, int]) -> pygame.Surface:
+    """The start menu's own background: deep space with stars and the glow of the
+    Earth's limb along the bottom (the same picture for the same size)."""
+    w, h = size
+    surf = pygame.Surface(size)
+    top, bottom = (3, 5, 12), (10, 18, 38)
+    for y in range(h):
+        pygame.draw.line(surf, theme.mix(top, bottom, y / max(1, h - 1)), (0, y), (w, y))
+    rng = random.Random(7)
+    for _ in range(w * h // 2600):
+        x, y = rng.randrange(w), rng.randrange(h)
+        v = rng.randrange(70, 230)
+        c = (v, v, min(255, v + 25))
+        if rng.random() < 0.08:
+            pygame.draw.circle(surf, c, (x, y), max(1, px(1)))
+        else:
+            surf.set_at((x, y), c)
+    # a planet far wider than the window: only its edge shows, a blue arc along the bottom
+    r = max(w, h) * 2
+    cx, cy = w // 2, h + r - px(70)
+    glow = pygame.Surface(size, pygame.SRCALPHA)
+    for k in range(24, 0, -1):
+        pygame.draw.circle(glow, (70, 140, 255, 5), (cx, cy), r + k * px(3))
+    pygame.draw.circle(glow, (8, 16, 34, 255), (cx, cy), r)
+    pygame.draw.circle(glow, (90, 160, 255, 150), (cx, cy), r, max(1, px(2)))
+    surf.blit(glow, (0, 0))
+    return surf
+
+
 class StartScreen:
-    """Modal start screen on the dialog stack: a grid of scenario cards and a row of
-    ways in. Enter opens the highlighted card; Esc keeps the scenario already loaded."""
+    """The start menu, kept on the dialog stack: a grid of scenario cards and a row of
+    ways in, over its own background across the whole window. Enter opens the
+    highlighted card; Esc (or Resume) goes back to the simulation it was opened from."""
 
     GAP = 10           # design px
     HEAD = 84          # title and subtitle
@@ -101,17 +133,22 @@ class StartScreen:
         cur = a.scenario_path
         self.focus = next((k for k, c in enumerate(self.cards)
                            if cur is not None and c[0] == cur), 0)
+        self.can_resume = a.started         # else nothing is loaded yet to go back to
         self.buttons = [
             Button("Launch a rocket", lambda: self._then(lambda: a.open("launch")), accent=True,
                    tooltip="U", hint="Fly a rocket from any point on Earth into orbit"),
             Button("Build your own", self.build_your_own, tooltip="A",
                    hint="Start from an empty Earth and add satellites yourself"),
-            Button("Saved scenarios", lambda: self._then(lambda: a.open("scenario")),
-                   tooltip="Ctrl+O", hint="Open a scenario you saved, or any scenario file"),
-            Button("Controls", lambda: self._then(lambda: setattr(a.opts, "help", True)),
-                   tooltip="H", hint="Every mouse and keyboard control"),
+            Button("Saved scenarios", lambda: a.open("scenario"), tooltip="Ctrl+O",
+                   hint="Open a scenario you saved, or any scenario file"),
+            Button("Controls", lambda: setattr(a.opts, "help", True), tooltip="H",
+                   hint="Every mouse and keyboard control"),
         ]
+        if self.can_resume:
+            self.buttons.append(Button("Resume", self.close, tooltip="Esc",
+                                       hint=f"Back to '{a.sim.scenario.name}' where it stopped"))
         self.rect = pygame.Rect(0, 0, 0, 0)
+        self._backdrop: pygame.Surface | None = None
         self.card_rects: list[pygame.Rect] = []
         self.cols = 3
         self.layout()
@@ -133,7 +170,7 @@ class StartScreen:
         action()
 
     def close(self):
-        """Close and keep whatever scenario is loaded (Esc)."""
+        """Close and go back to the scenario that is loaded (Esc, Resume)."""
         self.app.close_dialog(self)
 
     # --- layout -----------------------------------------------------------------------
@@ -159,12 +196,21 @@ class StartScreen:
             bw = self.app.fonts.ui.size(b.text)[0] + px(32)
             b.rect = pygame.Rect(x, by, bw, px(34))
             x += bw + px(10)
+        if self.can_resume:                         # Resume sits apart, at the right
+            self.buttons[-1].rect.right = self.rect.right - px(18)
 
     # --- events -----------------------------------------------------------------------
     def handle(self, ev) -> bool:
-        """Keys (Esc, Enter, arrows), buttons, then card hover and clicks; modal."""
+        """Keys (Esc, Enter, arrows), buttons, then card hover and clicks; modal.
+        While the controls are shown, a key or click only closes them."""
+        if self.app.opts.help:
+            if ev.type == pygame.MOUSEBUTTONDOWN or (
+                    ev.type == pygame.KEYDOWN
+                    and ev.key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_F1)):
+                self.app.opts.help = False
+            return True
         if ev.type == pygame.KEYDOWN:
-            self._key(ev.key)
+            self._key(ev.key, getattr(ev, "mod", 0))
             return True
         for b in self.buttons:
             if b.handle(ev):
@@ -177,12 +223,18 @@ class StartScreen:
                     self.choose(k)
         return True    # modal: swallow everything
 
-    def _key(self, k):
+    def _key(self, k, mods=0):
         n = len(self.cards)
         moves = {pygame.K_LEFT: -1, pygame.K_RIGHT: 1, pygame.K_UP: -self.cols,
                  pygame.K_DOWN: self.cols}
         if k == pygame.K_ESCAPE:
-            self.close()
+            if self.can_resume:
+                self.close()
+        elif k == pygame.K_F11 or (k in (pygame.K_RETURN, pygame.K_KP_ENTER)
+                                   and mods & pygame.KMOD_ALT):
+            self.app.toggle_fullscreen()
+        elif k == pygame.K_q and mods & pygame.KMOD_CTRL:
+            self.app.running = False
         elif k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) and n:
             self.choose(self.focus)
         elif k in moves and n:
@@ -194,16 +246,16 @@ class StartScreen:
             self.build_your_own()
         elif k in (pygame.K_h, pygame.K_F1):
             self.buttons[3].callback()
-        elif k == pygame.K_o and pygame.key.get_mods() & pygame.KMOD_CTRL:
+        elif k == pygame.K_o and mods & pygame.KMOD_CTRL:
             self.buttons[2].callback()
 
     # --- drawing ----------------------------------------------------------------------
     def draw(self, surf):
-        """Shade the window, then the panel, cards, buttons and hint."""
+        """Cover the window with the backdrop, then the panel, cards, buttons and hint."""
         fonts = self.app.fonts
-        shade = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
-        shade.fill((0, 0, 0, 90))
-        surf.blit(shade, (0, 0))
+        if self._backdrop is None or self._backdrop.get_size() != surf.get_size():
+            self._backdrop = backdrop(surf.get_size())
+        surf.blit(self._backdrop, (0, 0))
         tips.block(surf.get_rect())
         r = self.rect
         theme.panel(surf, r, (14, 20, 36, 240), theme.ACCENT, 10)
@@ -217,8 +269,9 @@ class StartScreen:
             b.draw(surf, fonts)
             fonts.draw(surf, b.tooltip, (b.rect.centerx, b.rect.bottom + px(3)), theme.FAINT,
                        fonts.small, "midtop")
-        fonts.draw(surf, "Enter opens the highlighted scenario   Esc closes this screen   "
-                         "Ctrl+N brings it back", (r.x + px(20), r.bottom - px(10)), theme.FAINT,
+        back = "Esc goes back to the simulation   " if self.can_resume else ""
+        fonts.draw(surf, f"Enter opens the highlighted scenario   {back}Ctrl+N brings this "
+                         "menu back", (r.x + px(20), r.bottom - px(10)), theme.FAINT,
                    fonts.small, "bottomleft")
 
     def tag_place(self, k: int) -> str:

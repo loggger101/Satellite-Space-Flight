@@ -18,6 +18,14 @@ Earth, until lift-off; during the ascent it is integrated by its own ascent
 model and kept out of the ensemble. At payload separation it joins the
 ensemble like any other satellite, and spent stages join as objects of their
 own.
+
+Time steps belong to the physics, not to the caller: ``advance`` only ever
+lands on physical boundaries (manoeuvres, burnouts, lift-offs, ascent syncs)
+and otherwise takes whole integrator steps, stopping at the last one that
+fits. The state it reports at the requested time is integrated forward from
+there and thrown away on the next call. Advancing an hour in one call or in
+thousands of frame-sized calls follows the same trajectory and logs the same
+events, whatever the frame rate.
 """
 
 from __future__ import annotations
@@ -55,6 +63,36 @@ SCRUBBED = "scrubbed"     # a launch that never left the pad
 REENTRY_ALT = 80.0        # km: below this the vehicle is considered lost
 ASCENT_SYNC = 1.0         # s: longest ensemble segment while a vehicle is in powered flight
 EVENT_DETAIL_LIMIT = 40   # log per-satellite eclipse/AOS events only below this N
+
+
+def _hermite_min(d0, c, m0, m1, samples: int = 17, iterations: int = 8):
+    """Minimum distance from the origin of the cubic Hermite curves
+    ``p(t) = d0 + c t + t (1 - t)^2 a - t^2 (1 - t) b`` (a = m0 - c, b = m1 - c),
+    t in [0, 1], one row per curve: a coarse scan, then Newton's method on
+    p . p' = 0 kept between the best sample's neighbours (over one step the
+    distance has a single dip). Returns (t, distance)."""
+    a, b = m0 - c, m1 - c
+
+    def curve(t):
+        t = t[..., None]
+        p = d0 + c * t + (t - 2 * t * t + t ** 3) * a - (t * t - t ** 3) * b
+        dp = c + (1 - 4 * t + 3 * t * t) * a - (2 * t - 3 * t * t) * b
+        ddp = (6 * t - 4) * a - (2 - 6 * t) * b
+        return p, dp, ddp
+
+    grid = np.linspace(0.0, 1.0, samples)
+    p = curve(np.broadcast_to(grid[:, None], (samples, len(d0))))[0]
+    best = np.argmin((p * p).sum(axis=-1), axis=0)
+    lo = grid[np.maximum(best - 1, 0)]
+    hi = grid[np.minimum(best + 1, samples - 1)]
+    t = grid[best]
+    for _ in range(iterations):
+        p, dp, ddp = curve(t)
+        g = (p * dp).sum(axis=-1)                    # half the slope of |p|^2
+        gg = (dp * dp).sum(axis=-1) + (p * ddp).sum(axis=-1)
+        t = np.clip(t - g / np.where(gg > 0, gg, np.inf), lo, hi)
+    p = curve(t)[0]
+    return t, np.sqrt((p * p).sum(axis=-1))
 
 
 @dataclass
@@ -169,6 +207,9 @@ class Simulation:
         self._visible = np.zeros((0, 0), dtype=bool)
         self._close_pairs: set = set()
         self.closest = (math.inf, -1, -1)  # (km, i, j)
+        self._last_sample = None           # (t, y, orbiting mask) of the last approach check
+        self._grid = None                  # (t, y) the physics reached; t <= self.t
+        self._shown = None                 # (t, y) reported from it, to spot outside edits
 
         for name, color, props, r, v in expand(scenario, self.clock, 0.0):
             self._append(name, color, props, r, v)
@@ -302,6 +343,8 @@ class Simulation:
         self.burns = [b for b in self.burns if b.man.sat != sat.name]
         self._resize_visible()
         self._close_pairs.clear()
+        self.closest = (math.inf, -1, -1)      # its indices may be stale until the next step
+        self._last_sample = None
         self.watch = {w - (w > i) for w in self.watch if w != i}
         self.log(f"Removed {sat.name}")
 
@@ -482,6 +525,8 @@ class Simulation:
             self.log(f"{m.sat}: executed {m.describe()} - dV {dvm * 1000:.2f} m/s", "maneuver")
         if due:
             self.history.record(self.t, self.y)
+            if self._last_sample is not None:  # the next approach check starts after the burns
+                self._last_sample = (self.t, self.y.copy(), self._last_sample[2])
 
     def _start_finite(self, m: Maneuver, i: int):
         """Ignite a finite burn (applied impulsively by the analytic propagators)."""
@@ -544,15 +589,17 @@ class Simulation:
             return np.concatenate([v, a], axis=1)
         return f
 
-    def _next_boundary(self, t_end: float) -> float:
-        """End of the next segment: a lift-off, manoeuvre, burnout or ascent sync."""
-        tb = t_end
+    def _next_boundary(self) -> float:
+        """Time of the next lift-off, manoeuvre, burnout or ascent sync (inf if none).
+        Ascent syncs count from the ascent's own clock, so they fall at the same
+        times however the simulation is advanced."""
+        tb = math.inf
         for a in self.ascents:
             if a.phase == "pad":
                 if self.t < a.t0 < tb:
                     tb = a.t0
             else:
-                tb = min(tb, self.t + ASCENT_SYNC)
+                tb = min(tb, max(a.t + ASCENT_SYNC, self.t))
         for m in self.maneuvers:
             if self.t < m.t < tb:
                 tb = m.t
@@ -562,41 +609,101 @@ class Simulation:
         return tb
 
     def advance(self, dt: float):
-        """Advance the simulation by ``dt`` seconds of simulated time."""
+        """Advance the simulation by ``dt`` seconds of simulated time (see the
+        module notes: the physics keeps its own steps, whatever ``dt`` is)."""
         t_end = self.t + dt
+        self._resume()
         guard = 0
         self._execute_due()
-        while self.t < t_end - 1e-9 and guard < 10000:
+        while guard < 10000:
             guard += 1
-            t_seg = self._next_boundary(t_end)
+            tb = self._next_boundary()
+            land = tb <= t_end
             idx = self._free_idx()
-            if idx.size == 0:
-                self.t = t_seg
-                self._advance_ascents(self.t)
+            if idx.size:
+                if self._propagate(idx, tb, None if land else t_end):
+                    continue            # a satellite left the ensemble: go on without it
+            elif land:
+                self.t = tb
+            elif not any(a.phase != "pad" for a in self.ascents):
+                self.t = t_end          # nothing is integrated, so there are no steps to keep
                 self._post_step(self.t, idx)
-            else:
-                self._propagate(idx, t_seg)
-                self._advance_ascents(self.t)
+            if not land:
+                break
+            self._advance_ascents(self.t)
+            if not idx.size:
+                self._post_step(self.t, idx)
             self._finish_burns()
             self._execute_due()
+        self._present(t_end)
 
-    def _propagate(self, idx: np.ndarray, t_seg: float):
-        """Advance satellites ``idx`` to ``t_seg`` (or until one leaves the active set)."""
+    def _resume(self):
+        """Go back from the reported state to the physics state it was integrated
+        from, unless someone changed it in between (a satellite added, removed or
+        edited): then the physics starts again from the state as it now is."""
+        grid, shown, self._grid, self._shown = self._grid, self._shown, None, None
+        if (grid is not None and self.t == shown[0] and self.y.shape == shown[1].shape
+                and np.array_equal(self.y, shown[1])):
+            self.t, self.y = grid[0], grid[1]
+        else:
+            self._last_sample = None       # nothing joins the last step's states to these
+
+    def _present(self, t: float):
+        """Report the state at ``t``, which may lie up to a step past the physics:
+        integrate there on the side, keeping the physics state for the next call."""
+        self._grid = (self.t, self.y.copy())
+        if t > self.t:
+            idx = self._free_idx()
+            if idx.size:
+                self.y[idx] = self._peek(idx, t)
+            for a in self.ascents:
+                self.y[self.sats.index(a.sat)] = a.peek(t)
+            self.t = t
+        self._shown = (self.t, self.y.copy())
+
+    def _peek(self, idx: np.ndarray, t1: float) -> np.ndarray:
+        """States of satellites ``idx`` at ``t1``, less than a step ahead, integrated
+        with a scratch integrator so the physics state and step size are untouched."""
+        y0 = self.y[idx]
+        if self.propagator == "kepler":
+            r, v = kepler_propagate(y0[:, :3], y0[:, 3:], t1 - self.t)
+            return np.concatenate([r, v], axis=1)
+        if self.propagator == "j2mean":
+            r, v = j2_mean_propagate(y0[:, :3], y0[:, 3:], t1 - self.t)
+            return np.concatenate([r, v], axis=1)
+        s = self.integrator
+        scratch = Propagator(s.method, s.rtol, s.atol, s.h_max, s.h_fixed)
+        scratch.h = s.h
+        burns = [b for b in self.burns if b.t0 <= self.t + 1e-9 and t1 <= b.t1 + 1e-9]
+        return scratch.integrate(self._derivative(idx, burns), self.t, y0.copy(), t1)[1]
+
+    def _propagate(self, idx: np.ndarray, t_seg: float, t_stop: float | None = None) -> bool:
+        """Advance satellites ``idx`` towards ``t_seg``, landing on it, or with
+        ``t_stop`` ending at the last whole step before that. Returns True if it
+        stopped early because a satellite left the active set."""
+        stop = t_seg if t_stop is None else min(t_seg, t_stop)
+        left = False
+
         def callback(t, ya):
+            nonlocal left
             self.t = t
             self.y[idx] = ya
-            return self._post_step(t, idx=idx)
+            left = self._post_step(t, idx=idx)
+            return left
 
         if self.propagator == "cowell":
             burns = [b for b in self.burns if b.t0 <= self.t + 1e-9 and t_seg <= b.t1 + 1e-9]
             f = self._derivative(idx, burns)
-            t, ya = self.integrator.integrate(f, self.t, self.y[idx].copy(), t_seg, callback)
+            t, ya = self.integrator.integrate(f, self.t, self.y[idx].copy(), t_seg, callback,
+                                              t_stop)
             self.t = t
             self.y[idx] = ya
         else:
             h = self.integrator.h_max
             while self.t < t_seg - 1e-9:
                 step = min(h, t_seg - self.t)
+                if stop < t_seg and self.t + step > stop:
+                    break
                 y0 = self.y[idx]
                 if self.propagator == "kepler":
                     r, v = kepler_propagate(y0[:, :3], y0[:, 3:], step)
@@ -606,6 +713,7 @@ class Simulation:
                 self.integrator.stats.last_h = step
                 if callback(self.t + step, np.concatenate([r, v], axis=1)):
                     break
+        return left
 
     # --- per-step checks ------------------------------------------------------------------
     def _post_step(self, t: float, idx=None, force_record: bool = False) -> bool:
@@ -695,14 +803,62 @@ class Simulation:
             k = int(np.argmin(d))
             a, b = divmod(k, orbiting.size)
             self.closest = (float(d[a, b]), int(orbiting[a]), int(orbiting[b]))
-            close = np.argwhere(np.triu(d < self.conjunction_km))
-            now = {(int(orbiting[p]), int(orbiting[q])): float(d[p, q]) for p, q in close}
-            for p, q in set(now) - self._close_pairs:
+            now = {}
+            for p, q, dist, tca in self._approaches(t, orbiting, d):
+                now[(p, q)] = (dist, tca)
+            for p, q in sorted(set(now) - self._close_pairs, key=lambda pq: now[pq][1]):
+                dist, tca = now[(p, q)]
                 self.log(f"Close approach: {self.sats[p].name} - {self.sats[q].name} "
-                         f"{now[(p, q)]:.2f} km", "alert")
+                         f"{dist:.2f} km", "alert", tca)
             self._close_pairs = set(now)
+            mask = np.zeros(self.n, dtype=bool)
+            mask[orbiting] = True
+            self._last_sample = (t, self.y.copy(), mask)
         else:
             self.closest = (math.inf, -1, -1)
+            self._last_sample = None
+
+    def _approaches(self, t: float, orbiting: np.ndarray, d: np.ndarray):
+        """Pairs of ``orbiting`` (index into ``d``, the distances now, inf for
+        pairs to ignore) that came within ``conjunction_km`` since the last
+        step, as (i, j, closest km, time of closest approach).
+
+        A fast pass can fall between two steps, so each pair's relative motion
+        over the step is modelled as the cubic Hermite curve through both ends'
+        positions and velocities; it stays within 4/27 (|m0 - c| + |m1 - c|) of
+        its chord c (m = velocity x step). The same bound for each satellite's
+        own curve gives how far it can have been from where it is now, which
+        rules out nearly every pair from the distances alone; the chord rules
+        out most of the rest, and what is left is searched for its minimum."""
+        lim = self.conjunction_km
+        dist, tca = d.copy(), {}
+        prev = self._last_sample
+        if prev is not None and prev[0] < t and prev[1].shape == self.y.shape:
+            h = t - prev[0]
+            y0, y1 = prev[1][orbiting], self.y[orbiting]
+            moved = y1[:, :3] - y0[:, :3]
+            reach = np.linalg.norm(moved, axis=1) + 4 / 27 * (
+                np.linalg.norm(h * y0[:, 3:] - moved, axis=1)
+                + np.linalg.norm(h * y1[:, 3:] - moved, axis=1))
+            reach[~prev[2][orbiting]] = -math.inf       # not orbiting then: no curve to follow
+            p, q = np.nonzero(np.triu(d - reach[:, None] - reach[None, :] < lim, 1))
+            rel0, rel1 = y0[p] - y0[q], y1[p] - y1[q]
+            d0, m0 = rel0[:, :3], h * rel0[:, 3:]
+            c, m1 = rel1[:, :3] - d0, h * rel1[:, 3:]
+            cc = np.einsum("ij,ij->i", c, c)
+            s = np.clip(-np.einsum("ij,ij->i", d0, c) / np.where(cc > 0, cc, 1.0), 0.0, 1.0)
+            chord = np.linalg.norm(d0 + s[:, None] * c, axis=1)
+            bow = 4 / 27 * (np.linalg.norm(m0 - c, axis=1) + np.linalg.norm(m1 - c, axis=1))
+            near = chord - bow < lim
+            if near.any():
+                tau, dm = _hermite_min(d0[near], c[near], m0[near], m1[near])
+                for a, b, x, u in zip(p[near], q[near], dm, tau, strict=True):
+                    if x < dist[a, b]:
+                        dist[a, b] = x
+                        tca[a, b] = prev[0] + u * h
+        for a, b in zip(*np.nonzero(np.triu(dist < lim, 1)), strict=True):
+            yield (int(orbiting[a]), int(orbiting[b]), float(dist[a, b]),
+                   tca.get((a, b), t))
 
     # --- diagnostics ------------------------------------------------------------------------
     def energy(self, i: int) -> float:

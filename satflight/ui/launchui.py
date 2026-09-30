@@ -135,6 +135,8 @@ class LaunchPreview:
 
     # --- drawing ---
     def draw(self, surf, rect, dlg):
+        """Re-plan if the form settled since the last change, then draw the map,
+        profile and summary into ``rect`` (text that does not fit is cut)."""
         if self.dirty_at is not None and time.monotonic() - self.dirty_at > self.DEBOUNCE:
             self.refresh(dlg)
         fonts = self.app.fonts
@@ -561,29 +563,7 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
                  planned[0] if planned else None,
                  None if asc.phase == "pad" else (st["downrange"], st["alt"]), sat.color)
     y += 158
-    # stages
-    fonts.draw(surf, "STAGES", (x, y), theme.ACCENT, fonts.small)
-    y += 18
-    for k, stg in enumerate(spec.vehicle.stages):
-        if k < asc.k:
-            frac, note, col = 0.0, "separated", theme.FAINT
-        elif k == asc.k:
-            frac = asc.prop / stg.propellant
-            note = ("burning" if asc.burning else ("waiting" if asc.phase == "pad" else "coasting"))
-            col = theme.WARN if asc.burning else theme.DIM
-        else:
-            frac, note, col = 1.0, "full", theme.DIM
-        fonts.draw(surf, stg.name[:10], (x + 4, y), theme.TEXT if k == asc.k else theme.DIM,
-                   fonts.small)
-        bar = pygame.Rect(x + 90, y + 3, w - 180, 10)
-        pygame.draw.rect(surf, theme.FIELD, bar, border_radius=3)
-        if frac > 0:
-            fill = bar.copy()
-            fill.w = max(3, int(bar.w * frac))
-            pygame.draw.rect(surf, col if k != asc.k else sat.color, fill, border_radius=3)
-        fonts.draw(surf, f"{frac * 100:3.0f}% {note}", (x + w, y), col, fonts.small, "topright")
-        y += 17
-    y += 6
+    y = _draw_stages(surf, fonts, x, y, w, asc, sat.color) + 6
     el = st["el"]
     if el.e >= 1:
         orbit_now = "escape"
@@ -624,6 +604,33 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
         if planned and planned[2]:
             rows.append(("Planned outcome", planned[2]))
     return draw_section(surf, fonts, x, y, w, "ASCENT", rows)
+
+
+def _draw_stages(surf, fonts, x, y, w, asc, color) -> int:
+    """A propellant bar per stage (separated, burning/coasting or still full);
+    returns the y below the list."""
+    fonts.draw(surf, "STAGES", (x, y), theme.ACCENT, fonts.small)
+    y += 18
+    for k, stg in enumerate(asc.spec.vehicle.stages):
+        if k < asc.k:
+            frac, note, col = 0.0, "separated", theme.FAINT
+        elif k == asc.k:
+            frac = asc.prop / stg.propellant
+            note = ("burning" if asc.burning else ("waiting" if asc.phase == "pad" else "coasting"))
+            col = theme.WARN if asc.burning else theme.DIM
+        else:
+            frac, note, col = 1.0, "full", theme.DIM
+        fonts.draw(surf, stg.name[:10], (x + 4, y), theme.TEXT if k == asc.k else theme.DIM,
+                   fonts.small)
+        bar = pygame.Rect(x + 90, y + 3, w - 180, 10)
+        pygame.draw.rect(surf, theme.FIELD, bar, border_radius=3)
+        if frac > 0:
+            fill = bar.copy()
+            fill.w = max(3, int(bar.w * frac))
+            pygame.draw.rect(surf, col if k != asc.k else color, fill, border_radius=3)
+        fonts.draw(surf, f"{frac * 100:3.0f}% {note}", (x + w, y), col, fonts.small, "topright")
+        y += 17
+    return y
 
 
 def launch_rows(sim, i):

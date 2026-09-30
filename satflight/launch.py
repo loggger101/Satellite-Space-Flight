@@ -106,6 +106,7 @@ class Stage:
         return self.isp_vac - (self.isp_vac - sl) * p_ratio
 
     def to_dict(self):
+        """JSON-ready dict of the stage's fields."""
         return asdict(self)
 
 
@@ -146,6 +147,7 @@ class Vehicle:
         return out
 
     def to_dict(self):
+        """JSON-ready dict; stages are stored as dicts."""
         d = asdict(self)
         d["stages"] = [asdict(s) if isinstance(s, Stage) else dict(s) for s in self.stages]
         return d
@@ -158,6 +160,7 @@ class Vehicle:
         return v
 
     def copy(self) -> Vehicle:
+        """Deep copy (via the dict form), safe to edit."""
         return Vehicle.from_dict(copy.deepcopy(self.to_dict()))
 
 
@@ -237,6 +240,7 @@ class LaunchSpec:
     color: list | None = None
 
     def to_dict(self):
+        """JSON-ready dict; the vehicle is stored in full, not by preset name."""
         d = asdict(self)
         d["vehicle"] = self.vehicle.to_dict()
         return d
@@ -253,6 +257,7 @@ class LaunchSpec:
         return s
 
     def copy(self) -> LaunchSpec:
+        """Deep copy (via the dict form), including the vehicle."""
         return LaunchSpec.from_dict(copy.deepcopy(self.to_dict()))
 
 

@@ -15,6 +15,7 @@ import pytest
 from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.ui.app import App
+from satflight.ui.panels import HELP, draw_help
 from satflight.ui.widgets import TextField
 
 
@@ -59,6 +60,15 @@ def test_toggles_and_views(app):
     assert app.opts.frame == "ECEF" and app.opts.map and app.opts.plot and app.follow
     key(app, pygame.K_i)
     frame(app, 3)
+
+
+def test_help_fits_the_smallest_window(app):
+    app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))   # clamped to the minimum
+    assert app.screen.get_size() == (900, 600)
+    rect = draw_help(app.screen, app)
+    assert app.screen.get_rect().contains(rect)
+    # key labels start at x + 30 and must end before the descriptions at x + 200
+    assert all(app.fonts.mono.size(k)[0] < 170 for k, desc in HELP if desc)
 
 
 def test_add_satellite_dialog_with_preset(app):

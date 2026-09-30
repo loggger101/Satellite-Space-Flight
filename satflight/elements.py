@@ -3,7 +3,7 @@
 Algorithms follow Vallado, *Fundamentals of Astrodynamics and Applications*
 (4th ed.): RV2COE (Alg. 9), COE2RV (Alg. 10) and the universal-variable
 KEPLER solution (Alg. 8), here with a Laguerre-Conway root finder for
-robustness on every conic. Everything is vectorised over leading axes.
+robustness on every conic. Everything is vectorized over leading axes.
 
 Angle conventions: all angles are radians in [0, 2pi). For orbits where an
 element is undefined the conventional substitutes are used so that
@@ -41,7 +41,7 @@ def _angle_about(axis, frm, to):
     return np.mod(np.arctan2(_dot(axis, np.cross(frm, to)), _dot(frm, to)), TWO_PI)
 
 
-def _scalarise(x):
+def _scalarize(x):
     """Unwrap 0-d arrays to float so single-orbit results are plain numbers."""
     return float(x) if np.ndim(x) == 0 else x
 
@@ -73,7 +73,7 @@ def stumpff(psi):
 @dataclass
 class Elements:
     """Osculating elements. Fields are floats for a single orbit or arrays."""
-    a: np.ndarray          # semi-major axis, km (negative for hyperbolae, inf parabola)
+    a: np.ndarray          # semi-major axis, km (negative for hyperbolas, inf parabola)
     e: np.ndarray          # eccentricity
     i: np.ndarray          # inclination, rad
     raan: np.ndarray       # right ascension of the ascending node, rad
@@ -91,7 +91,7 @@ class Elements:
 
     def as_dict(self):
         """All fields as a dict of floats (or arrays for an ensemble)."""
-        return {k: _scalarise(v) for k, v in self.__dict__.items()}
+        return {k: _scalarize(v) for k, v in self.__dict__.items()}
 
 
 def rv2coe(r, v, mu: float = MU_EARTH) -> Elements:
@@ -135,7 +135,7 @@ def rv2coe(r, v, mu: float = MU_EARTH) -> Elements:
         n = np.sqrt(mu / np.abs(a) ** 3)
         period = np.where(ellipse, TWO_PI / n, np.inf)
 
-    return Elements(*(_scalarise(x) for x in
+    return Elements(*(_scalarize(x) for x in
                       (a, e, i, raan, argp, nu, p, hm, energy, M, u, rp, ra, period, n)))
 
 
@@ -192,7 +192,7 @@ def true_to_mean(nu, e):
     if np.any(par):
         D = np.tan(nu[par] / 2.0)
         out[par] = D + D ** 3 / 3.0
-    return _scalarise(out)
+    return _scalarize(out)
 
 
 def mean_to_eccentric(M, e, tol: float = 1e-14, max_iter: int = 50):
@@ -206,7 +206,7 @@ def mean_to_eccentric(M, e, tol: float = 1e-14, max_iter: int = 50):
         E = E - dE
         if np.all(np.abs(dE) < tol):
             break
-    return _scalarise(E)
+    return _scalarize(E)
 
 
 def mean_to_hyperbolic(M, e, tol: float = 1e-14, max_iter: int = 80):
@@ -220,7 +220,7 @@ def mean_to_hyperbolic(M, e, tol: float = 1e-14, max_iter: int = 80):
         F = F - dF
         if np.all(np.abs(dF) < tol * np.maximum(1.0, np.abs(F))):
             break
-    return _scalarise(F)
+    return _scalarize(F)
 
 
 def mean_to_true(M, e):
@@ -229,10 +229,10 @@ def mean_to_true(M, e):
     if np.all(e < 1.0):
         E = np.asarray(mean_to_eccentric(M, e))
         nu = np.arctan2(np.sqrt(1.0 - e * e) * np.sin(E), np.cos(E) - e)
-        return _scalarise(np.mod(nu, TWO_PI))
+        return _scalarize(np.mod(nu, TWO_PI))
     F = np.asarray(mean_to_hyperbolic(M, e))
     nu = 2.0 * np.arctan(np.sqrt((e + 1.0) / (e - 1.0)) * np.tanh(F / 2.0))
-    return _scalarise(np.mod(nu, TWO_PI))
+    return _scalarize(np.mod(nu, TWO_PI))
 
 
 # --- Universal-variable Kepler propagation -----------------------------------

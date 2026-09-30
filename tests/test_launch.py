@@ -137,7 +137,7 @@ def test_mass_flow_staging_and_the_delta_v_budget():
     assert drops[0] == (f"{s.name} Stage 1", veh.stages[0].dry)
     assert drops[1][1] == pytest.approx(veh.stages[1].dry + f.insertion["prop_left"])
     assert f.mass == s.payload_mass
-    # total mass: lift-off = payload + fairing + stage drops + propellant burned
+    # total mass: liftoff = payload + fairing + stage drops + propellant burned
     burned = veh.stages[0].propellant + veh.stages[1].propellant - f.insertion["prop_left"]
     assert veh.liftoff_mass(s.payload_mass) == pytest.approx(
         s.payload_mass + veh.fairing + sum(m for _, m in drops) + burned)
@@ -196,7 +196,7 @@ def test_vehicle_waits_on_the_pad_turning_with_the_earth_then_flies():
     names = [s.name for s in sim.sats]
     assert names[-2:] == ["Sat Stage 1", "Sat Stage 2"]
     kinds = [e.text for e in sim.events if e.kind == "launch"]
-    assert any("lift-off" in t for t in kinds) and any("SECO" in t for t in kinds)
+    assert any("liftoff" in t for t in kinds) and any("SECO" in t for t in kinds)
     assert sim.sats[i].launch_report["outcome"] == "orbit"
     assert sim.sats[i].mass == 5000.0 and sim.sats[i].area == 5.0
 
@@ -218,7 +218,7 @@ def test_launch_into_another_satellites_plane(propagator):
     assert not any("Close approach" in e.text and "Dragon" in e.text for e in sim.events)
 
 
-def test_stage_one_falls_back_and_the_payload_can_circularise():
+def test_stage_one_falls_back_and_the_payload_can_circularize():
     gto = spec(name="GTO sat", perigee_alt=250, apogee_alt=35786, inclination=28.6,
                circularize=True, payload_mass=4000)
     sim = Simulation(_scenario(launches=[gto]))

@@ -1,6 +1,6 @@
 """Force models: everything that accelerates a satellite.
 
-All accelerations are in km/s^2 and vectorised over ``(N, 3)`` arrays.
+All accelerations are in km/s^2 and vectorized over ``(N, 3)`` arrays.
 
 * central body   -mu r / r^3
 * zonal harmonics J2, J3, J4 (Earth oblateness and pear shape)
@@ -104,7 +104,7 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0):
 
 @dataclass
 class ForceModel:
-    """Which perturbations act on the ensemble; serialised into scenario files."""
+    """Which perturbations act on the ensemble; serialized into scenario files."""
 
     j2: bool = True
     j3: bool = False

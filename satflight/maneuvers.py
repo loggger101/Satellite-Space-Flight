@@ -1,5 +1,5 @@
-"""Orbital manoeuvres: analytic transfer planners, a Lambert solver and the
-schedulable manoeuvre objects the simulation executes.
+"""Orbital maneuvers: analytic transfer planners, a Lambert solver and the
+schedulable maneuver objects the simulation executes.
 
 Impulsive burns change velocity instantly and spend propellant via the
 rocket equation; finite burns apply thrust T/m(t) continuously (with the
@@ -111,7 +111,7 @@ def sun_synchronous_inclination(a: float, e: float = 0.0) -> float:
     return math.acos(cos_i)
 
 
-# --- Schedulable manoeuvres ------------------------------------------------------
+# --- Schedulable maneuvers -------------------------------------------------------
 
 @dataclass
 class Maneuver:
@@ -152,7 +152,7 @@ class Maneuver:
         return m
 
     def describe(self) -> str:
-        """One-line label for the manoeuvre list."""
+        """One-line label for the maneuver list."""
         if self.label:
             return self.label
         if self.kind == "impulse":
@@ -167,7 +167,7 @@ class Maneuver:
 
 
 def resolve_time(m: Maneuver, t_now: float, r, v, mu: float = MU_EARTH) -> float:
-    """Absolute execution time for a manoeuvre scheduled from state (r, v)."""
+    """Absolute execution time for a maneuver scheduled from state (r, v)."""
     if m.timing == "absolute" and m.t is not None:
         return m.t
     if m.timing == "now":
@@ -194,7 +194,7 @@ def resolve_time(m: Maneuver, t_now: float, r, v, mu: float = MU_EARTH) -> float
 
 
 def impulse_eci(m: Maneuver, r, v, target_v=None) -> np.ndarray:
-    """ECI delta-v (km/s) an impulsive manoeuvre applies at state (r, v)."""
+    """ECI delta-v (km/s) an impulsive maneuver applies at state (r, v)."""
     r = np.asarray(r, dtype=float)
     v = np.asarray(v, dtype=float)
     if m.kind == "impulse":
@@ -226,7 +226,7 @@ def impulse_eci(m: Maneuver, r, v, target_v=None) -> np.ndarray:
         if target_v is None:
             raise ValueError("target velocity required")
         return np.asarray(target_v, dtype=float) - v
-    raise ValueError(f"{m.kind} is not an impulsive manoeuvre")
+    raise ValueError(f"{m.kind} is not an impulsive maneuver")
 
 
 def finite_direction(m: Maneuver, r, v) -> np.ndarray:

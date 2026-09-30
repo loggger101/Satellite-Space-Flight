@@ -14,6 +14,6 @@ repository; `python tools/fetch_assets.py` re-downloads them.
   widths are known on every system; `SATFLIGHT_FONTS=bundled` forces them.
 
 Any equirectangular image named `earth.jpg` or `earth.png` can replace the
-texture (oceans are detected by colour for the sun-glint effect). Without
+texture (oceans are detected by color for the sun-glint effect). Without
 these files the simulator draws a procedural globe with a latitude/longitude
 grid.

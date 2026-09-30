@@ -3,7 +3,7 @@
     python tools/make_scenarios.py
 
 Each function below builds one scenario (``ALL`` maps file names to them).
-Edit these, not the JSON files: scenarios with planned manoeuvres or launches
+Edit these, not the JSON files: scenarios with planned maneuvers or launches
 run the planners here and store the results.
 """
 
@@ -219,14 +219,14 @@ def launch_day():
         name="Launch day",
         description="Six launches from four continents: a sounding rocket over Norway, "
                     "Falcon 9 to a 53 deg shell, Electron to sun-synchronous orbit, a Saturn V "
-                    "parking orbit, a Kourou GTO that circularises at apogee, and a Crew Dragon "
+                    "parking orbit, a Kourou GTO that circularizes at apogee, and a Crew Dragon "
                     "that waits for the window into the ISS plane. Spent stages fall back or "
                     "stay in orbit.",
         epoch=EPOCH, forces=ForceModel(j2=True, drag=True), warp=10, record_dt=5.0,
         satellites=[iss],
         stations=[DEFAULT_STATIONS[0], DEFAULT_STATIONS[2], DEFAULT_STATIONS[4]],
         launches=launches_)
-    # fly every launch once and store the optimised pitch kick, so loading is quick
+    # fly every launch once and store the optimized pitch kick, so loading is quick
     sim = Simulation(sc)
     kicks = {a.spec.name: a.kick_deg for a in sim.ascents}
     for spec in sc.launches:

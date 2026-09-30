@@ -35,7 +35,7 @@ def display_scale() -> float:
     process is DPI-aware there (SDL_WINDOWS_DPI_AWARENESS), so the window gets
     the screen's real pixels and the UI draws itself this much larger. 1 on
     other systems, which scale for the program. Call after the display is
-    initialised."""
+    initialized."""
     if sys.platform != "win32":
         return 1.0
     try:
@@ -47,7 +47,7 @@ def display_scale() -> float:
 
 def fit_window(scale=None):
     """The UI scale (``scale``, or the display's) and a window size that fits the
-    main screen, with a position that centres the window above the taskbar (a
+    main screen, with a position that centers the window above the taskbar (a
     window larger than the screen hides the panels' right and bottom edges)."""
     import pygame
     pygame.display.init()

@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field, fields
 
 import numpy as np
 
-from .constants import MU_EARTH
+from .constants import J2, MU_EARTH, R_EARTH
 from .elements import rv2coe, stumpff, time_to_true_anomaly
 from .frames import local_to_eci, rsw_basis, unit, vnb_basis
 
@@ -50,6 +50,7 @@ def bielliptic(r1: float, rb: float, r2: float, mu: float = MU_EARTH):
 
 
 def plane_change_dv(speed: float, delta_i: float) -> float:
+    """Delta-v (km/s) to turn a velocity of ``speed`` through ``delta_i`` rad."""
     return 2.0 * speed * math.sin(abs(delta_i) / 2.0)
 
 
@@ -101,7 +102,6 @@ def lambert(r1, r2, tof: float, mu: float = MU_EARTH, prograde: bool = True,
 def sun_synchronous_inclination(a: float, e: float = 0.0) -> float:
     """Inclination (rad) whose J2 nodal regression matches the mean Sun
     (0.9856 deg/day eastward)."""
-    from .constants import J2, R_EARTH
     target = 2 * math.pi / (365.2421897 * 86400.0)
     n = math.sqrt(MU_EARTH / a ** 3)
     p = a * (1 - e * e)
@@ -115,6 +115,12 @@ def sun_synchronous_inclination(a: float, e: float = 0.0) -> float:
 
 @dataclass
 class Maneuver:
+    """A burn scheduled for one satellite, stored in scenario files.
+
+    ``kind`` selects what happens (see ``KINDS``) and ``timing`` when (``TIMINGS``);
+    the simulation resolves ``t`` from the timing and executes the burn there.
+    """
+
     sat: str
     kind: str = "impulse"
     timing: str = "now"          # how ``t`` was / should be chosen
@@ -132,18 +138,21 @@ class Maneuver:
     result: str = field(default="", compare=False)
 
     def to_dict(self):
+        """Plain dict for JSON."""
         d = asdict(self)
         d["dv"] = list(self.dv)
         return d
 
     @classmethod
     def from_dict(cls, d):
+        """Build from a scenario dict, ignoring unknown keys."""
         names = {f.name for f in fields(cls)}
         m = cls(**{k: v for k, v in d.items() if k in names})
         m.dv = tuple(float(x) for x in m.dv)
         return m
 
     def describe(self) -> str:
+        """One-line label for the manoeuvre list."""
         if self.label:
             return self.label
         if self.kind == "impulse":

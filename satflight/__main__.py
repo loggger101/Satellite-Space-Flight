@@ -8,11 +8,13 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 
 
 def main(argv=None):
+    """Parse the command line, build the :class:`App` and run it."""
     ap = argparse.ArgumentParser(prog="satflight", description="Satellite Space Flight simulator")
     ap.add_argument("scenario", nargs="?", help="scenario JSON (default: scenarios/default.json)")
     ap.add_argument("--size", default="1600x900", help="window size WxH")
@@ -20,11 +22,13 @@ def main(argv=None):
     ap.add_argument("--frames", type=int, help="quit after this many frames")
     ap.add_argument("--screenshot", help="save the last frame to this PNG")
     ap.add_argument("--warp", type=float, help="initial time warp")
-    ap.add_argument("--advance", default="0", help="simulate this long before the first frame (e.g. 3h)")
+    ap.add_argument("--advance", default="0",
+                    help="simulate this long before the first frame (e.g. 3h)")
     ap.add_argument("--select", help="name of the satellite to select")
     ap.add_argument("--follow", action="store_true", help="camera follows the selected satellite")
     ap.add_argument("--frame", choices=("ECI", "ECEF"), help="view frame")
-    ap.add_argument("--show", default="", help="comma list of panels/overlays: map,plot,help,vectors,geo_ring")
+    ap.add_argument("--show", default="",
+                    help="comma list of panels/overlays: map,plot,help,vectors,geo_ring")
     ap.add_argument("--distance", type=float, help="camera distance (km)")
     ap.add_argument("--yaw", type=float, help="camera yaw (deg)")
     ap.add_argument("--pitch", type=float, help="camera pitch (deg)")
@@ -34,8 +38,6 @@ def main(argv=None):
         os.environ["SDL_VIDEODRIVER"] = "dummy"     # must precede importing pygame
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-
-    import math
 
     from .batch import parse_duration
     from .ui.app import App
@@ -64,7 +66,7 @@ def main(argv=None):
         app.camera.pitch = math.radians(args.pitch)
     if args.follow:
         app.toggle_follow()
-        if args.distance:
+        if args.distance:                           # following resets the distance
             app.camera.distance = args.distance
     app.run(max_frames=args.frames, screenshot=args.screenshot)
 

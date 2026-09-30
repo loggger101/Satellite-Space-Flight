@@ -12,25 +12,38 @@ from ..frames import ecef_to_geodetic, eci_to_ecef
 from . import theme
 
 
+def _el(s):
+    """Elements of a (L, 6) state history."""
+    return rv2coe(s[:, :3], s[:, 3:])
+
+
 def _altitude(sim, t, s):
     return ecef_to_geodetic(eci_to_ecef(s[:, :3], sim.clock.gmst(t)))[2]
 
 
+def _energy_drift(sim, t, s):
+    e = conservative_energy(s[:, :3], s[:, 3:], sim.forces)
+    return (e - e[0]) / abs(e[0])
+
+
+# (name, unit, fn(sim, times, states) -> values); angles are unwrapped so drifts plot smoothly
 METRICS = [
     ("Altitude", "km", _altitude),
     ("Speed", "km/s", lambda sim, t, s: np.linalg.norm(s[:, 3:], axis=1)),
-    ("Semi-major axis", "km", lambda sim, t, s: rv2coe(s[:, :3], s[:, 3:]).a),
-    ("Eccentricity", "", lambda sim, t, s: rv2coe(s[:, :3], s[:, 3:]).e),
-    ("Inclination", "deg", lambda sim, t, s: np.degrees(rv2coe(s[:, :3], s[:, 3:]).i)),
-    ("RAAN", "deg", lambda sim, t, s: np.degrees(np.unwrap(rv2coe(s[:, :3], s[:, 3:]).raan))),
-    ("Arg. of perigee", "deg", lambda sim, t, s: np.degrees(np.unwrap(rv2coe(s[:, :3], s[:, 3:]).argp))),
-    ("Perigee altitude", "km", lambda sim, t, s: rv2coe(s[:, :3], s[:, 3:]).rp - R_EARTH),
-    ("Energy drift (rel.)", "", lambda sim, t, s: (lambda e: (e - e[0]) / abs(e[0]))(
-        conservative_energy(s[:, :3], s[:, 3:], sim.forces))),
+    ("Semi-major axis", "km", lambda sim, t, s: _el(s).a),
+    ("Eccentricity", "", lambda sim, t, s: _el(s).e),
+    ("Inclination", "deg", lambda sim, t, s: np.degrees(_el(s).i)),
+    ("RAAN", "deg", lambda sim, t, s: np.degrees(np.unwrap(_el(s).raan))),
+    ("Arg. of perigee", "deg", lambda sim, t, s: np.degrees(np.unwrap(_el(s).argp))),
+    ("Perigee altitude", "km", lambda sim, t, s: _el(s).rp - R_EARTH),
+    ("Energy drift (rel.)", "", _energy_drift),
 ]
 
 
 class PlotView:
+    """One ``METRICS`` series of the selected satellite over the history buffer;
+    clicking cycles the metric."""
+
     def __init__(self):
         self.metric = 0
         self.rect = pygame.Rect(0, 0, 0, 0)
@@ -58,13 +71,14 @@ class PlotView:
             return
         t, s = sim.history.series(i)
         if len(t) < 3:
-            fonts.draw(surf, "collecting samples...", rect.center, theme.FAINT, fonts.small, "center")
+            fonts.draw(surf, "collecting samples...", rect.center, theme.FAINT, fonts.small,
+                       "center")
             return
         t = np.append(t, sim.t)
         s = np.vstack([s, sim.y[i]])
         try:
             y = np.asarray(fn(sim, t, s), dtype=float)
-        except Exception:
+        except Exception:        # degenerate states (e.g. at impact): skip the frame
             return
         ok = np.isfinite(y)
         if ok.sum() < 2:
@@ -88,6 +102,7 @@ class PlotView:
         ys = pr.bottom - (y - lo) / (hi - lo) * pr.h
         pygame.draw.aalines(surf, sim.sats[i].color, False, np.stack([xs, ys], 1).tolist())
         unit_t, div = ("h", 3600.0) if span > 7200 else ("min", 60.0)
-        fonts.draw(surf, f"-{span / div:.1f} {unit_t}", (pr.x, pr.bottom + 3), theme.FAINT, fonts.small)
+        fonts.draw(surf, f"-{span / div:.1f} {unit_t}", (pr.x, pr.bottom + 3), theme.FAINT,
+                   fonts.small)
         fonts.draw(surf, "now", (pr.right, pr.bottom + 3), theme.FAINT, fonts.small, "topright")
         fonts.draw(surf, f"{y[-1]:.6g}", (pr.right, pr.y), theme.TEXT, fonts.small, "topright")

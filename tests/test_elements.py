@@ -1,11 +1,21 @@
+"""Orbital elements, anomalies and universal-variable Kepler propagation,
+checked against Vallado's worked examples and round trips."""
+
 import math
 
 import numpy as np
 import pytest
 
 from satflight.constants import MU_EARTH
-from satflight.elements import (coe2rv, conic_points, kepler_propagate, mean_to_true,
-                                rv2coe, time_to_true_anomaly, true_to_mean)
+from satflight.elements import (
+    coe2rv,
+    conic_points,
+    kepler_propagate,
+    mean_to_true,
+    rv2coe,
+    time_to_true_anomaly,
+    true_to_mean,
+)
 
 D = np.radians
 

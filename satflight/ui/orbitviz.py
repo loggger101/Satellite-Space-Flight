@@ -32,6 +32,8 @@ ARC_RAAN = (120, 200, 255)
 ARC_ARGP = (205, 150, 255)
 R_FILL_IN = R_EARTH * 1.001
 ROUND_E = 0.01          # below this, arcs use the argument of latitude
+X_HAT, Y_HAT, Z_HAT = np.eye(3)
+ORIGIN = np.zeros(3)
 
 
 def _unit(v):
@@ -39,6 +41,8 @@ def _unit(v):
 
 
 def _arc(center, u, w, radius, a0, a1, n=48):
+    """Points of a circular arc in the plane of unit vectors ``u``, ``w`` from angle
+    ``a0`` to ``a1`` (``n`` points per half turn)."""
     t = np.linspace(a0, a1, max(3, int(n * abs(a1 - a0) / math.pi) + 3))
     return center + radius * (np.cos(t)[:, None] * u + np.sin(t)[:, None] * w)
 
@@ -53,6 +57,7 @@ def _dashed(p0, p1, color, n=24, width=1):
 
 
 def _arrow(p0, p1, color, side, width=2):
+    """Shaft and head of an arrow; the head opens across ``side`` (the view axis)."""
     d = p1 - p0
     L = np.linalg.norm(d)
     if L == 0:
@@ -60,8 +65,8 @@ def _arrow(p0, p1, color, side, width=2):
     d = d / L
     s = _unit(np.cross(d, side)) if np.linalg.norm(np.cross(d, side)) > 1e-9 else np.zeros(3)
     head = min(0.08 * L, 900.0)
-    return [Line(np.linspace(p0, p1, 16), color, width, 0.4),
-            Line(np.stack([p1 - head * d + 0.5 * head * s, p1, p1 - head * d - 0.5 * head * s]), color, width, 0.4)]
+    tips = np.stack([p1 - head * d + 0.5 * head * s, p1, p1 - head * d - 0.5 * head * s])
+    return [Line(np.linspace(p0, p1, 16), color, width, 0.4), Line(tips, color, width, 0.4)]
 
 
 def sector_polygon(P, Q, p, e, nu, r_in=R_FILL_IN):
@@ -101,7 +106,8 @@ def draw_fill(surf, cam, poly_world, rgba, part: str):
     cn = float(np.linalg.norm(c))
     c_hat = c / cn
     k = R_EARTH ** 2 / cn
-    poly = clip_polygon(poly_world, c_hat, k) if part == "near" else clip_polygon(poly_world, -c_hat, -k)
+    sign = 1.0 if part == "near" else -1.0
+    poly = clip_polygon(poly_world, sign * c_hat, sign * k)
     poly = clip_polygon(poly, cam.forward, float(cam.forward @ c) + 2 * cam.near)
     if len(poly) < 3:
         return
@@ -157,7 +163,8 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
     pe = at(0.0)
     if not info.circular:
         ap = at(math.pi) if info.closed else None
-        lines += _dashed(world(pe), world(ap if ap is not None else np.zeros(3)), theme.dim(APSIS, 0.75))
+        lines += _dashed(world(pe), world(ap if ap is not None else ORIGIN),
+                         theme.dim(APSIS, 0.75))
         markers.append((world(pe), APSIS, -2, f"Pe {num(info.rp_alt, 'km', 0)}", False))
         if ap is not None:
             markers.append((world(ap), APSIS, -2, f"Ap {num(info.ra_alt, 'km', 0)}", False))
@@ -165,10 +172,11 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
     # line of nodes
     an = dn = None
     n_hat = np.array([math.cos(el.raan), math.sin(el.raan), 0.0])
+    v_hat = np.cross(Hn, n_hat)          # in the orbit plane, 90 deg past the node
     if not info.equatorial:
         an, dn = at(-el.argp), at(math.pi - el.argp)
-        a_w = world(an) if an is not None else np.zeros(3)
-        d_w = world(dn) if dn is not None else np.zeros(3)
+        a_w = world(an) if an is not None else ORIGIN
+        d_w = world(dn) if dn is not None else ORIGIN
         lines += _dashed(d_w, a_w, NODE, 30)
         if an is not None:
             markers.append((a_w, NODE, -2, "AN", False))
@@ -182,65 +190,63 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str):
     node_r = [np.linalg.norm(x) for x in (an, dn) if x is not None]
     r_eq = min(1.12 * max(node_r + [info.radius, 1.6 * R_EARTH]), 3e5)
     if not info.equatorial:
-        ex, ey = np.array([1.0, 0, 0]), np.array([0, 1.0, 0])
         a = np.linspace(0, 2 * np.pi, 145)
-        fills.append((world(sector_polygon(ex, ey, r_eq, 0.0, a)), (*EQUATOR, 14)))
-        lines.append(Line(world(_arc(np.zeros(3), ex, ey, r_eq, 0, 2 * np.pi, 96)),
+        fills.append((world(sector_polygon(X_HAT, Y_HAT, r_eq, 0.0, a)), (*EQUATOR, 14)))
+        lines.append(Line(world(_arc(ORIGIN, X_HAT, Y_HAT, r_eq, 0, 2 * np.pi, 96)),
                           theme.dim(EQUATOR, 0.8), 1, 0.4))
 
     base = max(R_EARTH, 0.35 * el.rp)
     rn, rw, rv = 1.80 * base, 1.55 * base, 1.30 * base
     # RAAN: in the equator from the vernal equinox (+X) to the ascending node
     if not info.equatorial:
-        x_hat = np.array([1.0, 0, 0])
-        y_hat = np.array([0, 1.0, 0])
-        lines += _dashed(np.zeros(3), world(x_hat * rn * 1.12), ARC_RAAN, 10)
-        markers.append((world(x_hat * rn * 1.16), ARC_RAAN, 0, "\N{GREEK SMALL LETTER GAMMA}", False))
+        lines += _dashed(ORIGIN, world(X_HAT * rn * 1.12), ARC_RAAN, 10)
+        markers.append((world(X_HAT * rn * 1.16), ARC_RAAN, 0, "\N{GREEK SMALL LETTER GAMMA}",
+                        False))
         if el.raan > 1e-3:
-            lines.append(Line(world(_arc(np.zeros(3), x_hat, y_hat, rn, 0.0, el.raan)), ARC_RAAN, 2, 0.4))
+            arc = _arc(ORIGIN, X_HAT, Y_HAT, rn, 0.0, el.raan)
+            lines.append(Line(world(arc), ARC_RAAN, 2, 0.4))
             mid = el.raan / 2
-            markers.append((world(rn * 1.08 * np.array([math.cos(mid), math.sin(mid), 0])), ARC_RAAN, 0,
-                            f"\N{GREEK CAPITAL LETTER OMEGA} {deg(el.raan, 1)}", False))
+            markers.append((world(rn * 1.08 * np.array([math.cos(mid), math.sin(mid), 0])),
+                            ARC_RAAN, 0, f"\N{GREEK CAPITAL LETTER OMEGA} {deg(el.raan, 1)}",
+                            False))
     # near-circular orbits have an ill-defined perigee: show the argument of
     # latitude (node -> satellite) instead of the perigee and true anomaly
     round_ = el.e < ROUND_E
     if round_ and not info.equatorial and el.u > 1e-3:
-        v_hat = np.cross(Hn, n_hat)
         uc = theme.mix(color, (255, 255, 255), 0.35)
-        lines.append(Line(world(_arc(np.zeros(3), n_hat, v_hat, rv, 0.0, el.u)), uc, 2, 0.4))
+        lines.append(Line(world(_arc(ORIGIN, n_hat, v_hat, rv, 0.0, el.u)), uc, 2, 0.4))
         mid = el.u / 2
         markers.append((world(rv * 1.1 * (math.cos(mid) * n_hat + math.sin(mid) * v_hat)), uc, 0,
                         f"u {deg(el.u, 1)}", False))
     # argument of perigee: in the orbit plane from the node to the perigee
     if not info.equatorial and not round_ and el.argp > 1e-3:
-        v_hat = np.cross(Hn, n_hat)
-        lines.append(Line(world(_arc(np.zeros(3), n_hat, v_hat, rw, 0.0, el.argp)), ARC_ARGP, 2, 0.4))
+        lines.append(Line(world(_arc(ORIGIN, n_hat, v_hat, rw, 0.0, el.argp)), ARC_ARGP, 2, 0.4))
         mid = el.argp / 2
-        markers.append((world(rw * 1.08 * (math.cos(mid) * n_hat + math.sin(mid) * v_hat)), ARC_ARGP, 0,
-                        f"\N{GREEK SMALL LETTER OMEGA} {deg(el.argp, 1)}", False))
+        markers.append((world(rw * 1.08 * (math.cos(mid) * n_hat + math.sin(mid) * v_hat)),
+                        ARC_ARGP, 0, f"\N{GREEK SMALL LETTER OMEGA} {deg(el.argp, 1)}", False))
     # true anomaly: from the perigee (or node, if circular) to the satellite
     nu0 = float(el.nu) if info.closed else (float(el.nu) + np.pi) % (2 * np.pi) - np.pi
     if abs(nu0) > 1e-3 and not (round_ and not info.equatorial):
         vc = theme.mix(color, (255, 255, 255), 0.35)
-        lines.append(Line(world(_arc(np.zeros(3), P, Q, rv, 0.0, nu0)), vc, 2, 0.4))
+        lines.append(Line(world(_arc(ORIGIN, P, Q, rv, 0.0, nu0)), vc, 2, 0.4))
         mid = nu0 / 2
         markers.append((world(rv * 1.1 * (math.cos(mid) * P + math.sin(mid) * Q)), vc, 0,
                         f"\N{GREEK SMALL LETTER NU} {deg(el.nu, 1)}", False))
     # inclination at the ascending node, between the equator and the track
     if an is not None:
-        east = _unit(np.cross([0.0, 0.0, 1.0], n_hat))
+        east = _unit(np.cross(Z_HAT, n_hat))
         rho = max(0.45 * R_EARTH, 0.12 * np.linalg.norm(an))
         lines.append(Line(world(np.stack([an - 0.4 * rho * east, an + 1.5 * rho * east])),
-                          theme.dim(EQUATOR, 1.0), 1, 0.4))
-        lines.append(Line(world(_arc(an, east, np.array([0, 0, 1.0]), rho, 0.0, el.i)), ARC_I, 2, 0.4))
+                          EQUATOR, 1, 0.4))
+        lines.append(Line(world(_arc(an, east, Z_HAT, rho, 0.0, el.i)), ARC_I, 2, 0.4))
         mid = el.i / 2
-        markers.append((world(an + 1.15 * rho * (math.cos(mid) * east + math.sin(mid) * np.array([0, 0, 1.0]))),
+        markers.append((world(an + 1.15 * rho * (math.cos(mid) * east + math.sin(mid) * Z_HAT)),
                         ARC_I, 0, f"i {deg(el.i, 2)}", False))
     # angular momentum, radius and velocity vectors
     h_len = 2.1 * base
-    lines += _arrow(np.zeros(3), world(Hn * h_len), H_VEC, side)
+    lines += _arrow(ORIGIN, world(Hn * h_len), H_VEC, side)
     markers.append((world(Hn * h_len * 1.06), H_VEC, 0, "h", False))
-    lines.append(Line(np.linspace(np.zeros(3), world(r), 24), theme.dim(color, 0.8), 1, 0.3))
+    lines.append(Line(np.linspace(ORIGIN, world(r), 24), theme.dim(color, 0.8), 1, 0.3))
     lines += _arrow(world(r), world(r + _unit(v) * 0.5 * base), (255, 255, 255), side)
     return lines, markers, fills
 
@@ -255,9 +261,10 @@ def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
         rows.append(f"circular, e = {info.el.e:.5f}")
     else:
         rows.append(f"Pe {num(info.rp_alt, 'km', 0):>11}   C3 {info.c3:.2f}")
-    rows.append(f"i  {deg(info.el.i, 2):>11}   T {countdown(info.period) if info.closed else 'open'}")
-    nxt = [(t, n) for t, n in ((info.t_peri, "Pe"), (info.t_apo, "Ap"), (info.t_an, "AN"), (info.t_dn, "DN"))
-           if math.isfinite(t)]
+    period = countdown(info.period) if info.closed else "open"
+    rows.append(f"i  {deg(info.el.i, 2):>11}   T {period}")
+    passes = ((info.t_peri, "Pe"), (info.t_apo, "Ap"), (info.t_an, "AN"), (info.t_dn, "DN"))
+    nxt = [(t, n) for t, n in passes if math.isfinite(t)]
     if nxt:
         t, n = min(nxt)
         rows.append(f"next {n} in {countdown(t)}")
@@ -271,7 +278,8 @@ def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
     if rect.top < bounds.top:
         rect.top = int(pos[1]) + 18
     rect.clamp_ip(bounds)
-    corner = (rect.left if rect.centerx > pos[0] else rect.right, rect.bottom if rect.centery < pos[1] else rect.top)
+    corner = (rect.left if rect.centerx > pos[0] else rect.right,
+              rect.bottom if rect.centery < pos[1] else rect.top)
     pygame.draw.aaline(surf, theme.dim(sat.color, 0.9), pos, corner)
     theme.panel(surf, rect, (10, 16, 30, 225), theme.dim(sat.color, 0.8), 6)
     pygame.draw.circle(surf, sat.color, (rect.x + 12, rect.y + 13), 5)

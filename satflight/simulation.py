@@ -33,12 +33,19 @@ from .eclipse import shadow_fraction
 from .elements import kepler_propagate, rv2coe
 from .ephemeris import sun_position
 from .forces import ForceModel, approx_altitude, conservative_energy
-from .frames import eci_to_ecef, look_angles
+from .frames import eci_to_ecef
 from .integrators import Propagator
 from .launch import Ascent, AscentEnv, LaunchSpec, coast, plan_launch, plane_normal
-from .maneuvers import (G0, Maneuver, finite_direction, impulse_eci, propellant_after,
-                        resolve_time)
-from .scenario import GroundStation, Scenario, expand, orbit_state, spread_along_orbit
+from .maneuvers import G0, Maneuver, finite_direction, impulse_eci, propellant_after, resolve_time
+from .scenario import (
+    GroundStation,
+    SatSpec,
+    Scenario,
+    expand,
+    orbit_state,
+    palette_color,
+    spread_along_orbit,
+)
 from .timeutil import Clock, format_duration
 
 PROPAGATORS = ("cowell", "kepler", "j2mean")
@@ -52,6 +59,8 @@ EVENT_DETAIL_LIMIT = 40   # log per-satellite eclipse/AOS events only below this
 
 @dataclass
 class Satellite:
+    """Per-satellite bookkeeping; the state vector itself lives in ``Simulation.y``."""
+
     name: str
     color: tuple
     mass: float = 500.0
@@ -67,6 +76,9 @@ class Satellite:
 
 @dataclass
 class Event:
+    """A log line; ``kind`` (info, maneuver, eclipse, station, alert, warn, launch)
+    picks its colour in the UI."""
+
     t: float
     text: str
     kind: str = "info"
@@ -74,6 +86,8 @@ class Event:
 
 @dataclass
 class FiniteBurn:
+    """A finite burn in progress: thrust acts from ``t0`` to ``t1``."""
+
     man: Maneuver
     t0: float
     t1: float
@@ -95,15 +109,18 @@ class History:
 
     @classmethod
     def auto_length(cls, n: int) -> int:
+        """Samples per satellite that keep the buffer within ``BUDGET``."""
         return int(np.clip(cls.BUDGET // (6 * max(n, 1)), 120, 2000))
 
     def record(self, t: float, y: np.ndarray):
+        """Store the ensemble state ``y`` sampled at time ``t``."""
         self.data[:, self.head] = y
         self.times[self.head] = t
         self.head = (self.head + 1) % self.length
         self.count = min(self.count + 1, self.length)
 
     def _order(self):
+        """Buffer indices from oldest to newest sample."""
         if self.count < self.length:
             return np.arange(self.count)
         return (np.arange(self.length) + self.head) % self.length
@@ -124,6 +141,10 @@ class History:
 
 
 class Simulation:
+    """A running scenario: the ensemble state ``y`` (N, 6) in ECI km and km/s at time
+    ``t`` (s since the scenario epoch), plus the satellites, stations, pending
+    manoeuvres, burns, ascents and the event log."""
+
     def __init__(self, scenario: Scenario):
         self.scenario = scenario
         self.clock = Clock(scenario.epoch)
@@ -166,19 +187,23 @@ class Simulation:
     # --- bookkeeping -----------------------------------------------------------------
     @property
     def n(self) -> int:
+        """Number of satellites (including re-entered ones)."""
         return len(self.sats)
 
     @property
     def active(self) -> np.ndarray:
+        """Boolean mask of satellites still in flight."""
         return np.array([s.status == ACTIVE for s in self.sats], dtype=bool)
 
     def index_of(self, name: str) -> int:
+        """Index of the satellite called ``name`` (KeyError if none)."""
         for i, s in enumerate(self.sats):
             if s.name == name:
                 return i
         raise KeyError(name)
 
     def unique_name(self, name: str) -> str:
+        """``name``, or ``name 2``, ``name 3`` ... if it is taken."""
         names = {s.name for s in self.sats}
         if name not in names:
             return name
@@ -194,17 +219,21 @@ class Simulation:
         return sat
 
     def log(self, text: str, kind: str = "info", t: float | None = None):
+        """Append an event (the log keeps the latest ~500)."""
         self.events.append(Event(self.t if t is None else t, text, kind))
         if len(self.events) > 600:
             del self.events[:100]
 
     def datetime(self):
+        """Calendar time (UTC) now."""
         return self.clock.datetime(self.t)
 
     def jd(self, t: float | None = None) -> float:
+        """Julian date at ``t`` (default: now)."""
         return self.clock.jd(self.t if t is None else t)
 
     def gmst(self, t: float | None = None) -> float:
+        """Greenwich mean sidereal time (rad) at ``t`` (default: now)."""
         return self.clock.gmst(self.t if t is None else t)
 
     # --- adding / removing ---------------------------------------------------------------
@@ -214,11 +243,12 @@ class Simulation:
         rows = []
         for k, (rr, vv) in enumerate(spread_along_orbit(r, v, count)):
             nm = name if count == 1 else f"{name}-{k + 1}"
-            rows.append((nm, color or _auto_color(self.n + k), props, rr, vv))
+            rows.append((nm, color or palette_color(self.n + k), props, rr, vv))
         return self.add_many(rows)
 
     def add_state(self, name: str, r, v, color=None, **props):
-        return self.add_many([(name, color or _auto_color(self.n), props,
+        """Add one satellite from an ECI state; returns it."""
+        return self.add_many([(name, color or palette_color(self.n), props,
                                np.asarray(r, float), np.asarray(v, float))])[0]
 
     def add_many(self, rows):
@@ -259,6 +289,7 @@ class Simulation:
         self.history = new
 
     def remove(self, i: int):
+        """Delete satellite ``i`` with its history, manoeuvres and burns."""
         sat = self.sats.pop(i)
         self.ascents = [a for a in self.ascents if a.sat is not sat]
         self.y = np.delete(self.y, i, axis=0)
@@ -273,11 +304,13 @@ class Simulation:
         self.log(f"Removed {sat.name}")
 
     def add_station(self, st: GroundStation):
+        """Add a ground station mid-run."""
         self.stations.append(st)
         self._resize_visible()
         self.log(f"Ground station {st.name} ({st.lat:.2f}, {st.lon:.2f})")
 
     def set_propagator(self, name: str):
+        """Switch between ``PROPAGATORS`` mid-run."""
         if name not in PROPAGATORS:
             raise ValueError(name)
         self.propagator = name
@@ -285,6 +318,7 @@ class Simulation:
 
     # --- launches -----------------------------------------------------------------------
     def ascent_env(self) -> AscentEnv:
+        """The Earth model ascents fly in, matching this run's forces and clock."""
         return AscentEnv.from_sim(self.forces, self.clock)
 
     def plane_of(self, name: str):
@@ -312,7 +346,7 @@ class Simulation:
         n_old = self.n
         props = dict(mass=asc.mass, area=spec.vehicle.area, cd=spec.vehicle.cd)
         y = asc.pad_state(self.t) if asc.t0 > self.t else asc.state()
-        sat = self._append(spec.name, spec.color or _auto_color(self.n), props,
+        sat = self._append(spec.name, spec.color or palette_color(self.n), props,
                            np.array(y[:3]), np.array(y[3:]))
         sat.family = sat.name
         asc.sat = sat
@@ -325,10 +359,9 @@ class Simulation:
             outcome = f"orbit {f.insertion['hp']:,.0f} x {f.insertion['ha']:,.0f} km"
         else:
             outcome = f.outcome
-        planned = f"planned {outcome}"
         asc.planned = (f.samples, f.stage_marks, outcome)
         self.log(f"{sat.name}: {spec.vehicle.name} on the pad at {spec.site or 'the launch site'} "
-                 f"({spec.lat:.2f}, {spec.lon:.2f}), lift-off {when}; {planned}",
+                 f"({spec.lat:.2f}, {spec.lon:.2f}), lift-off {when}; planned {outcome}",
                  "launch" if f.outcome == "orbit" or spec.guidance == "open" else "warn")
         self._advance_ascents(self.t)
         return sat
@@ -348,6 +381,7 @@ class Simulation:
         return np.flatnonzero(act)
 
     def _advance_ascents(self, t: float):
+        """Fly every pad/ascending vehicle to ``t``; spent stages join the ensemble."""
         if not self.ascents:
             return
         spawned = []
@@ -375,6 +409,7 @@ class Simulation:
             self._resize_visible()
 
     def _finish_ascent(self, asc: Ascent):
+        """Hand a separated payload over to the ensemble."""
         self.ascents.remove(asc)
         sat, spec = asc.sat, asc.spec
         sat.mass, sat.area, sat.cd = asc.mass, spec.payload_area, spec.payload_cd
@@ -396,9 +431,11 @@ class Simulation:
 
     # --- manoeuvres --------------------------------------------------------------------
     def schedule(self, m: Maneuver) -> Maneuver:
+        """Resolve ``m``'s execution time and queue it."""
         i = self.index_of(m.sat)
         if self.ascent_of(i) is not None:
-            raise ValueError(f"{m.sat} is still on its launch vehicle; manoeuvre it after separation")
+            raise ValueError(f"{m.sat} is still on its launch vehicle; "
+                             "manoeuvre it after separation")
         r, v = self.y[i, :3], self.y[i, 3:]
         if m.timing != "absolute" or m.t is None:
             m.t = resolve_time(m, self.t, r, v)
@@ -410,6 +447,7 @@ class Simulation:
         return m
 
     def _execute_due(self):
+        """Execute every queued manoeuvre whose time has come."""
         due = [m for m in self.maneuvers if not m.done and m.t <= self.t + 1e-6]
         for m in due:
             m.done = True
@@ -444,6 +482,7 @@ class Simulation:
             self.history.record(self.t, self.y)
 
     def _start_finite(self, m: Maneuver, i: int):
+        """Ignite a finite burn (applied impulsively by the analytic propagators)."""
         sat = self.sats[i]
         mdot = m.thrust / (m.isp * G0 * 1000.0) if m.isp > 0 else 0.0   # kg/s
         duration = m.duration
@@ -466,6 +505,7 @@ class Simulation:
         self.log(f"{m.sat}: ignition - {m.thrust:.0f} N for {duration:.0f} s", "maneuver")
 
     def _finish_burns(self):
+        """Book the delta-v and mass of every burn that has ended."""
         for b in [b for b in self.burns if b.t1 <= self.t + 1e-6]:
             self.burns.remove(b)
             try:
@@ -482,13 +522,14 @@ class Simulation:
 
     # --- dynamics ------------------------------------------------------------------------
     def _props(self, idx):
+        """Cd*A/m (m^2/kg) of satellites ``idx``."""
         return np.array([self.sats[i].cd * self.sats[i].area / self.sats[i].mass for i in idx])
 
     def _derivative(self, idx: np.ndarray, burns: list):
+        """State derivative f(t, y) for satellites ``idx`` including active finite burns."""
         cd_am = self._props(idx)
         rows = {int(i): k for k, i in enumerate(idx)}
-        burn_rows = [(rows[self.index_of(b.man.sat)], b) for b in burns
-                     if self.index_of(b.man.sat) in rows]
+        burn_rows = [(rows[j], b) for b in burns if (j := self.index_of(b.man.sat)) in rows]
         forces = self.forces
 
         def f(t, y):
@@ -502,6 +543,7 @@ class Simulation:
         return f
 
     def _next_boundary(self, t_end: float) -> float:
+        """End of the next segment: a lift-off, manoeuvre, burnout or ascent sync."""
         tb = t_end
         for a in self.ascents:
             if a.phase == "pad":
@@ -537,13 +579,11 @@ class Simulation:
             self._execute_due()
 
     def _propagate(self, idx: np.ndarray, t_seg: float):
-        stop = {"flag": False}
-
+        """Advance satellites ``idx`` to ``t_seg`` (or until one leaves the active set)."""
         def callback(t, ya):
             self.t = t
             self.y[idx] = ya
-            stop["flag"] = self._post_step(t, idx=idx)
-            return stop["flag"]
+            return self._post_step(t, idx=idx)
 
         if self.propagator == "cowell":
             burns = [b for b in self.burns if b.t0 <= self.t + 1e-9 and t_seg <= b.t1 + 1e-9]
@@ -606,8 +646,10 @@ class Simulation:
         return changed
 
     def _events(self, t: float, idx: np.ndarray):
+        """Log eclipse, station AOS/LOS and close-approach events."""
         detail = self.n <= EVENT_DETAIL_LIMIT
-        watch = set(int(i) for i in idx) if detail else (self.watch & set(int(i) for i in idx))
+        free = {int(i) for i in idx}
+        watch = free if detail else self.watch & free
         jd = self.clock.jd(t)
         r_all = self.y[:, :3]
 
@@ -615,7 +657,7 @@ class Simulation:
         if watch:
             w = np.array(sorted(watch))
             frac = shadow_fraction(r_all[w], sun_position(jd))
-            for i, fr in zip(w, frac):
+            for i, fr in zip(w, frac, strict=True):
                 sat = self.sats[i]
                 if sat.shadow >= 0.5 > fr:
                     self.log(f"{sat.name} entered Earth's shadow", "eclipse")
@@ -630,9 +672,7 @@ class Simulation:
             w = np.array(sorted(watch))
             r_ecef = eci_to_ecef(r_all[w], self.clock.gmst(t))
             for s, st in enumerate(self.stations):
-                _, el, _ = look_angles(st.ecef(), math.radians(st.lat), math.radians(st.lon), r_ecef)
-                vis = el >= math.radians(st.min_el)
-                for i, now in zip(w, vis):
+                for i, now in zip(w, st.sees(r_ecef), strict=True):
                     if now and not self._visible[s, i]:
                         self.log(f"AOS {self.sats[i].name} @ {st.name}", "station")
                     elif not now and self._visible[s, i]:
@@ -664,6 +704,7 @@ class Simulation:
 
     # --- diagnostics ------------------------------------------------------------------------
     def energy(self, i: int) -> float:
+        """Specific energy of satellite ``i`` including the enabled zonal terms."""
         r, v = self.y[i:i + 1, :3], self.y[i:i + 1, 3:]
         return float(conservative_energy(r, v, self.forces)[0])
 
@@ -672,14 +713,13 @@ class Simulation:
         out = []
         r_ecef = eci_to_ecef(self.y[i, :3], self.gmst())
         for st in self.stations:
-            az, el, rng = look_angles(st.ecef(), math.radians(st.lat), math.radians(st.lon), r_ecef)
+            az, el, rng = st.look_angles(r_ecef)
             if el >= math.radians(st.min_el):
                 out.append((st, math.degrees(float(az)), math.degrees(float(el)), float(rng)))
         return out
 
     def snapshot_scenario(self, name: str | None = None) -> Scenario:
         """The current state as a new scenario whose epoch is 'now'."""
-        from .scenario import SatSpec
         sc = self.scenario.copy()
         sc.name = name or f"{self.scenario.name} @ {format_duration(self.t)}"
         sc.epoch = self.datetime()
@@ -695,7 +735,8 @@ class Simulation:
             if s.status != ACTIVE or id(s) in pads:
                 continue
             if self.ascent_of(i) is not None:
-                self.log(f"Snapshot: {s.name} is in powered flight; saved as a free-flying state", "warn")
+                self.log(f"Snapshot: {s.name} is in powered flight; "
+                         "saved as a free-flying state", "warn")
             sc.satellites.append(SatSpec(
                 s.name, {"type": "state", "r": self.y[i, :3].tolist(), "v": self.y[i, 3:].tolist()},
                 list(s.color), s.mass, s.area, s.cd))
@@ -708,11 +749,6 @@ class Simulation:
             mm.t = m.t - self.t
             sc.maneuvers.append(mm)
         return sc
-
-
-def _auto_color(i: int):
-    from .scenario import palette_color
-    return palette_color(i)
 
 
 __all__ = ["Simulation", "Satellite", "History", "Event", "PROPAGATORS", "ASCENT_SYNC"]

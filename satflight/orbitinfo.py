@@ -31,6 +31,8 @@ TIMELINE_SAMPLES = 361
 
 @dataclass
 class OrbitInfo:
+    """The orbit inspector's numbers for one satellite; built by :func:`orbit_info`."""
+
     el: Elements
     regime: str
     closed: bool
@@ -85,6 +87,7 @@ class OrbitInfo:
 
     @property
     def eclipse_duration(self) -> float:
+        """Seconds per revolution spent in shadow (nan if open)."""
         return self.eclipse_fraction * self.period if self.closed else float("nan")
 
 
@@ -148,9 +151,7 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         except ValueError:
             sso = nan
         t_line, lit = sunlight_timeline(el, r_sun)
-        # trapezoid mean over the samples (endpoints are the same point)
-        dark = 1.0 - lit
-        eclipse = float(np.mean(dark[:-1]))
+        eclipse = float(np.mean(1.0 - lit[:-1]))   # the last sample repeats the first
     else:
         b = c = v_apo = nodal_period = sso = nan
         rd = wd = 0.0

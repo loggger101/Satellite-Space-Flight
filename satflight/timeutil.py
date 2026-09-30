@@ -33,6 +33,7 @@ def parse_epoch(text: str) -> datetime:
 
 
 def format_epoch(dt: datetime) -> str:
+    """ISO-8601 UTC string with a ``Z`` suffix, whole seconds."""
     return ensure_utc(dt).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -47,10 +48,12 @@ def julian_date(dt: datetime) -> float:
 
 
 def datetime_from_jd(jd: float) -> datetime:
+    """Inverse of :func:`julian_date`."""
     return datetime(2000, 1, 1, 12, tzinfo=UTC) + timedelta(days=jd - JD_J2000)
 
 
 def centuries_since_j2000(jd):
+    """Julian centuries of 36525 days since J2000.0 (scalar or array)."""
     return (np.asarray(jd, dtype=float) - JD_J2000) / 36525.0
 
 
@@ -62,8 +65,7 @@ def gmst(jd):
     t = centuries_since_j2000(jd)
     sec = (67310.54841 + (876600.0 * 3600.0 + 8640184.812866) * t
            + 0.093104 * t * t - 6.2e-6 * t * t * t)
-    theta = np.mod(sec, SECONDS_PER_DAY) / 240.0          # degrees
-    theta = np.radians(theta)
+    theta = np.radians(np.mod(sec, SECONDS_PER_DAY) / 240.0)   # 240 s of time per degree
     if np.ndim(theta) == 0:
         return float(theta)
     return theta
@@ -77,33 +79,34 @@ class Clock:
         self.jd0 = julian_date(self.epoch)
 
     def jd(self, t):
+        """Julian date at simulation time(s) ``t`` (s)."""
         if np.ndim(t):
             return self.jd0 + np.asarray(t, dtype=float) / SECONDS_PER_DAY
         return self.jd0 + float(t) / SECONDS_PER_DAY
 
     def gmst(self, t):
+        """Greenwich mean sidereal time (rad) at simulation time(s) ``t``."""
         return gmst(self.jd(t))
 
     def datetime(self, t: float) -> datetime:
+        """Calendar time (UTC) at simulation time ``t``."""
         return self.epoch + timedelta(seconds=float(t))
 
 
 def format_duration(seconds: float) -> str:
     """``3d 04:05:06`` style elapsed-time string."""
     sign = "-" if seconds < 0 else ""
-    s = abs(seconds)
-    days = int(s // 86400)
-    s -= days * 86400
-    h = int(s // 3600)
-    s -= h * 3600
-    m = int(s // 60)
-    s -= m * 60
+    days, s = divmod(abs(seconds), 86400)
+    h, s = divmod(s, 3600)
+    m, s = divmod(s, 60)
+    days, h, m = int(days), int(h), int(m)
     if days:
         return f"{sign}{days}d {h:02d}:{m:02d}:{int(s):02d}"
     return f"{sign}{h:02d}:{m:02d}:{s:04.1f}"
 
 
 def format_period(seconds: float) -> str:
+    """Orbital period in the most readable unit (min, h or d)."""
     if not math.isfinite(seconds):
         return "-"
     if seconds >= 86400 * 2:

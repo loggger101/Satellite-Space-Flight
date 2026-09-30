@@ -25,6 +25,7 @@ from ..orbitinfo import OrbitInfo
 from . import theme
 from .orbitpanel import APSIS, EQUATOR, H_VEC, NODE, countdown, deg, num
 from .render3d import Line
+from .theme import px
 
 MODES = ("full", "basic", "off")
 ARC_I = (255, 150, 90)
@@ -63,7 +64,7 @@ def _visible_near(cam, pts, k, view=None):
     not hidden by the Earth (``k`` itself when none is)."""
     sx, sy, _ = cam.project(pts)
     x0, y0, x1, y1 = (0, 0, cam.width, cam.height) if view is None else (
-        view.left + 12, view.top + 16, view.right - 12, view.bottom - 16)
+        view.left + px(12), view.top + px(16), view.right - px(12), view.bottom - px(16))
     with np.errstate(invalid="ignore"):
         seen = (np.isfinite(sx) & np.isfinite(sy) & (sx >= x0) & (sx < x1)
                 & (sy >= y0) & (sy < y1) & ~cam.hidden_by_sphere(pts))
@@ -108,14 +109,14 @@ def legend_rect(fonts, rows, bounds: pygame.Rect, shown: bool = True):
     (None if it does not fit); only its title bar when not ``shown``."""
     if not rows:
         return None
-    title_w = fonts.small.size(LEGEND_TITLE[0])[0] + 20
+    title_w = fonts.small.size(LEGEND_TITLE[0])[0] + px(20)
     if not shown:
-        rect = pygame.Rect(bounds.x + 8, bounds.y + 8, title_w, 24)
+        rect = pygame.Rect(bounds.x + px(8), bounds.y + px(8), title_w, px(24))
     else:
         name_w = max(fonts.small.size(r[2])[0] for r in rows)
         desc_w = max(fonts.small.size(r[3])[0] for r in rows)
-        w = max(34 + name_w + 12 + desc_w + 10, title_w)
-        rect = pygame.Rect(bounds.x + 8, bounds.y + 8, w, 28 + 17 * len(rows))
+        w = max(px(34) + name_w + px(12) + desc_w + px(10), title_w)
+        rect = pygame.Rect(bounds.x + px(8), bounds.y + px(8), w, px(28) + px(17) * len(rows))
     return rect if bounds.contains(rect) else None
 
 
@@ -123,36 +124,37 @@ def draw_legend(surf, fonts, rows, rect: pygame.Rect, shown: bool = True):
     """The key: a sample of each element of the overlay, its name and what it
     spans or points at (just the title bar when not ``shown``)."""
     theme.panel(surf, rect, (10, 16, 30, 228), theme.PANEL_EDGE, 6)
-    fonts.draw(surf, LEGEND_TITLE[0 if shown else 1], (rect.x + 10, rect.y + 5), theme.ACCENT,
-               fonts.small)
+    fonts.draw(surf, LEGEND_TITLE[0 if shown else 1], (rect.x + px(10), rect.y + px(5)),
+               theme.ACCENT, fonts.small)
     if not shown:
         return
     name_w = max(fonts.small.size(r[2])[0] for r in rows)
-    y = rect.y + 26
+    y, lw = rect.y + px(26), px(2)
     for col, kind, name, desc in rows:
-        x0, mid = rect.x + 10, y + 8
+        x0, mid = rect.x + px(10), y + px(8)
         if kind == "fill":
-            sw = pygame.Rect(x0, y + 3, 18, 11)
+            sw = pygame.Rect(x0, y + px(3), px(18), px(11))
             theme.panel(surf, sw, (*col[:3], 90), col, 2)
         elif kind == "dash":
             for dx in (0, 7, 14):
-                pygame.draw.line(surf, col, (x0 + dx, mid), (x0 + dx + 4, mid), 2)
+                pygame.draw.line(surf, col, (x0 + px(dx), mid), (x0 + px(dx + 4), mid), lw)
         elif kind == "arrow":
-            pygame.draw.line(surf, col, (x0, mid), (x0 + 17, mid), 2)
-            pygame.draw.lines(surf, col, False, [(x0 + 12, mid - 4), (x0 + 17, mid),
-                                                 (x0 + 12, mid + 4)], 2)
+            pygame.draw.line(surf, col, (x0, mid), (x0 + px(17), mid), lw)
+            pygame.draw.lines(surf, col, False, [(x0 + px(12), mid - px(4)), (x0 + px(17), mid),
+                                                 (x0 + px(12), mid + px(4))], lw)
         else:                                   # an angle: a shaded wedge and its arc
-            c, r = (x0, y + 15), 18
+            c, r = (x0, y + px(15)), px(18)
             t = np.linspace(0.0, 0.8, 8)
             pts = [(c[0] + r * math.cos(a), c[1] - r * math.sin(a)) for a in t]
             theme_poly = pygame.Surface(rect.size, pygame.SRCALPHA)
             pygame.draw.polygon(theme_poly, (*col[:3], 90),
-                                [(px - rect.x, py - rect.y) for px, py in [c] + pts])
+                                [(u - rect.x, v - rect.y) for u, v in [c] + pts])
             surf.blit(theme_poly, rect.topleft)
-            pygame.draw.lines(surf, col, False, pts, 2)
-        fonts.draw(surf, name, (x0 + 24, y), theme.mix(col, (255, 255, 255), 0.35), fonts.small)
-        fonts.draw(surf, desc, (x0 + 24 + name_w + 12, y), theme.DIM, fonts.small)
-        y += 17
+            pygame.draw.lines(surf, col, False, pts, lw)
+        tx = x0 + px(24)
+        fonts.draw(surf, name, (tx, y), theme.mix(col, (255, 255, 255), 0.35), fonts.small)
+        fonts.draw(surf, desc, (tx + name_w + px(12), y), theme.DIM, fonts.small)
+        y += px(17)
 
 
 def _arrow(p0, p1, color, side, width=2):
@@ -382,24 +384,24 @@ def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
     if nxt:
         t, n = min(nxt)
         rows.append(f"next {n} in {countdown(t)}")
-    w = max(fonts.small.size(r)[0] for r in rows) + 20
-    w = max(w, fonts.bold.size(sat.name)[0] + 30)
-    h = 30 + 16 * len(rows)
-    x, y = int(pos[0]) + 26, int(pos[1]) - h - 18
+    w = max(fonts.small.size(r)[0] for r in rows) + px(20)
+    w = max(w, fonts.bold.size(sat.name)[0] + px(30))
+    h = px(30) + px(16) * len(rows)
+    x, y = int(pos[0]) + px(26), int(pos[1]) - h - px(18)
     rect = pygame.Rect(x, y, w, h)
     if rect.right > bounds.right:
-        rect.right = int(pos[0]) - 26
+        rect.right = int(pos[0]) - px(26)
     if rect.top < bounds.top:
-        rect.top = int(pos[1]) + 18
+        rect.top = int(pos[1]) + px(18)
     rect.clamp_ip(bounds)
     corner = (rect.left if rect.centerx > pos[0] else rect.right,
               rect.bottom if rect.centery < pos[1] else rect.top)
     pygame.draw.aaline(surf, theme.dim(sat.color, 0.9), pos, corner)
     theme.panel(surf, rect, (10, 16, 30, 225), theme.dim(sat.color, 0.8), 6)
-    pygame.draw.circle(surf, sat.color, (rect.x + 12, rect.y + 13), 5)
-    fonts.draw(surf, sat.name, (rect.x + 22, rect.y + 4), theme.TEXT, fonts.bold)
-    yy = rect.y + 26
+    pygame.draw.circle(surf, sat.color, (rect.x + px(12), rect.y + px(13)), px(5))
+    fonts.draw(surf, sat.name, (rect.x + px(22), rect.y + px(4)), theme.TEXT, fonts.bold)
+    yy = rect.y + px(26)
     for r_ in rows:
-        fonts.draw(surf, r_, (rect.x + 10, yy), theme.TEXT, fonts.small)
-        yy += 16
+        fonts.draw(surf, r_, (rect.x + px(10), yy), theme.TEXT, fonts.small)
+        yy += px(16)
     return rect

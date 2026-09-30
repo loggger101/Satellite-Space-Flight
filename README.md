@@ -172,6 +172,12 @@ Earth's sphere of influence.
 | `U` | launch a rocket from anywhere on Earth |
 | `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+R`, `Ctrl+Q` | start screen, scenarios, save snapshot, reset, quit |
 | `Ctrl+E`, `Del`, `F12`, `H` / `F1` | edit / delete satellite, screenshot, help (`Esc` closes it) |
+| `F11` or `Alt+Enter` | fullscreen on / off (`Esc` also leaves it; `--fullscreen` starts in it) |
+
+The window and fullscreen use the screen's native resolution. On Windows with
+display scaling (125 %, 150 %, ...) the panels and text are drawn that much
+larger, so they keep the size you chose but stay sharp instead of being
+stretched by Windows. `--ui-scale 1.5` picks another size.
 
 Rest the mouse on any button to see what it does and its keyboard shortcut.
 Every dialog shows a live preview (resulting orbit, transfer delta-v, burn

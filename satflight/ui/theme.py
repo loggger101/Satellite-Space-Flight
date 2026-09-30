@@ -1,4 +1,9 @@
-"""Colours, fonts and a text-surface cache shared by every UI module."""
+"""Colours, fonts, the UI scale and a text-surface cache shared by every UI module.
+
+Sizes in the UI code are written in design pixels, the layout at 100 % display
+scaling. :func:`px` turns them into screen pixels: the window has the screen's
+real pixels (the process is DPI-aware), so at 125 % scaling every size is
+drawn 1.25 times larger and the UI stays the size the user chose, only sharper."""
 
 from __future__ import annotations
 
@@ -23,6 +28,20 @@ AXIS_X = (230, 90, 90)
 AXIS_Y = (110, 220, 120)
 AXIS_Z = (100, 150, 255)
 
+S = 1.0                       # UI scale: screen pixels per design pixel (set_scale)
+
+
+def set_scale(scale: float):
+    """Use ``scale`` screen pixels per design pixel from now on."""
+    global S
+    S = float(scale)
+
+
+def px(v: float) -> int:
+    """Design pixels ``v`` in screen pixels (exactly ``v`` at scale 1)."""
+    return int(round(v * S))
+
+
 EVENT_COLORS = {
     "info": DIM, "maneuver": ACCENT, "eclipse": (170, 150, 255), "station": GOOD,
     "alert": BAD, "warn": WARN, "launch": (255, 170, 90),
@@ -32,7 +51,8 @@ EVENT_COLORS = {
 class Fonts:
     """Lazily created fonts plus a cache of rendered text surfaces."""
 
-    def __init__(self, scale: float = 1.0):
+    def __init__(self):
+        scale = S
         mono = "consolas,dejavusansmono,menlo,couriernew"
         sans = "segoeui,dejavusans,helvetica,arial"
         self.small = pygame.font.SysFont(mono, int(13 * scale))
@@ -79,7 +99,8 @@ class Fonts:
 
 def panel(surface: pygame.Surface, rect: pygame.Rect, alpha_color=PANEL, edge=PANEL_EDGE,
           radius: int = 8):
-    """Translucent rounded panel."""
+    """Translucent rounded panel (``radius`` in design px)."""
+    radius = px(radius)
     layer = pygame.Surface(rect.size, pygame.SRCALPHA)
     pygame.draw.rect(layer, alpha_color, layer.get_rect(), border_radius=radius)
     surface.blit(layer, rect.topleft)
@@ -90,11 +111,11 @@ def panel(surface: pygame.Surface, rect: pygame.Rect, alpha_color=PANEL, edge=PA
 def scrollbar(surface: pygame.Surface, x: int, area: pygame.Rect, first: float, visible: float,
               total: float, min_len: int = 20):
     """Thin scroll indicator at ``x`` beside ``area``: ``visible`` of ``total`` units
-    shown, starting at ``first``."""
-    bar_h = max(min_len, int(area.h * visible / total))
+    shown, starting at ``first`` (``min_len`` in design px)."""
+    bar_h = max(px(min_len), int(area.h * visible / total))
     y = area.y + int((area.h - bar_h) * first / max(1, total - visible))
-    pygame.draw.rect(surface, FIELD, (x, area.y, 3, area.h), border_radius=2)
-    pygame.draw.rect(surface, SCROLL_THUMB, (x, y, 3, bar_h), border_radius=2)
+    pygame.draw.rect(surface, FIELD, (x, area.y, px(3), area.h), border_radius=px(2))
+    pygame.draw.rect(surface, SCROLL_THUMB, (x, y, px(3), bar_h), border_radius=px(2))
 
 
 def dim(color, k: float):

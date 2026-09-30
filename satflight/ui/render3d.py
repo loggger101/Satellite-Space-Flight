@@ -25,6 +25,7 @@ from ..simulation import ACTIVE
 from ..timeutil import format_duration
 from . import theme
 from .earth import EarthRenderer
+from .theme import px
 
 CLIP = 30000.0      # px: screen coordinates are clamped here before pygame draws them
 
@@ -36,7 +37,7 @@ class Line:
 
     pts: np.ndarray          # (M, 3) world km
     color: tuple
-    width: int = 1
+    width: int = 1           # design px
     behind_dim: float = 0.55
 
 
@@ -148,7 +149,7 @@ class SceneRenderer:
             else:
                 mask = ok[s] & ~h
                 color = ln.color
-            _runs(surf, color, sx[s], sy[s], mask, ln.width)
+            _runs(surf, color, sx[s], sy[s], mask, px(ln.width))
 
     # --- main entry -----------------------------------------------------------------------
     def draw(self, surf: pygame.Surface, app):
@@ -156,8 +157,8 @@ class SceneRenderer:
         everything in front of it; finally the selected satellite's callout.
 
         The scene is first collected as world-space ``lines`` and ``markers``
-        (``(position, color, radius, label, is_selected)``; radius > 0 is a dot,
-        < 0 a square, 0 a bare label). List order is draw order, and the
+        (``(position, color, radius, label, is_selected)``; radius in design px,
+        > 0 a dot, < 0 a square, 0 a bare label). List order is draw order, and the
         satellites are always the last markers (picking relies on it).
         """
         sim, cam, opts = app.sim, app.camera, app.opts
@@ -404,9 +405,9 @@ class SceneRenderer:
                 continue
             head, tail, mid = ((int(x), int(y)) for x, y in zip(sx, sy, strict=True))
             flicker = 0.85 + 0.15 * math.sin(pygame.time.get_ticks() * 0.05)
-            pygame.draw.line(surf, theme.dim((255, 110, 40), flicker), head, tail, 6)
-            pygame.draw.line(surf, (255, 200, 90), head, mid, 3)
-            pygame.draw.circle(surf, (255, 245, 210), head, 3)
+            pygame.draw.line(surf, theme.dim((255, 110, 40), flicker), head, tail, px(6))
+            pygame.draw.line(surf, (255, 200, 90), head, mid, px(3))
+            pygame.draw.circle(surf, (255, 245, 210), head, px(3))
 
     def _project_markers(self, cam, markers):
         """Screen x, y and visibility of every marker position."""
@@ -436,18 +437,18 @@ class SceneRenderer:
                     labels.append((k, int(sx[k]), int(sy[k]), theme.dim(col, 0.6), label, False,
                                    True, rad))
                 continue
-            x, y = int(sx[k]), int(sy[k])
+            x, y, r = int(sx[k]), int(sy[k]), px(rad)
             if rad > 0 and glow and k >= start and not behind:
                 lit = float(self._sat_lit[k - start]) if k - start < len(self._sat_lit) else 0.0
                 if lit > 0.2:
-                    g = self._sprite("glow", theme.dim(col, lit), 5 * rad)
-                    surf.blit(g, (x - 5 * rad, y - 5 * rad), special_flags=pygame.BLEND_ADD)
+                    g = self._sprite("glow", theme.dim(col, lit), 5 * r)
+                    surf.blit(g, (x - 5 * r, y - 5 * r), special_flags=pygame.BLEND_ADD)
             if rad > 0:
-                pygame.draw.circle(surf, col, (x, y), rad)
+                pygame.draw.circle(surf, col, (x, y), r)
                 if selected:
-                    pygame.draw.circle(surf, (255, 255, 255), (x, y), rad + 5, 1)
+                    pygame.draw.circle(surf, (255, 255, 255), (x, y), r + px(5), 1)
             elif rad < 0:
-                pygame.draw.rect(surf, col, (x + rad, y + rad, -2 * rad, -2 * rad), 1)
+                pygame.draw.rect(surf, col, (x + r, y + r, -2 * r, -2 * r), 1)
             if label and not behind:
                 tie = rad if k in self._overlay else None
                 labels.append((k, x, y, col, label, selected, False, tie))
@@ -468,12 +469,14 @@ class SceneRenderer:
         for _, x, y, col, label, selected, _, tie in order:
             txt = fonts.render(label, theme.mix(col, (255, 255, 255), 0.35), fonts.small)
             w, h = txt.get_size()
-            spots = [(x + 8, y - 8), (x - 8 - w, y - 8), (x + 8, y + 4), (x - 8 - w, y + 4)]
+            a, b, c = px(8), px(4), px(16)
+            spots = [(x + a, y - a), (x - a - w, y - a), (x + a, y + b), (x - a - w, y + b)]
             if tie is not None:
-                spots += [(x + 16, y - 26), (x - 16 - w, y - 26), (x + 16, y + 14),
-                          (x - 16 - w, y + 14), (x - w // 2, y - 34), (x - w // 2, y + 22)]
+                up, down = px(26), px(14)
+                spots += [(x + c, y - up), (x - c - w, y - up), (x + c, y + down),
+                          (x - c - w, y + down), (x - w // 2, y - px(34)), (x - w // 2, y + px(22))]
             rect = next((r for r in (pygame.Rect(sx_, sy_, w, h) for sx_, sy_ in spots)
-                         if bounds.contains(r) and r.inflate(4, 0).collidelist(placed) < 0),
+                         if bounds.contains(r) and r.inflate(px(4), 0).collidelist(placed) < 0),
                         None)
             if rect is None:
                 if not selected:
@@ -482,13 +485,13 @@ class SceneRenderer:
             placed.append(rect)
             if tie is not None:
                 # a leader from the labelled point to the label's nearest edge
-                end = (min(max(x, rect.left - 3), rect.right + 3),
+                end = (min(max(x, rect.left - px(3)), rect.right + px(3)),
                        min(max(y, rect.top), rect.bottom))
                 pygame.draw.aaline(surf, theme.dim(col, 0.9), (x, y), end)
                 if tie == 0:
-                    pygame.draw.circle(surf, col, (x, y), 3)
+                    pygame.draw.circle(surf, col, (x, y), px(3))
             # a dark backing keeps the text legible over the Earth and bright orbits
-            theme.panel(surf, rect.inflate(6, 0), (4, 7, 16, 190), None, 3)
+            theme.panel(surf, rect.inflate(px(6), 0), (4, 7, 16, 190), None, 3)
             surf.blit(txt, rect)
 
     def _stars(self, surf, cam):
@@ -500,12 +503,12 @@ class SceneRenderer:
         y = sy[ok].astype(np.intp)
         col = self.sky_col[ok]
         big = self.sky_big[ok]
-        px = pygame.surfarray.pixels3d(surf)
-        px[x, y] = np.maximum(px[x, y], col)
+        rgb = pygame.surfarray.pixels3d(surf)
+        rgb[x, y] = np.maximum(rgb[x, y], col)
         for dx, dy in ((1, 0), (0, 1), (1, 1)):
-            px[x[big] + dx, y[big] + dy] = np.maximum(px[x[big] + dx, y[big] + dy],
-                                                      (col[big] * 0.55).astype(np.uint8))
-        del px
+            rgb[x[big] + dx, y[big] + dy] = np.maximum(rgb[x[big] + dx, y[big] + dy],
+                                                       (col[big] * 0.55).astype(np.uint8))
+        del rgb
 
     def _sun(self, surf, cam, sun_dir, app):
         """Additive Sun glare sprite and label."""
@@ -513,10 +516,11 @@ class SceneRenderer:
         if not np.isfinite(sx[0]):
             return
         x, y = int(sx[0]), int(sy[0])
-        if -200 < x < cam.width + 200 and -200 < y < cam.height + 200:
-            spr = self._sprite("sun", (255, 236, 190), 150)
-            surf.blit(spr, (x - 150, y - 150), special_flags=pygame.BLEND_ADD)
-            app.fonts.draw(surf, "Sun", (x + 18, y + 12), theme.SUN, app.fonts.small)
+        r, m = px(150), px(200)
+        if -m < x < cam.width + m and -m < y < cam.height + m:
+            spr = self._sprite("sun", (255, 236, 190), r)
+            surf.blit(spr, (x - r, y - r), special_flags=pygame.BLEND_ADD)
+            app.fonts.draw(surf, "Sun", (x + px(18), y + px(12)), theme.SUN, app.fonts.small)
 
 
 def _occluded(cam, pts):

@@ -14,8 +14,10 @@ import pytest
 
 from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
+from satflight.ui import theme
 from satflight.ui.app import App
 from satflight.ui.panels import HELP, draw_help
+from satflight.ui.theme import px
 from satflight.ui.widgets import TextField
 
 
@@ -25,6 +27,17 @@ def app(tmp_path):
     a.user_scenario_dir = tmp_path / "user"
     yield a
     pygame.quit()
+
+
+@pytest.fixture(params=[1.0, 1.25], ids=["100%", "125%"])
+def scaled_app(request, tmp_path):
+    """An App at 100 % and at 125 % display scaling (window and UI both scaled)."""
+    s = request.param
+    a = App(size=(round(1400 * s), round(850 * s)), ui_scale=s)
+    a.user_scenario_dir = tmp_path / "user"
+    yield a
+    pygame.quit()
+    theme.set_scale(1.0)
 
 
 def frame(app, n=1, dt=1 / 30):
@@ -62,13 +75,15 @@ def test_toggles_and_views(app):
     frame(app, 3)
 
 
-def test_help_fits_the_smallest_window(app):
+def test_help_fits_the_smallest_window(scaled_app):
+    app = scaled_app
     app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))   # clamped to the minimum
-    assert app.screen.get_size() == (900, 600)
+    assert app.screen.get_size() == (px(900), px(600))
     rect = draw_help(app.screen, app)
     assert app.screen.get_rect().contains(rect)
     # key labels start at x + 30 and must end before the descriptions at x + 200
-    assert all(app.fonts.mono.size(k)[0] < 170 for k, desc in HELP if desc)
+    assert all(app.fonts.mono.size(k)[0] < px(170) for k, desc in HELP if desc)
+    assert all(app.fonts.ui.size(d)[0] < rect.w - px(210) for k, d in HELP if d)
 
 
 def test_add_satellite_dialog_with_preset(app):
@@ -321,6 +336,63 @@ def test_window_fits_the_screen():
     w, h = window_size((1536, 960))                 # 1920 x 1200 at 125 % scaling
     assert w <= 1536 - 16 and h + 34 + 48 <= 960
     assert window_size((800, 500)) == (900, 600)    # never below the panels' minimum
+    # the same screen seen by a DPI-aware process: real pixels, UI at 125 %
+    w, h = window_size((1920, 1200), scale=1.25)
+    assert (w, h) == (1900, 1062) and h + (34 + 48) * 1.25 <= 1200
+    assert window_size((800, 500), scale=1.25) == (1125, 750)
+
+
+def test_fullscreen_toggles_by_key_and_button_and_comes_back(app):
+    desktop = pygame.display.get_desktop_sizes()[0]
+    key(app, pygame.K_F11)
+    assert app.fullscreen and pygame.display.is_fullscreen()
+    assert app.screen.get_size() == desktop == (app.camera.width, app.camera.height)
+    app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=1000, h=700))
+    assert app.fullscreen and app.screen.get_size() == desktop    # a resize keeps fullscreen
+    frame(app, 2)
+    key(app, pygame.K_h)
+    key(app, pygame.K_ESCAPE)                   # Esc first closes the help ...
+    assert not app.opts.help and app.fullscreen
+    key(app, pygame.K_ESCAPE)                   # ... then leaves fullscreen
+    assert not app.fullscreen and not pygame.display.is_fullscreen()
+    assert app.screen.get_size() == (1400, 850) == (app.camera.width, app.camera.height)
+    key(app, pygame.K_RETURN, pygame.KMOD_ALT)
+    assert app.fullscreen
+    frame(app)
+    button = next(b for b in app.topbar.buttons if b.tooltip == "F11")
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=button.rect.center))
+    assert not app.fullscreen and app.screen.get_size() == (1400, 850)
+    key(app, pygame.K_t, pygame.KMOD_ALT)       # other Alt keys still reach their shortcut
+    assert not app.opts.trails
+
+
+def test_top_bar_keeps_the_clock_in_the_smallest_window(scaled_app):
+    app = scaled_app
+    app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))
+    frame(app)
+    f = app.fonts
+    clock_end = (px(12) + f.bold.size("SATELLITE SPACE FLIGHT")[0] + px(18)
+                 + f.mono.size("00:00:00 UTC")[0])
+    assert clock_end <= app.topbar.left_of_buttons - px(8)
+
+
+def test_ui_scale_sizes_everything_in_proportion(scaled_app):
+    """At 125 % the panels, rows and fonts are 1.25 times their 100 % size, and
+    every button's text still fits inside it."""
+    app, s = scaled_app, theme.S
+    frame(app)
+    assert app.satlist.rect.w == round(262 * s) and app.info.rect.w == round(340 * s)
+    assert app.log.rect.h == round(132 * s)
+    theme.set_scale(1.0)
+    ref = theme.Fonts()                                       # the 100 % fonts
+    theme.set_scale(s)
+    assert app.fonts.ui.get_height() >= ref.ui.get_height() * s - 1
+    app.open("launch")
+    frame(app)
+    for b in app._buttons() + app.dialogs[-1].buttons:
+        if b.text:
+            assert app.fonts.ui.size(b.text)[0] <= b.rect.w - px(4), b.text
+    assert app.dialogs[-1].row_h == round(32 * s)
 
 
 def test_orbit_inspector_draws_every_bundled_orbit(app):
@@ -450,7 +522,8 @@ def test_start_screen_opens_on_request_and_covers_every_bundled_scenario(tmp_pat
         pygame.quit()
 
 
-def test_start_screen_fits_the_smallest_window_without_cutting_text(app):
+def test_start_screen_fits_the_smallest_window_without_cutting_text(scaled_app):
+    app = scaled_app
     app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))
     app.open("start")
     scr = app.dialogs[-1]
@@ -492,7 +565,8 @@ def hover(app, pos):
     app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
 
 
-def test_every_button_explains_itself_in_a_tooltip_inside_the_window(app):
+def test_every_button_explains_itself_in_a_tooltip_inside_the_window(scaled_app):
+    app = scaled_app
     for size in ((1400, 850), (900, 600)):
         app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=size[0], h=size[1]))
         frame(app)
@@ -507,8 +581,9 @@ def test_every_button_explains_itself_in_a_tooltip_inside_the_window(app):
     assert not any(b.hover for b in app._buttons())           # none left over afterwards
 
 
-def test_scene_labels_never_overlap(app):
+def test_scene_labels_never_overlap(scaled_app):
     """Crowded scenes (a launch cluster, a constellation) keep every label legible."""
+    app = scaled_app
     for name in ("launch_day", "launches_and_arcs", "gps_constellation", "default"):
         app.load_scenario(app.scenario_dir / f"{name}.json")
         app.sim.advance(1200)

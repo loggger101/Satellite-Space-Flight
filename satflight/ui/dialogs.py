@@ -13,8 +13,13 @@ from ..elements import rv2coe
 from ..forces import ForceModel
 from ..integrators import METHODS
 from ..maneuvers import Maneuver
-from ..planner import (plan_bielliptic, plan_hohmann, plan_rendezvous, scan_rendezvous,
-                       plane_change_summary)
+from ..planner import (
+    plan_bielliptic,
+    plan_hohmann,
+    plan_rendezvous,
+    plane_change_summary,
+    scan_rendezvous,
+)
 from ..scenario import PRESETS, ConstellationSpec, GroundStation, orbit_state, walker_states
 from ..simulation import PROPAGATORS
 from ..timeutil import format_period

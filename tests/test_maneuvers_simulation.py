@@ -8,8 +8,7 @@ from satflight.analysis import j2_secular_rates
 from satflight.constants import R_EARTH, R_GEO
 from satflight.elements import coe2rv, kepler_propagate, rv2coe
 from satflight.forces import ForceModel
-from satflight.maneuvers import (Maneuver, bielliptic, hohmann, lambert,
-                                 sun_synchronous_inclination)
+from satflight.maneuvers import Maneuver, bielliptic, hohmann, lambert, sun_synchronous_inclination
 from satflight.scenario import ConstellationSpec, SatSpec, Scenario
 from satflight.simulation import Simulation
 from satflight.tle import checksum, parse_tle

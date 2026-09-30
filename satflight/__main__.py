@@ -8,11 +8,13 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 
 
 def main(argv=None):
+    """Parse the command line, build the :class:`App` and run it."""
     ap = argparse.ArgumentParser(prog="satflight", description="Satellite Space Flight simulator")
     ap.add_argument("scenario", nargs="?", help="scenario JSON (default: scenarios/default.json)")
     ap.add_argument("--size", default="1600x900", help="window size WxH")
@@ -34,8 +36,6 @@ def main(argv=None):
         os.environ["SDL_VIDEODRIVER"] = "dummy"     # must precede importing pygame
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-
-    import math
 
     from .batch import parse_duration
     from .ui.app import App
@@ -64,7 +64,7 @@ def main(argv=None):
         app.camera.pitch = math.radians(args.pitch)
     if args.follow:
         app.toggle_follow()
-        if args.distance:
+        if args.distance:                           # following resets the distance
             app.camera.distance = args.distance
     app.run(max_frames=args.frames, screenshot=args.screenshot)
 

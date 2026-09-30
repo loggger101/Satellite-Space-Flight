@@ -35,6 +35,7 @@ def rot3(a: float) -> np.ndarray:
 
 
 def unit(v: np.ndarray) -> np.ndarray:
+    """Normalise vectors along the last axis (zero vectors stay zero)."""
     n = np.linalg.norm(v, axis=-1, keepdims=True)
     return v / np.where(n == 0.0, 1.0, n)
 
@@ -51,6 +52,7 @@ def eci_to_ecef(r: np.ndarray, theta) -> np.ndarray:
 
 
 def ecef_to_eci(r: np.ndarray, theta) -> np.ndarray:
+    """Inverse of :func:`eci_to_ecef`."""
     return eci_to_ecef(r, -np.asarray(theta))
 
 
@@ -61,6 +63,7 @@ def eci_to_ecef_state(r: np.ndarray, v: np.ndarray, theta):
 
 
 def ecef_to_eci_state(r_ecef: np.ndarray, v_ecef: np.ndarray, theta):
+    """Inverse of :func:`eci_to_ecef_state` (adds the Earth-rotation velocity back)."""
     r = ecef_to_eci(r_ecef, theta)
     v = ecef_to_eci(v_ecef, theta) + np.cross(OMEGA_VEC, r)
     return r, v
@@ -103,6 +106,7 @@ def ecef_to_geodetic(r: np.ndarray, iterations: int = 6):
 
 
 def eci_to_geodetic(r: np.ndarray, theta):
+    """ECI km -> (geodetic latitude rad, longitude rad, height km) at GMST ``theta``."""
     return ecef_to_geodetic(eci_to_ecef(r, theta))
 
 

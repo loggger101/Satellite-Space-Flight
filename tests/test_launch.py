@@ -11,9 +11,19 @@ from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.forces import ForceModel
 from satflight.frames import eci_to_ecef
+from satflight.launch import (
+    G0_M,
+    LAUNCH_SITES,
+    AscentEnv,
+    LaunchSpec,
+    Stage,
+    Vehicle,
+    fly,
+    plan_launch,
+    resolve,
+    vehicle_preset,
+)
 from satflight.maneuvers import Maneuver
-from satflight.launch import (G0_M, LAUNCH_SITES, AscentEnv, LaunchSpec, Stage, Vehicle, fly,
-                              plan_launch, resolve, vehicle_preset)
 from satflight.scenario import SatSpec, Scenario
 from satflight.simulation import Simulation
 from satflight.timeutil import UTC, Clock

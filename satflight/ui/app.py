@@ -18,8 +18,19 @@ from ..simulation import ACTIVE, Simulation
 from . import dialogs, launchui, theme
 from .camera import Camera
 from .groundtrack import GroundTrackView
-from .panels import GAP, LEFT_W, LOG_H, RIGHT_W, TOP_H, EventLog, InfoPanel, SatList, TopBar, draw_help
 from .orbitviz import MODES as GEOMETRY_MODES
+from .panels import (
+    GAP,
+    LEFT_W,
+    LOG_H,
+    RIGHT_W,
+    TOP_H,
+    EventLog,
+    InfoPanel,
+    SatList,
+    TopBar,
+    draw_help,
+)
 from .plots import PlotView
 from .render3d import SceneRenderer
 

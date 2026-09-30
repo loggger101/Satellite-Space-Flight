@@ -7,14 +7,14 @@ os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 
-import numpy as np  # noqa: E402
-import pygame  # noqa: E402
-import pytest  # noqa: E402
+import numpy as np
+import pygame
+import pytest
 
-from satflight.constants import R_EARTH  # noqa: E402
-from satflight.elements import rv2coe  # noqa: E402
-from satflight.ui.app import App  # noqa: E402
-from satflight.ui.widgets import TextField  # noqa: E402
+from satflight.constants import R_EARTH
+from satflight.elements import rv2coe
+from satflight.ui.app import App
+from satflight.ui.widgets import TextField
 
 
 @pytest.fixture

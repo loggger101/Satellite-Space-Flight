@@ -46,8 +46,8 @@ from __future__ import annotations
 import bisect
 import copy
 import math
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
-from typing import Callable
 
 import numpy as np
 
@@ -147,7 +147,7 @@ class Vehicle:
         v.stages = [s if isinstance(s, Stage) else _from_dict(Stage, s) for s in v.stages]
         return v
 
-    def copy(self) -> "Vehicle":
+    def copy(self) -> Vehicle:
         return Vehicle.from_dict(copy.deepcopy(self.to_dict()))
 
 
@@ -240,7 +240,7 @@ class LaunchSpec:
             s.vehicle = Vehicle.from_dict(v)
         return s
 
-    def copy(self) -> "LaunchSpec":
+    def copy(self) -> LaunchSpec:
         return LaunchSpec.from_dict(copy.deepcopy(self.to_dict()))
 
 

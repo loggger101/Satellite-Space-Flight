@@ -42,6 +42,7 @@ def _angle_about(axis, frm, to):
 
 
 def _scalarise(x):
+    """Unwrap 0-d arrays to float so single-orbit results are plain numbers."""
     return float(x) if np.ndim(x) == 0 else x
 
 
@@ -89,6 +90,7 @@ class Elements:
     n: np.ndarray          # mean motion, rad/s
 
     def as_dict(self):
+        """All fields as a dict of floats (or arrays for an ensemble)."""
         return {k: _scalarise(v) for k, v in self.__dict__.items()}
 
 
@@ -130,7 +132,7 @@ def rv2coe(r, v, mu: float = MU_EARTH) -> Elements:
     with np.errstate(divide="ignore", invalid="ignore"):
         ra = np.where(e < 1.0, p / (1.0 - e), np.inf)
         ellipse = (e < 1.0) & (a > 0)
-        n = np.where(ellipse, np.sqrt(mu / np.abs(a) ** 3), np.sqrt(mu / np.abs(a) ** 3))
+        n = np.sqrt(mu / np.abs(a) ** 3)
         period = np.where(ellipse, TWO_PI / n, np.inf)
 
     return Elements(*(_scalarise(x) for x in
@@ -344,22 +346,27 @@ def conic_points(r, v, n: int = 160, mu: float = MU_EARTH, r_max: float = 3.0e5)
 
 
 def circular_velocity(r, mu: float = MU_EARTH):
+    """Speed (km/s) of a circular orbit of radius ``r``."""
     return np.sqrt(mu / np.asarray(r, dtype=float))
 
 
 def escape_velocity(r, mu: float = MU_EARTH):
+    """Parabolic escape speed (km/s) at radius ``r``."""
     return np.sqrt(2.0 * mu / np.asarray(r, dtype=float))
 
 
 def vis_viva(r, a, mu: float = MU_EARTH):
+    """Orbital speed (km/s) at radius ``r`` on an orbit of semi-major axis ``a``."""
     return np.sqrt(mu * (2.0 / r - 1.0 / a))
 
 
 def period_of(a, mu: float = MU_EARTH):
+    """Orbital period (s) for semi-major axis ``a`` (km)."""
     return TWO_PI * np.sqrt(np.asarray(a, dtype=float) ** 3 / mu)
 
 
 def semi_major_axis_for_period(T, mu: float = MU_EARTH):
+    """Semi-major axis (km) giving orbital period ``T`` (s)."""
     return (mu * (np.asarray(T, dtype=float) / TWO_PI) ** 2) ** (1.0 / 3.0)
 
 

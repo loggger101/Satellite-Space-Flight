@@ -16,8 +16,14 @@ sys.path.insert(0, str(ROOT))
 from satflight.forces import ForceModel  # noqa: E402
 from satflight.launch import LAUNCH_SITES, LaunchSpec, pad_state, vehicle_preset  # noqa: E402
 from satflight.planner import plan_hohmann, plan_rendezvous, scan_rendezvous  # noqa: E402
-from satflight.scenario import (DEFAULT_STATIONS, ConstellationSpec, GroundStation,  # noqa: E402
-                                SatSpec, Scenario, preset_spec)
+from satflight.scenario import (  # noqa: E402
+    DEFAULT_STATIONS,
+    ConstellationSpec,
+    GroundStation,
+    SatSpec,
+    Scenario,
+    preset_spec,
+)
 from satflight.simulation import Simulation  # noqa: E402
 from satflight.timeutil import UTC, Clock  # noqa: E402
 

@@ -15,12 +15,12 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
+from ..analysis import coverage_half_angle, footprint
 from ..constants import R_EARTH, R_GEO
+from ..eclipse import shadow_fraction
 from ..elements import coe2rv, conic_points, rv2coe
 from ..ephemeris import sun_position
-from ..frames import eci_to_ecef, look_angles, rot3
-from ..analysis import coverage_half_angle, footprint
-from ..eclipse import shadow_fraction
+from ..frames import eci_to_ecef, rot3
 from ..simulation import ACTIVE
 from ..timeutil import format_duration
 from . import theme
@@ -200,15 +200,14 @@ class SceneRenderer:
                 p_world = (p_ecef / np.linalg.norm(p_ecef) * (np.linalg.norm(p_ecef) + 5)) @ world_to_ecef
                 markers.append((p_world, st.color or (120, 255, 160), -3, st.name, False))
                 if sim.n:
-                    _, el, _ = look_angles(p_ecef, math.radians(st.lat), math.radians(st.lon), r_ecef)
-                    for i in np.flatnonzero((el >= math.radians(st.min_el)) & active):
+                    for i in np.flatnonzero(st.sees(r_ecef) & active):
                         if sim.n > 60 and i != sel:
                             continue
                         lines.append(Line(np.linspace(p_world, W @ sim.y[i, :3], 12),
                                           (80, 220, 130), 1, 0.4))
 
         # selected-satellite annotations and orbit geometry
-        from . import orbitviz          # imports Line from this module
+        from . import orbitviz  # imports Line from this module
         fills = []
         info = app.orbit_info() if sel >= 0 else None
         if info is not None:

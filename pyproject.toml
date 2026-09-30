@@ -23,3 +23,11 @@ include = ["satflight*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Hand-formatted code (no `ruff format`): lint for errors, bugs, modern syntax and import order.
+select = ["E", "W", "F", "B", "UP", "SIM", "I", "RUF100"]

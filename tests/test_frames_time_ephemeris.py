@@ -7,8 +7,13 @@ import pytest
 from satflight.constants import AU, R_EARTH, R_EARTH_POLAR
 from satflight.eclipse import shadow_fraction
 from satflight.ephemeris import sun_position
-from satflight.frames import (ecef_to_eci_state, ecef_to_geodetic, eci_to_ecef_state,
-                              geodetic_to_ecef, look_angles)
+from satflight.frames import (
+    ecef_to_eci_state,
+    ecef_to_geodetic,
+    eci_to_ecef_state,
+    geodetic_to_ecef,
+    look_angles,
+)
 from satflight.timeutil import UTC, gmst, julian_date
 
 

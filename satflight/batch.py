@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import math
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .constants import R_EARTH
 from .elements import rv2coe
 from .frames import ecef_to_geodetic, eci_to_ecef
 from .scenario import Scenario
@@ -23,7 +25,8 @@ HEADER = ["t_s", "utc", "name", "status", "x_km", "y_km", "z_km", "vx_kms", "vy_
           "alt_km", "lat_deg", "lon_deg", "a_km", "e", "i_deg", "raan_deg", "argp_deg", "nu_deg"]
 
 
-def _rows(sim: Simulation, t: float, y: np.ndarray, names=None):
+def _rows(sim: Simulation, t: float, y: np.ndarray):
+    """One CSV row (see ``HEADER``) per satellite for ensemble state ``y`` at time ``t``."""
     theta = sim.clock.gmst(t)
     lat, lon, alt = ecef_to_geodetic(eci_to_ecef(y[:, :3], theta))
     el = rv2coe(y[:, :3], y[:, 3:])
@@ -52,6 +55,7 @@ def export_history_csv(sim: Simulation, path) -> int:
 
 
 def parse_duration(text: str) -> float:
+    """Seconds from ``90``, ``90s``, ``15m``, ``12h`` or ``3d``."""
     text = str(text).strip().lower()
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     if text and text[-1] in units:
@@ -60,15 +64,15 @@ def parse_duration(text: str) -> float:
 
 
 def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool = False):
+    """Propagate ``scenario`` for ``duration`` s, writing every ``step`` s to CSV ``out``
+    (if given), then print a summary unless ``quiet``. Returns the finished simulation."""
     sim = Simulation(scenario)
-    writer = None
-    fh = None
     if out:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        fh = open(out, "w", newline="", encoding="utf-8")
-        writer = csv.writer(fh)
-        writer.writerow(HEADER)
-    try:
+    with open(out, "w", newline="", encoding="utf-8") if out else contextlib.nullcontext() as fh:
+        writer = csv.writer(fh) if fh else None
+        if writer:
+            writer.writerow(HEADER)
         t_end = sim.t + duration
         while True:
             if writer:
@@ -76,15 +80,13 @@ def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool 
             if sim.t >= t_end - 1e-9:
                 break
             sim.advance(min(step, t_end - sim.t))
-    finally:
-        if fh:
-            fh.close()
     if not quiet:
         summary(sim)
     return sim
 
 
 def summary(sim: Simulation, out=sys.stdout):
+    """Print a per-satellite table and the key events."""
     print(f"Scenario: {sim.scenario.name}   elapsed {format_duration(sim.t)}   "
           f"({sim.forces.label()}, {sim.propagator})", file=out)
     print(f"{'name':<28}{'status':<12}{'alt km':>11}{'a km':>12}{'e':>10}{'i deg':>9}"
@@ -92,7 +94,7 @@ def summary(sim: Simulation, out=sys.stdout):
     for i, s in enumerate(sim.sats):
         r, v = sim.y[i, :3], sim.y[i, 3:]
         el = rv2coe(r, v)
-        alt = np.linalg.norm(r) - 6378.137
+        alt = np.linalg.norm(r) - R_EARTH
         print(f"{s.name[:27]:<28}{s.status:<12}{alt:>11.1f}{el.a:>12.1f}{el.e:>10.5f}"
               f"{math.degrees(el.i):>9.3f}{s.dv_used * 1000:>9.1f}", file=out)
     events = [e for e in sim.events if e.kind in ("maneuver", "alert", "warn", "launch")]
@@ -103,6 +105,7 @@ def summary(sim: Simulation, out=sys.stdout):
 
 
 def main(argv=None):
+    """Command-line entry point (``python -m satflight.batch``)."""
     ap = argparse.ArgumentParser(description="Propagate a scenario without graphics.")
     ap.add_argument("scenario", help="scenario JSON file")
     ap.add_argument("--duration", default="1d", help="e.g. 5400, 90m, 12h, 3d (default 1d)")

@@ -11,7 +11,13 @@ Propagators
 
 Events logged: manoeuvre execution, eclipse entry/exit, ground-station
 AOS/LOS, close approaches between satellites, re-entry, surface impact and
-escape from Earth's sphere of influence.
+escape from Earth's sphere of influence, and every step of a launch.
+
+Launches (``satflight.launch``): a vehicle waits on its pad, turning with the
+Earth, until lift-off; during the ascent it is integrated by its own ascent
+model and kept out of the ensemble. At payload separation it joins the
+ensemble like any other satellite, and spent stages join as objects of their
+own.
 """
 
 from __future__ import annotations
@@ -21,14 +27,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .analysis import j2_mean_propagate
+from .analysis import j2_mean_propagate, j2_secular_rates
 from .constants import SOI_EARTH
 from .eclipse import shadow_fraction
-from .elements import kepler_propagate
+from .elements import kepler_propagate, rv2coe
 from .ephemeris import sun_position
 from .forces import ForceModel, approx_altitude, conservative_energy
 from .frames import eci_to_ecef, look_angles
 from .integrators import Propagator
+from .launch import Ascent, AscentEnv, LaunchSpec, coast, plan_launch, plane_normal
 from .maneuvers import (G0, Maneuver, finite_direction, impulse_eci, propellant_after,
                         resolve_time)
 from .scenario import GroundStation, Scenario, expand, orbit_state, spread_along_orbit
@@ -36,8 +43,10 @@ from .timeutil import Clock, format_duration
 
 PROPAGATORS = ("cowell", "kepler", "j2mean")
 ACTIVE, DECAYED, IMPACTED, ESCAPED = "active", "re-entered", "impacted", "escaped"
+SCRUBBED = "scrubbed"     # a launch that never left the pad
 
 REENTRY_ALT = 80.0        # km: below this the vehicle is considered lost
+ASCENT_SYNC = 1.0         # s: longest ensemble segment while a vehicle is in powered flight
 EVENT_DETAIL_LIMIT = 40   # log per-satellite eclipse/AOS events only below this N
 
 
@@ -52,6 +61,8 @@ class Satellite:
     dv_used: float = 0.0          # km/s
     shadow: float = 1.0           # illuminated fraction
     energy_ref: tuple | None = None   # (t, energy) baseline for the drift readout
+    family: str = ""              # launch it came from (payload and spent stages share it)
+    launch_report: dict | None = None   # ascent summary once a launched payload separates
 
 
 @dataclass
@@ -128,6 +139,7 @@ class Simulation:
         self.maneuvers: list[Maneuver] = []
         self.burns: list[FiniteBurn] = []
         self.events: list[Event] = []
+        self.ascents: list[Ascent] = []
         self.conjunction_km = 10.0
         self.watch: set[int] = set()       # indices the UI wants detailed events for
         self._last_record = -math.inf
@@ -140,6 +152,11 @@ class Simulation:
         self.history = History(len(self.sats))
         for m in scenario.maneuvers:
             self.schedule(Maneuver.from_dict(m.to_dict()))
+        for spec in scenario.launches:
+            try:
+                self.launch(LaunchSpec.from_dict(spec.to_dict()))
+            except ValueError as exc:
+                self.log(f"Launch of {spec.name} scrubbed: {exc}", "alert")
         self._post_step(self.t, force_record=True)
         self.log(f"Scenario '{scenario.name}' loaded: {len(self.sats)} satellites, "
                  f"{len(self.stations)} stations, propagator {self.propagator}")
@@ -176,8 +193,8 @@ class Simulation:
         self.y = np.vstack([self.y, np.concatenate([r, v])[None, :]])
         return sat
 
-    def log(self, text: str, kind: str = "info"):
-        self.events.append(Event(self.t, text, kind))
+    def log(self, text: str, kind: str = "info", t: float | None = None):
+        self.events.append(Event(self.t if t is None else t, text, kind))
         if len(self.events) > 600:
             del self.events[:100]
 
@@ -209,11 +226,21 @@ class Simulation:
         n_old = self.n
         added = [self._append(*row) for row in rows]
         self._rebuild_history(n_old)
-        self._visible = np.zeros((len(self.stations), self.n), dtype=bool)
+        self._resize_visible()
         names = ", ".join(s.name for s in added[:3])
         self.log(f"Added {len(added)} satellite{'s' if len(added) != 1 else ''}: {names}"
                  f"{' ...' if len(added) > 3 else ''}")
         return added
+
+    def _resize_visible(self):
+        """Fit the station-visibility table to the current stations and
+        satellites, keeping what is known (a reset would log a fresh AOS
+        for everything in view)."""
+        old = self._visible
+        new = np.zeros((len(self.stations), self.n), dtype=bool)
+        s, n = min(old.shape[0], new.shape[0]), min(old.shape[1], new.shape[1])
+        new[:s, :n] = old[:s, :n]
+        self._visible = new
 
     def _rebuild_history(self, n_old: int):
         """Resize the history for the new satellite count, keeping the most
@@ -233,18 +260,21 @@ class Simulation:
 
     def remove(self, i: int):
         sat = self.sats.pop(i)
+        self.ascents = [a for a in self.ascents if a.sat is not sat]
         self.y = np.delete(self.y, i, axis=0)
+        if self._visible.shape[1] > i:
+            self._visible = np.delete(self._visible, i, axis=1)
         self.history.remove_row(i)
         self.maneuvers = [m for m in self.maneuvers if m.sat != sat.name]
         self.burns = [b for b in self.burns if b.man.sat != sat.name]
-        self._visible = np.zeros((len(self.stations), self.n), dtype=bool)
+        self._resize_visible()
         self._close_pairs.clear()
         self.watch = {w - (w > i) for w in self.watch if w != i}
         self.log(f"Removed {sat.name}")
 
     def add_station(self, st: GroundStation):
         self.stations.append(st)
-        self._visible = np.zeros((len(self.stations), self.n), dtype=bool)
+        self._resize_visible()
         self.log(f"Ground station {st.name} ({st.lat:.2f}, {st.lon:.2f})")
 
     def set_propagator(self, name: str):
@@ -253,9 +283,122 @@ class Simulation:
         self.propagator = name
         self.log(f"Propagator -> {name}")
 
+    # --- launches -----------------------------------------------------------------------
+    def ascent_env(self) -> AscentEnv:
+        return AscentEnv.from_sim(self.forces, self.clock)
+
+    def plane_of(self, name: str):
+        """(inclination deg, normal_at(t)) of a satellite's orbit plane, with
+        its J2 nodal regression - the target of a launch window."""
+        i = self.index_of(name)
+        el = rv2coe(self.y[i, :3], self.y[i, 3:])
+        if el.e >= 1.0:
+            raise ValueError(f"{name} is not on a closed orbit")
+        regresses = self.propagator == "j2mean" or (self.propagator == "cowell" and self.forces.j2)
+        rate = float(j2_secular_rates(el.a, el.e, el.i)[0]) if regresses else 0.0
+        t_ref, inc, raan = self.t, float(el.i), float(el.raan)
+        return math.degrees(inc), lambda t: plane_normal(inc, raan + rate * (t - t_ref))
+
+    def plan(self, spec: LaunchSpec):
+        """Fly a launch on paper from now (see ``launch.plan_launch``)."""
+        return plan_launch(spec, self.ascent_env(), self.t, self.plane_of)
+
+    def launch(self, spec: LaunchSpec, plan=None) -> Satellite:
+        """Put a vehicle on its pad; it lifts off at the planned time."""
+        spec.name = self.unique_name(spec.name or "Payload")
+        if plan is None:
+            plan = self.plan(spec)
+        asc = Ascent(spec, plan.res, self.ascent_env(), plan.kick)
+        n_old = self.n
+        props = dict(mass=asc.mass, area=spec.vehicle.area, cd=spec.vehicle.cd)
+        y = asc.pad_state(self.t) if asc.t0 > self.t else asc.state()
+        sat = self._append(spec.name, spec.color or _auto_color(self.n), props,
+                           np.array(y[:3]), np.array(y[3:]))
+        sat.family = sat.name
+        asc.sat = sat
+        self._rebuild_history(n_old)
+        self._resize_visible()
+        self.ascents.append(asc)
+        f = plan.flight
+        when = "now" if asc.t0 <= self.t + 1e-6 else f"in {format_duration(asc.t0 - self.t)}"
+        if f.outcome == "orbit" and spec.guidance == "orbit":
+            outcome = f"orbit {f.insertion['hp']:,.0f} x {f.insertion['ha']:,.0f} km"
+        else:
+            outcome = f.outcome
+        planned = f"planned {outcome}"
+        asc.planned = (f.samples, f.stage_marks, outcome)
+        self.log(f"{sat.name}: {spec.vehicle.name} on the pad at {spec.site or 'the launch site'} "
+                 f"({spec.lat:.2f}, {spec.lon:.2f}), lift-off {when}; {planned}",
+                 "launch" if f.outcome == "orbit" or spec.guidance == "open" else "warn")
+        self._advance_ascents(self.t)
+        return sat
+
+    def ascent_of(self, i: int) -> Ascent | None:
+        """The ascent driving satellite i, if it is on a pad or in powered flight."""
+        if not 0 <= i < self.n:
+            return None
+        sat = self.sats[i]
+        return next((a for a in self.ascents if a.sat is sat), None)
+
+    def _free_idx(self) -> np.ndarray:
+        """Active satellites the ensemble propagates (not on a pad or ascending)."""
+        act = self.active
+        for a in self.ascents:
+            act[self.sats.index(a.sat)] = False
+        return np.flatnonzero(act)
+
+    def _advance_ascents(self, t: float):
+        if not self.ascents:
+            return
+        spawned = []
+        for asc in list(self.ascents):
+            i = self.sats.index(asc.sat)
+            asc.advance_to(t)
+            self.y[i] = asc.state()
+            asc.sat.mass = asc.mass
+            for te, text, kind in asc.events:
+                self.log(text, kind, te)
+            asc.events.clear()
+            for ts, name, state, mass, cd_a in asc.spawns:
+                s = coast(state, ts, t, mass, cd_a, asc.env)
+                col = tuple(int(c * 0.6) for c in asc.sat.color)
+                props = dict(mass=mass, area=asc.veh.area, cd=asc.veh.cd)
+                spawned.append((name, col, props, np.array(s[:3]), np.array(s[3:]), asc.sat.family))
+            asc.spawns.clear()
+            if asc.released:
+                self._finish_ascent(asc)
+        if spawned:
+            n_old = self.n
+            for name, col, props, r, v, fam in spawned:
+                self._append(name, col, props, r, v).family = fam
+            self._rebuild_history(n_old)
+            self._resize_visible()
+
+    def _finish_ascent(self, asc: Ascent):
+        self.ascents.remove(asc)
+        sat, spec = asc.sat, asc.spec
+        sat.mass, sat.area, sat.cd = asc.mass, spec.payload_area, spec.payload_cd
+        sat.energy_ref = None
+        sat.launch_report = dict(asc.summary(), vehicle=spec.vehicle.name, site=spec.site,
+                                 lat=spec.lat, lon=spec.lon, t0=asc.t0)
+        if asc.outcome == "crash":
+            sat.status = IMPACTED
+        elif asc.outcome == "no_liftoff":
+            sat.status = SCRUBBED
+        if sat.status != ACTIVE:
+            self.maneuvers = [m for m in self.maneuvers if m.sat != sat.name]
+        elif spec.circularize and asc.outcome == "orbit":
+            try:
+                self.schedule(Maneuver(sat.name, "circularize", timing="apoapsis",
+                                       label="circularise at apogee"))
+            except ValueError as exc:
+                self.log(f"{sat.name}: circularisation skipped ({exc})", "warn")
+
     # --- manoeuvres --------------------------------------------------------------------
     def schedule(self, m: Maneuver) -> Maneuver:
         i = self.index_of(m.sat)
+        if self.ascent_of(i) is not None:
+            raise ValueError(f"{m.sat} is still on its launch vehicle; manoeuvre it after separation")
         r, v = self.y[i, :3], self.y[i, 3:]
         if m.timing != "absolute" or m.t is None:
             m.t = resolve_time(m, self.t, r, v)
@@ -360,6 +503,12 @@ class Simulation:
 
     def _next_boundary(self, t_end: float) -> float:
         tb = t_end
+        for a in self.ascents:
+            if a.phase == "pad":
+                if self.t < a.t0 < tb:
+                    tb = a.t0
+            else:
+                tb = min(tb, self.t + ASCENT_SYNC)
         for m in self.maneuvers:
             if self.t < m.t < tb:
                 tb = m.t
@@ -376,11 +525,14 @@ class Simulation:
         while self.t < t_end - 1e-9 and guard < 10000:
             guard += 1
             t_seg = self._next_boundary(t_end)
-            idx = np.flatnonzero(self.active)
+            idx = self._free_idx()
             if idx.size == 0:
                 self.t = t_seg
+                self._advance_ascents(self.t)
+                self._post_step(self.t, idx)
             else:
                 self._propagate(idx, t_seg)
+                self._advance_ascents(self.t)
             self._finish_burns()
             self._execute_due()
 
@@ -418,7 +570,10 @@ class Simulation:
         """Record history and detect events. Returns True if a satellite left
         the active set (the integrator must restart with the new set)."""
         if idx is None:
-            idx = np.flatnonzero(self.active)
+            idx = self._free_idx()
+        for a in self.ascents:
+            if a.phase == "pad":
+                self.y[self.sats.index(a.sat)] = a.pad_state(t)
         changed = False
         if idx.size:
             r = self.y[idx, :3]
@@ -471,7 +626,7 @@ class Simulation:
         # ground stations
         if self.stations and watch:
             if self._visible.shape != (len(self.stations), self.n):
-                self._visible = np.zeros((len(self.stations), self.n), dtype=bool)
+                self._resize_visible()
             w = np.array(sorted(watch))
             r_ecef = eci_to_ecef(r_all[w], self.clock.gmst(t))
             for s, st in enumerate(self.stations):
@@ -491,6 +646,10 @@ class Simulation:
             r = r_all[orbiting]
             d = np.linalg.norm(r[:, None, :] - r[None, :, :], axis=-1)
             np.fill_diagonal(d, np.inf)
+            if any(self.sats[i].family for i in orbiting):
+                # a payload and the stages that carried it drift apart slowly
+                fam = np.array([self.sats[i].family or self.sats[i].name for i in orbiting], object)
+                d[fam[:, None] == fam[None, :]] = np.inf
             k = int(np.argmin(d))
             a, b = divmod(k, orbiting.size)
             self.closest = (float(d[a, b]), int(orbiting[a]), int(orbiting[b]))
@@ -526,9 +685,17 @@ class Simulation:
         sc.epoch = self.datetime()
         sc.satellites = []
         sc.constellations = []
+        pads = {id(a.sat): a for a in self.ascents if a.phase == "pad"}
+        sc.launches = []
+        for a in pads.values():
+            spec = a.spec.copy()
+            spec.timing, spec.t0, spec.kick = "absolute", a.t0 - self.t, a.kick_deg
+            sc.launches.append(spec)
         for i, s in enumerate(self.sats):
-            if s.status != ACTIVE:
+            if s.status != ACTIVE or id(s) in pads:
                 continue
+            if self.ascent_of(i) is not None:
+                self.log(f"Snapshot: {s.name} is in powered flight; saved as a free-flying state", "warn")
             sc.satellites.append(SatSpec(
                 s.name, {"type": "state", "r": self.y[i, :3].tolist(), "v": self.y[i, 3:].tolist()},
                 list(s.color), s.mass, s.area, s.cd))
@@ -548,4 +715,4 @@ def _auto_color(i: int):
     return palette_color(i)
 
 
-__all__ = ["Simulation", "Satellite", "History", "Event", "PROPAGATORS"]
+__all__ = ["Simulation", "Satellite", "History", "Event", "PROPAGATORS", "ASCENT_SYNC"]

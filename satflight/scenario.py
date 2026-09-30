@@ -35,10 +35,13 @@ import numpy as np
 from .constants import OMEGA_EARTH, R_EARTH, R_GEO
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
+from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
 from .launch import LaunchSpec
-from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef
 from .maneuvers import Maneuver, sun_synchronous_inclination
-from .timeutil import Clock, format_epoch, parse_epoch, UTC
+from .timeutil import UTC, Clock, format_epoch, parse_epoch
+from .tle import parse_tle
+
+DEFAULT_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
 PALETTE = [
     (255, 196, 64), (90, 200, 255), (255, 110, 110), (140, 240, 140), (220, 140, 255),
@@ -48,18 +51,22 @@ PALETTE = [
 
 
 def palette_color(i: int):
+    """Default colour of the ``i``-th satellite or constellation."""
     return PALETTE[i % len(PALETTE)]
 
 
 # --- Specs -----------------------------------------------------------------------
 
 def _from_dict(cls, d):
+    """Build dataclass ``cls`` from ``d``, ignoring keys it has no field for."""
     names = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in names})
 
 
 @dataclass
 class SatSpec:
+    """One satellite (or ``count`` copies sharing an orbit) and its drag properties."""
+
     name: str
     orbit: dict
     color: list | None = None
@@ -78,6 +85,7 @@ class SatSpec:
 @dataclass
 class ConstellationSpec:
     """Walker constellation i:t/p/f (delta: nodes over 360 deg, star: 180 deg)."""
+
     name: str = "Walker"
     altitude: float = 550.0
     inclination: float = 53.0
@@ -97,6 +105,8 @@ class ConstellationSpec:
 
 @dataclass
 class GroundStation:
+    """A tracking site; passes count while the elevation exceeds ``min_el``."""
+
     name: str
     lat: float            # deg
     lon: float            # deg
@@ -105,7 +115,16 @@ class GroundStation:
     color: list | None = None
 
     def ecef(self) -> np.ndarray:
+        """Site position in ECEF (km)."""
         return geodetic_to_ecef(math.radians(self.lat), math.radians(self.lon), self.alt)
+
+    def look_angles(self, r_ecef):
+        """Azimuth, elevation (rad) and range (km) of ECEF targets ``(..., 3)``."""
+        return look_angles(self.ecef(), math.radians(self.lat), math.radians(self.lon), r_ecef)
+
+    def sees(self, r_ecef):
+        """True where the targets are above the station's elevation mask."""
+        return self.look_angles(r_ecef)[1] >= math.radians(self.min_el)
 
     def to_dict(self):
         return asdict(self)
@@ -113,6 +132,8 @@ class GroundStation:
 
 @dataclass
 class IntegratorSettings:
+    """Arguments for :class:`satflight.integrators.Propagator`."""
+
     method: str = "dopri5"
     rtol: float = 1e-9
     atol: float = 1e-6
@@ -125,9 +146,11 @@ class IntegratorSettings:
 
 @dataclass
 class Scenario:
+    """Everything needed to start a run; round-trips through JSON."""
+
     name: str = "Untitled"
     description: str = ""
-    epoch: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
+    epoch: datetime = DEFAULT_EPOCH
     satellites: list = field(default_factory=list)
     constellations: list = field(default_factory=list)
     stations: list = field(default_factory=list)
@@ -160,11 +183,11 @@ class Scenario:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Scenario":
+    def from_dict(cls, d: dict) -> Scenario:
         return cls(
             name=d.get("name", "Untitled"),
             description=d.get("description", ""),
-            epoch=parse_epoch(d["epoch"]) if "epoch" in d else datetime(2026, 1, 1, tzinfo=UTC),
+            epoch=parse_epoch(d["epoch"]) if "epoch" in d else DEFAULT_EPOCH,
             propagator=d.get("propagator", "cowell"),
             integrator=_from_dict(IntegratorSettings, d.get("integrator", {})),
             forces=ForceModel.from_dict(d.get("forces", {})),
@@ -179,8 +202,8 @@ class Scenario:
         )
 
     @classmethod
-    def load(cls, path) -> "Scenario":
-        with open(path, "r", encoding="utf-8") as fh:
+    def load(cls, path) -> Scenario:
+        with open(path, encoding="utf-8") as fh:
             return cls.from_dict(json.load(fh))
 
     def save(self, path):
@@ -188,13 +211,15 @@ class Scenario:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(self.to_dict(), fh, indent=2)
 
-    def copy(self) -> "Scenario":
+    def copy(self) -> Scenario:
+        """Deep copy via the dict form."""
         return Scenario.from_dict(copy.deepcopy(self.to_dict()))
 
 
 # --- Building initial states ---------------------------------------------------------
 
 def _deg(d, key, default=0.0):
+    """``d[key]`` (degrees) converted to radians."""
     return math.radians(float(d.get(key, default)))
 
 
@@ -246,7 +271,6 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
         v = vmag * np.array([-math.sin(ang), math.cos(ang), 0.0])
         return r, v
     if kind == "tle":
-        from .tle import parse_tle
         tle = parse_tle(orbit["line1"] + "\n" + orbit["line2"])
         return tle.state_at(clock.datetime(t))
     raise ValueError(f"unknown orbit type {kind!r}")
@@ -349,6 +373,7 @@ PRESETS = {
 
 
 def preset_spec(preset: str, name: str | None = None) -> SatSpec:
+    """A :class:`SatSpec` from ``PRESETS``, named after the preset unless ``name`` is given."""
     p = copy.deepcopy(PRESETS[preset])
     return SatSpec(name=name or preset.split(" (")[0], orbit=p.pop("orbit"), **p)
 

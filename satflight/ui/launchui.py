@@ -22,9 +22,19 @@ import pygame
 from ..constants import OMEGA_EARTH, R_EARTH
 from ..elements import kepler_propagate, rv2coe
 from ..frames import ecef_to_geodetic, eci_to_ecef
-from ..launch import (LAUNCH_SITES, PHASE_LABELS, VEHICLES, LaunchSpec, Stage, Vehicle,
-                      vehicle_preset)
-from ..launch import _altitude, _dot, _plumb_up, _unit
+from ..launch import (
+    LAUNCH_SITES,
+    PHASE_LABELS,
+    VEHICLES,
+    LaunchSpec,
+    Stage,
+    Vehicle,
+    _altitude,
+    _dot,
+    _plumb_up,
+    _unit,
+    vehicle_preset,
+)
 from . import theme
 from .groundtrack import GroundTrackView
 from .orbitpanel import countdown

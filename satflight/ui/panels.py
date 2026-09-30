@@ -12,7 +12,7 @@ from ..constants import OMEGA_EARTH, R_EARTH
 from ..eclipse import shadow_state
 from ..elements import rv2coe
 from ..ephemeris import sun_position
-from ..frames import eci_to_ecef, ecef_to_geodetic
+from ..frames import ecef_to_geodetic, eci_to_ecef
 from ..simulation import ACTIVE
 from ..timeutil import format_duration, format_period
 from . import theme

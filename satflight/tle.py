@@ -22,12 +22,13 @@ from .timeutil import UTC, ensure_utc, julian_date
 try:  # optional dependency
     from sgp4.api import Satrec  # type: ignore
     HAVE_SGP4 = True
-except Exception:  # pragma: no cover - depends on environment
+except ImportError:  # pragma: no cover - depends on environment
     Satrec = None
     HAVE_SGP4 = False
 
 
 def checksum(line: str) -> int:
+    """Modulo-10 checksum of a TLE line (digits count face value, '-' counts 1)."""
     total = 0
     for ch in line[:68]:
         if ch.isdigit():
@@ -50,6 +51,8 @@ def _implied_decimal(field: str) -> float:
 
 @dataclass
 class TLE:
+    """A parsed two-line element set (mean elements at ``epoch``)."""
+
     name: str
     line1: str
     line2: str
@@ -66,6 +69,7 @@ class TLE:
 
     @property
     def semi_major_axis(self) -> float:
+        """Kepler semi-major axis (km) from the mean motion."""
         return (MU_EARTH / self.mean_motion ** 2) ** (1.0 / 3.0)
 
     def state_at(self, when: datetime):

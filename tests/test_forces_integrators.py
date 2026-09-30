@@ -6,8 +6,16 @@ import pytest
 from satflight import integrators
 from satflight.constants import MU_EARTH
 from satflight.elements import coe2rv, kepler_propagate
-from satflight.forces import (ForceModel, accel_drag, accel_j2, accel_j3, accel_j4,
-                              accel_point_mass, conservative_energy, zonal_potential)
+from satflight.forces import (
+    ForceModel,
+    accel_drag,
+    accel_j2,
+    accel_j3,
+    accel_j4,
+    accel_point_mass,
+    conservative_energy,
+    zonal_potential,
+)
 from satflight.integrators import Propagator
 
 

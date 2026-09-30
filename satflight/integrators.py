@@ -14,8 +14,8 @@ tolerance.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 
@@ -42,6 +42,8 @@ _E = _B5 - _B4
 
 @dataclass
 class StepStats:
+    """Running counters shown in the UI's integrator readout."""
+
     accepted: int = 0
     rejected: int = 0
     evaluations: int = 0
@@ -49,6 +51,7 @@ class StepStats:
 
 
 def rk4_step(f: Deriv, t: float, y: np.ndarray, h: float) -> np.ndarray:
+    """One classic fourth-order Runge-Kutta step."""
     k1 = f(t, y)
     k2 = f(t + h / 2, y + h / 2 * k1)
     k3 = f(t + h / 2, y + h / 2 * k2)
@@ -67,6 +70,7 @@ def leapfrog_step(f: Deriv, t: float, y: np.ndarray, h: float) -> np.ndarray:
 
 
 def _error_norm(err, y0, y1, rtol, atol):
+    """Scaled RMS error of the worst satellite (<= 1 means the step is accepted)."""
     sc = atol + rtol * np.maximum(np.abs(y0), np.abs(y1))
     per_sat = np.sqrt(np.mean((err / sc) ** 2, axis=1))
     return float(np.max(per_sat)) if per_sat.size else 0.0
@@ -111,6 +115,7 @@ class Propagator:
         return t, y
 
     def _dopri5(self, f, t0, y0, t1, callback):
+        """Adaptive Dormand-Prince; the step size carries over between calls."""
         t, y = t0, y0
         k = [None] * 7
         k[0] = f(t, y)
@@ -124,9 +129,8 @@ class Propagator:
                 for j, aij in enumerate(_A[s]):
                     if aij:
                         acc += h_try * aij * k[j]
-                if s == 6:
-                    y_new = acc
                 k[s] = f(t + _C[s] * h_try, acc)
+            y_new = acc                 # stage 7 sits at the 5th-order solution (FSAL)
             self.stats.evaluations += 6
             err_vec = h_try * sum(_E[j] * k[j] for j in range(7) if _E[j])
             err = _error_norm(err_vec, y, y_new, self.rtol, self.atol)

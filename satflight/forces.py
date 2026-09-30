@@ -22,19 +22,20 @@ from dataclasses import asdict, dataclass, fields
 import numpy as np
 
 from . import atmosphere
-from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH
-
-OMEGA_VEC = np.array([0.0, 0.0, OMEGA_EARTH])
+from .constants import F_EARTH, J2, J3, J4, MU_EARTH, R_EARTH
+from .frames import OMEGA_VEC
 
 
 # --- Individual terms --------------------------------------------------------------
 
 def accel_point_mass(r, mu: float = MU_EARTH):
+    """Central-body (Keplerian) gravity."""
     rm = np.linalg.norm(r, axis=-1, keepdims=True)
     return -mu * r / rm ** 3
 
 
 def accel_j2(r, mu: float = MU_EARTH, re: float = R_EARTH, j2: float = J2):
+    """J2 (oblateness) perturbation."""
     x, y, z = r[..., 0], r[..., 1], r[..., 2]
     r2 = x * x + y * y + z * z
     rm = np.sqrt(r2)
@@ -44,6 +45,7 @@ def accel_j2(r, mu: float = MU_EARTH, re: float = R_EARTH, j2: float = J2):
 
 
 def accel_j3(r, mu: float = MU_EARTH, re: float = R_EARTH, j3: float = J3):
+    """J3 (north-south asymmetry, the "pear shape") perturbation."""
     x, y, z = r[..., 0], r[..., 1], r[..., 2]
     r2 = x * x + y * y + z * z
     rm = np.sqrt(r2)
@@ -54,6 +56,7 @@ def accel_j3(r, mu: float = MU_EARTH, re: float = R_EARTH, j3: float = J3):
 
 
 def accel_j4(r, mu: float = MU_EARTH, re: float = R_EARTH, j4: float = J4):
+    """J4 perturbation."""
     x, y, z = r[..., 0], r[..., 1], r[..., 2]
     r2 = x * x + y * y + z * z
     rm = np.sqrt(r2)
@@ -102,6 +105,8 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0):
 
 @dataclass
 class ForceModel:
+    """Which perturbations act on the ensemble; serialised into scenario files."""
+
     j2: bool = True
     j3: bool = False
     j4: bool = False
@@ -113,10 +118,12 @@ class ForceModel:
                     "srp": "solar radiation pressure"}
 
     def to_dict(self):
+        """Plain dict for JSON."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d):
+        """Build from a scenario dict, ignoring unknown (e.g. out-of-scope) keys."""
         names = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in (d or {}).items() if k in names})
 
@@ -126,10 +133,12 @@ class ForceModel:
         return [label for k, label in cls.OUT_OF_SCOPE.items() if (d or {}).get(k)]
 
     def label(self) -> str:
+        """Short summary such as ``2B+J2+DRAG``."""
         on = [t.upper() for t in self.TERMS if getattr(self, t)]
         return "two-body" if not on else "2B+" + "+".join(on)
 
     def acceleration(self, r, v, cd_a_over_m):
+        """Total acceleration (km/s^2) of the enabled terms for ``(N, 3)`` states."""
         a = accel_point_mass(r)
         if self.j2:
             a += accel_j2(r)

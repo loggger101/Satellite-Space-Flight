@@ -17,8 +17,11 @@ from .constants import MU_EARTH, R_EARTH
 from .elements import kepler_propagate
 from .maneuvers import Maneuver, hohmann, lambert, plane_change_dv, resolve_time
 
+SAFE_PERIGEE_ALT = 150.0   # km; lower transfer arcs would re-enter
+
 
 def _burn_state(sim, sat: str, timing: str, delay: float = 0.0):
+    """Time of the first burn and the two-body state ``sat`` will have then."""
     i = sim.index_of(sat)
     r, v = sim.y[i, :3], sim.y[i, 3:]
     t_b = resolve_time(Maneuver(sat, timing=timing, delay=delay), sim.t, r, v)
@@ -27,6 +30,7 @@ def _burn_state(sim, sat: str, timing: str, delay: float = 0.0):
 
 
 def plan_hohmann(sim, sat: str, target_alt: float, timing: str = "now", delay: float = 0.0):
+    """Raise or lower ``sat`` to a circular orbit at ``target_alt`` km. Returns (burns, summary)."""
     t_b, r, v = _burn_state(sim, sat, timing, delay)
     r1 = float(np.linalg.norm(r))
     r2 = R_EARTH + target_alt
@@ -48,6 +52,7 @@ def plan_hohmann(sim, sat: str, target_alt: float, timing: str = "now", delay: f
 
 def plan_bielliptic(sim, sat: str, rb_alt: float, target_alt: float, timing: str = "now",
                     delay: float = 0.0):
+    """Three-burn transfer to ``target_alt`` km via apoapsis ``rb_alt``. Returns (burns, summary)."""
     t_b, r, v = _burn_state(sim, sat, timing, delay)
     r1 = float(np.linalg.norm(r))
     rb = R_EARTH + rb_alt
@@ -76,7 +81,10 @@ def plan_bielliptic(sim, sat: str, rb_alt: float, target_alt: float, timing: str
 
 def plan_rendezvous(sim, sat: str, target: str, tof: float, timing: str = "now",
                     delay: float = 0.0):
-    """Lambert intercept of ``target`` after ``tof`` seconds, then velocity match."""
+    """Lambert intercept of ``target`` after ``tof`` seconds, then velocity match.
+
+    Returns (burns, summary); the summary warns when the arc would re-enter.
+    """
     if sat == target:
         raise ValueError("choose a different target satellite")
     t_b, r1, v1 = _burn_state(sim, sat, timing, delay)
@@ -98,9 +106,6 @@ def plan_rendezvous(sim, sat: str, target: str, tof: float, timing: str = "now",
     if perigee_alt < SAFE_PERIGEE_ALT:
         summary = f"WARNING: arc dips to {perigee_alt:,.0f} km altitude - " + summary
     return burns, summary
-
-
-SAFE_PERIGEE_ALT = 150.0   # km; lower transfer arcs would re-enter
 
 
 def _arc_perigee_alt(r1, v1, tof: float) -> float:
@@ -137,5 +142,6 @@ def scan_rendezvous(sim, sat: str, target: str, tof_min: float = 600.0, tof_max:
 
 
 def plane_change_summary(sim, sat: str, delta_i: float, timing: str, delay: float = 0.0):
+    """Delta-v estimate for turning the orbit plane by ``delta_i`` deg at ``timing``."""
     _, _, v = _burn_state(sim, sat, timing, delay)
     return f"dV ~{plane_change_dv(float(np.linalg.norm(v)), math.radians(delta_i)) * 1000:.1f} m/s"

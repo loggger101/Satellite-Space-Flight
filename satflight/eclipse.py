@@ -42,6 +42,7 @@ def shadow_fraction(r_sat: np.ndarray, r_sun: np.ndarray) -> np.ndarray:
 
 
 def shadow_state(fraction: float) -> str:
+    """Classify an illuminated fraction as SUNLIT, PENUMBRA or UMBRA."""
     if fraction >= 0.999999:
         return SUNLIT
     if fraction <= 1e-6:

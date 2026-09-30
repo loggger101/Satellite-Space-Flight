@@ -16,7 +16,7 @@ from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.ui import glossary, theme, tips
 from satflight.ui.app import App
-from satflight.ui.panels import HELP, draw_help
+from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
 from satflight.ui.widgets import TextField
 
@@ -81,9 +81,10 @@ def test_help_fits_the_smallest_window(scaled_app):
     assert app.screen.get_size() == (px(900), px(600))
     rect = draw_help(app.screen, app)
     assert app.screen.get_rect().contains(rect)
-    # key labels start at x + 30 and must end before the descriptions at x + 200
-    assert all(app.fonts.mono.size(k)[0] < px(170) for k, desc in HELP if desc)
-    assert all(app.fonts.ui.size(d)[0] < rect.w - px(210) for k, d in HELP if d)
+    # key labels end before the descriptions start, and those end inside the box
+    _, key_x, desc_x = help_layout(app.fonts, *app.screen.get_size())
+    assert all(key_x + app.fonts.mono.size(k)[0] < desc_x - px(8) for k, d in HELP if d)
+    assert all(desc_x + app.fonts.ui.size(d)[0] < rect.w - px(8) for k, d in HELP if d)
 
 
 def test_add_satellite_dialog_with_preset(app):
@@ -370,10 +371,9 @@ def test_top_bar_keeps_the_clock_in_the_smallest_window(scaled_app):
     app = scaled_app
     app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))
     frame(app)
-    f = app.fonts
-    clock_end = (px(12) + f.bold.size("SATELLITE SPACE FLIGHT")[0] + px(18)
-                 + f.mono.size("00:00:00 UTC")[0])
-    assert clock_end <= app.topbar.left_of_buttons - px(8)
+    clock = app.topbar.clock_rect               # the title gives way first if it must
+    assert clock is not None and clock.right <= app.topbar.left_of_buttons - px(8)
+    assert clock.w >= app.fonts.mono.size("00:00:00 UTC")[0]
 
 
 def test_ui_scale_sizes_everything_in_proportion(scaled_app):

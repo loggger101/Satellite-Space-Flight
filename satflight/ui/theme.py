@@ -7,6 +7,9 @@ drawn 1.25 times larger and the UI stays the size the user chose, only sharper."
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pygame
 
 BG = (4, 6, 14)
@@ -48,19 +51,37 @@ EVENT_COLORS = {
 }
 
 
+FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+SYSTEM_FONTS = {"sans": "segoeui", "mono": "consolas"}     # Windows' own; the layout's reference
+BUNDLED_FONTS = {("sans", False): "DejaVuSans.ttf", ("sans", True): "DejaVuSans-Bold.ttf",
+                 ("mono", False): "DejaVuSansMono.ttf", ("mono", True): "DejaVuSansMono.ttf"}
+
+
+def load_font(kind: str, size: int, bold: bool = False) -> pygame.font.Font:
+    """The ``kind`` ("sans" or "mono") font at ``size`` px: Windows' Segoe UI /
+    Consolas where installed, else the DejaVu fonts in ``assets/fonts``, so every
+    other system (and CI) draws the same, known text widths. Setting
+    ``SATFLIGHT_FONTS=bundled`` forces DejaVu, to check the layout with it."""
+    name = SYSTEM_FONTS[kind]
+    if os.environ.get("SATFLIGHT_FONTS") != "bundled" and pygame.font.match_font(name):
+        return pygame.font.SysFont(name, size, bold=bold)
+    path = FONT_DIR / BUNDLED_FONTS[kind, bold]
+    if path.exists():
+        return pygame.font.Font(str(path), size)
+    return pygame.font.SysFont("dejavusansmono,menlo,couriernew" if kind == "mono"
+                               else "dejavusans,helvetica,arial", size, bold=bold)
+
+
 class Fonts:
     """Lazily created fonts plus a cache of rendered text surfaces."""
 
     def __init__(self):
-        scale = S
-        mono = "consolas,dejavusansmono,menlo,couriernew"
-        sans = "segoeui,dejavusans,helvetica,arial"
-        self.small = pygame.font.SysFont(mono, int(13 * scale))
-        self.mono = pygame.font.SysFont(mono, int(14 * scale))
-        self.ui = pygame.font.SysFont(sans, int(15 * scale))
-        self.bold = pygame.font.SysFont(sans, int(15 * scale), bold=True)
-        self.title = pygame.font.SysFont(sans, int(19 * scale), bold=True)
-        self.big = pygame.font.SysFont(sans, int(30 * scale), bold=True)
+        self.small = load_font("mono", px(13))
+        self.mono = load_font("mono", px(14))
+        self.ui = load_font("sans", px(15))
+        self.bold = load_font("sans", px(15), bold=True)
+        self.title = load_font("sans", px(19), bold=True)
+        self.big = load_font("sans", px(30), bold=True)
         self._cache: dict = {}
 
     def render(self, text: str, color=TEXT, font=None) -> pygame.Surface:

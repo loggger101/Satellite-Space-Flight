@@ -8,11 +8,11 @@ import numpy as np
 import pygame
 
 from ..analysis import beta_angle, classify, j2_secular_rates
-from ..constants import OMEGA_EARTH, R_EARTH
+from ..constants import R_EARTH
 from ..eclipse import shadow_state
 from ..elements import rv2coe
 from ..ephemeris import sun_position
-from ..frames import ecef_to_geodetic, eci_to_ecef
+from ..frames import OMEGA_VEC, ecef_to_geodetic, eci_to_ecef
 from ..simulation import ACTIVE
 from ..timeutil import format_duration, format_period
 from . import theme
@@ -24,10 +24,11 @@ LEFT_W = 262
 RIGHT_W = 340
 TOP_H = 38
 LOG_H = 132
-GAP = 8
+GAP = 8          # px between panels and window edges
 
 
 def fmt(x, unit="", prec=3):
+    """``x`` with thousands separators, ``prec`` decimals and ``unit``; '-' if missing."""
     if x is None or (isinstance(x, float) and not math.isfinite(x)):
         return "-"
     return f"{x:,.{prec}f}{(' ' + unit) if unit else ''}"
@@ -36,6 +37,8 @@ def fmt(x, unit="", prec=3):
 # --- Top bar -------------------------------------------------------------------------------
 
 class TopBar:
+    """Title, clock, warp and run statistics, with the view-toggle buttons on the right."""
+
     def __init__(self, app):
         self.app = app
         a = app
@@ -52,6 +55,7 @@ class TopBar:
         ]
 
     def layout(self, w):
+        """Right-align the buttons in a window ``w`` px wide."""
         x = w - GAP
         for b in reversed(self.buttons):
             bw = 64 if b.text not in ("<<", ">>", "1x") else 38
@@ -66,19 +70,19 @@ class TopBar:
         app, sim, fonts = self.app, self.app.sim, self.app.fonts
         w = surf.get_width()
         self.layout(w)
-        self.buttons[0].text = "Pause" if not app.paused else "Play"
+        self.buttons[0].text = "Pause" if not app.paused else "Play"   # labels show the state
         self.buttons[4].text = app.opts.frame
         theme.panel(surf, pygame.Rect(0, 0, w, TOP_H), (8, 12, 22, 235), None, 0)
         pygame.draw.line(surf, theme.PANEL_EDGE, (0, TOP_H), (w, TOP_H))
-        x = 12
-        x = fonts.draw(surf, "SATELLITE SPACE FLIGHT", (x, TOP_H // 2), theme.ACCENT, fonts.bold, "midleft").right + 18
+        x = fonts.draw(surf, "SATELLITE SPACE FLIGHT", (12, TOP_H // 2), theme.ACCENT, fonts.bold,
+                       "midleft").right + 18
         dt = sim.datetime()
         parts = [
             (dt.strftime("%Y-%m-%d %H:%M:%S UTC"), theme.TEXT),
             (f"T+{format_duration(sim.t)}", theme.DIM),
-            (("PAUSED" if app.paused else f"x{app.warp:g}"), theme.WARN if app.paused else theme.GOOD),
-            (f"{sim.propagator}" + (f"/{sim.integrator.method} h={sim.integrator.stats.last_h:.1f}s"
-                                    if sim.propagator == "cowell" else ""), theme.DIM),
+            ("PAUSED", theme.WARN) if app.paused else (f"x{app.warp:g}", theme.GOOD),
+            (sim.propagator + (f"/{sim.integrator.method} h={sim.integrator.stats.last_h:.1f}s"
+                               if sim.propagator == "cowell" else ""), theme.DIM),
             (sim.forces.label(), theme.DIM),
             (f"{int(sim.active.sum())}/{sim.n} sats", theme.DIM),
             (f"{app.clock.get_fps():.0f} fps", theme.FAINT),
@@ -95,6 +99,8 @@ class TopBar:
 # --- Left: satellite list -------------------------------------------------------------------------
 
 class SatList:
+    """Left panel: scenario name, action buttons and the scrollable satellite list."""
+
     ROW = 21
 
     def __init__(self, app):
@@ -116,11 +122,13 @@ class SatList:
         self.list_rect = pygame.Rect(0, 0, 0, 0)
 
     def layout(self, h):
+        """Place the panel, the two-column button grid and the list for window height ``h``."""
         self.rect = pygame.Rect(GAP, TOP_H + GAP, LEFT_W, h - TOP_H - 2 * GAP)
         bw = (LEFT_W - 3 * 8) // 2
         for k, b in enumerate(self.buttons):
             col, row = k % 2, k // 2
-            b.rect = pygame.Rect(self.rect.x + 8 + col * (bw + 8), self.rect.y + 34 + row * 34, bw, 28)
+            b.rect = pygame.Rect(self.rect.x + 8 + col * (bw + 8), self.rect.y + 34 + row * 34,
+                                 bw, 28)
         top = self.rect.y + 34 + (len(self.buttons) + 1) // 2 * 34 + 8
         self.list_rect = pygame.Rect(self.rect.x + 6, top, LEFT_W - 12, self.rect.bottom - top - 8)
 
@@ -130,7 +138,8 @@ class SatList:
         if ev.type == pygame.MOUSEWHEEL and self.list_rect.collidepoint(pygame.mouse.get_pos()):
             self.scroll = max(0, self.scroll - ev.y * 3)
             return True
-        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and self.list_rect.collidepoint(ev.pos):
+        if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
+                and self.list_rect.collidepoint(ev.pos)):
             k = (ev.pos[1] - self.list_rect.y) // self.ROW + self.scroll
             if 0 <= k < self.app.sim.n:
                 self.app.select(k)
@@ -138,6 +147,7 @@ class SatList:
         return self.rect.collidepoint(getattr(ev, "pos", (-1, -1)))
 
     def ensure_visible(self, i):
+        """Scroll so that row ``i`` is in view."""
         rows = max(1, self.list_rect.h // self.ROW)
         if i < self.scroll:
             self.scroll = i
@@ -170,8 +180,8 @@ class SatList:
                 pygame.draw.rect(surf, theme.ACCENT_DARK, row, border_radius=4)
             pygame.draw.circle(surf, s.color if s.status == ACTIVE else (100, 100, 100),
                                (row.x + 10, row.centery), 5)
-            fonts.draw(surf, s.name[:20], (row.x + 22, row.centery), theme.TEXT if s.status == ACTIVE else theme.FAINT,
-                       fonts.ui, "midleft")
+            fonts.draw(surf, s.name[:20], (row.x + 22, row.centery),
+                       theme.TEXT if s.status == ACTIVE else theme.FAINT, fonts.ui, "midleft")
             asc = sim.ascent_of(k) if sim.ascents else None
             if asc is not None and asc.phase == "pad":
                 txt, col = f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN
@@ -187,15 +197,15 @@ class SatList:
             fonts.draw(surf, txt, (row.right - 6, row.centery), col, fonts.small, "midright")
         surf.set_clip(clip)
         if sim.n > rows:
-            frac = rows / sim.n
-            bar_h = max(20, int(lr.h * frac))
-            y = lr.y + int((lr.h - bar_h) * self.scroll / max(1, sim.n - rows))
-            pygame.draw.rect(surf, theme.PANEL_EDGE, (lr.right - 3, y, 3, bar_h), border_radius=2)
+            theme.scrollbar(surf, lr.right - 3, lr, self.scroll, rows, sim.n, 20)
 
 
 # --- Right: telemetry --------------------------------------------------------------------------
 
 class InfoPanel:
+    """Right panel for the selected satellite: the Orbit tab (or the ascent while a
+    rocket flies) and the Telemetry tab."""
+
     TABS = ("Orbit", "Telemetry")
 
     def __init__(self, app):
@@ -208,6 +218,7 @@ class InfoPanel:
         self.body = pygame.Rect(0, 0, 0, 0)
 
     def layout(self, w, h):
+        """Place the panel, its tab buttons and the scrollable body."""
         self.rect = pygame.Rect(w - RIGHT_W - GAP, TOP_H + GAP, RIGHT_W, h - TOP_H - 2 * GAP)
         x, y = self.rect.x + 12, self.rect.y + 36
         self.tab_rects = []
@@ -215,9 +226,10 @@ class InfoPanel:
             tw = self.app.fonts.small.size(name)[0] + 22
             self.tab_rects.append(pygame.Rect(x, y, tw, 22))
             x += tw + 4
-        self.body = pygame.Rect(self.rect.x + 4, y + 28, RIGHT_W - 8, self.rect.bottom - y - 28 - 30)
+        self.body = pygame.Rect(self.rect.x + 4, y + 28, RIGHT_W - 8, self.rect.bottom - y - 58)
 
     def cycle_tab(self):
+        """Switch to the next tab (key Q)."""
         self.tab = (self.tab + 1) % len(self.TABS)
 
     def handle(self, ev):
@@ -232,6 +244,7 @@ class InfoPanel:
         return True
 
     def report(self, i):
+        """Telemetry tab content for satellite ``i``: [(section title, [(label, value)])]."""
         sim = self.app.sim
         s = sim.sats[i]
         r, v = sim.y[i, :3], sim.y[i, 3:]
@@ -240,18 +253,17 @@ class InfoPanel:
         r_ecef = eci_to_ecef(r, theta)
         lat, lon, alt = (float(x) for x in ecef_to_geodetic(r_ecef))
         rm, vm = float(np.linalg.norm(r)), float(np.linalg.norm(v))
-        v_ground = float(np.linalg.norm(v - np.cross([0, 0, OMEGA_EARTH], r)))
+        v_ground = float(np.linalg.norm(v - np.cross(OMEGA_VEC, r)))
         fpa = math.degrees(math.asin(np.clip(np.dot(r, v) / (rm * vm), -1, 1)))
         D = math.degrees
-        sections = []
-        sections.append(("STATE", [
+        sections = [("STATE", [
             ("Altitude", fmt(alt, "km", 2)),
             ("Latitude / Longitude", f"{D(lat):+.3f} / {D(lon):+.3f} deg"),
             ("Radius", fmt(rm, "km", 1)),
             ("Speed (inertial)", fmt(vm, "km/s", 4)),
             ("Speed (ground-rel.)", fmt(v_ground, "km/s", 4)),
             ("Flight-path angle", fmt(fpa, "deg", 3)),
-        ]))
+        ])]
         orbit = [
             ("Semi-major axis a", fmt(el.a, "km", 2)),
             ("Eccentricity e", f"{el.e:.6f}"),
@@ -268,7 +280,8 @@ class InfoPanel:
                 ("Revs per day", f"{86400 / el.period:.4f}"),
             ]
             rd, wd, _ = j2_secular_rates(el.a, el.e, el.i)
-            orbit.append(("J2 dRAAN / dargp", f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"))
+            orbit.append(("J2 dRAAN / dargp",
+                          f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"))
         else:
             orbit += [("Perigee alt", fmt(el.rp - R_EARTH, "km", 1)),
                       ("Hyperbolic excess v", fmt(math.sqrt(max(0, 2 * el.energy)), "km/s", 4))]
@@ -304,10 +317,10 @@ class InfoPanel:
             if b.man.sat == s.name:
                 craft.append(("  BURNING", f"{b.man.thrust:.0f} N, {b.t1 - sim.t:.0f} s left"))
         sections.append(("SPACECRAFT", craft))
-        vis = sim.station_visibility(i)
         if sim.stations:
-            sections.append(("GROUND CONTACT", [(st.name[:16], f"az {az:5.1f} el {el_:4.1f} {rng:,.0f} km")
-                                                for st, az, el_, rng in vis] or [("(none in view)", "")]))
+            contact = [(st.name[:16], f"az {az:5.1f} el {el_:4.1f} {rng:,.0f} km")
+                       for st, az, el_, rng in sim.station_visibility(i)]
+            sections.append(("GROUND CONTACT", contact or [("(none in view)", "")]))
         return sections
 
     def draw(self, surf):
@@ -326,15 +339,16 @@ class InfoPanel:
         pygame.draw.circle(surf, s.color, (x + 6, y + 11), 6)
         fonts.draw(surf, s.name, (x + 20, y), theme.TEXT, fonts.title)
         status_col = theme.GOOD if s.status == ACTIVE else theme.BAD
-        fonts.draw(surf, s.status.upper(), (self.rect.right - 12, y + 4), status_col, fonts.small, "topright")
-        for k, (name, r) in enumerate(zip(self.TABS, self.tab_rects)):
+        fonts.draw(surf, s.status.upper(), (self.rect.right - 12, y + 4), status_col, fonts.small,
+                   "topright")
+        for k, (name, r) in enumerate(zip(self.TABS, self.tab_rects, strict=True)):
             on = k == self.tab
             pygame.draw.rect(surf, theme.ACCENT_DARK if on else theme.FIELD, r, border_radius=5)
             if on:
                 pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=5)
             fonts.draw(surf, name, r.center, theme.TEXT if on else theme.DIM, fonts.small, "center")
-        fonts.draw(surf, "Q", (self.rect.right - 12, self.tab_rects[0].centery), theme.FAINT, fonts.small,
-                   "midright")
+        fonts.draw(surf, "Q", (self.rect.right - 12, self.tab_rects[0].centery), theme.FAINT,
+                   fonts.small, "midright")
         body = self.body
         top = self.scroll[self.tab] = max(0, min(self.scroll[self.tab], self.content_h - body.h))
         clip = surf.get_clip()
@@ -352,19 +366,18 @@ class InfoPanel:
                 y += 18
                 for label, value in rows:
                     fonts.draw(surf, label, (x + 4, y), theme.DIM, fonts.small)
-                    fonts.draw(surf, value, (self.rect.right - 12, y), theme.TEXT, fonts.small, "topright")
+                    fonts.draw(surf, value, (self.rect.right - 12, y), theme.TEXT, fonts.small,
+                               "topright")
                     y += 16
                 y += 6
         self.content_h = y - y0
         surf.set_clip(clip)
         if self.content_h > body.h:
-            frac = body.h / self.content_h
-            bar_h = max(24, int(body.h * frac))
-            yb = body.y + int((body.h - bar_h) * top / max(1, self.content_h - body.h))
-            pygame.draw.rect(surf, theme.PANEL_EDGE, (self.rect.right - 5, yb, 3, bar_h), border_radius=2)
+            theme.scrollbar(surf, self.rect.right - 5, body, top, body.h, self.content_h, 24)
         self._closest(surf, x, self.rect.bottom - 22)
 
     def _closest(self, surf, x, y):
+        """Footer line naming the closest pair of satellites."""
         sim, fonts = self.app.sim, self.app.fonts
         d, a, b = sim.closest
         if a >= 0 and math.isfinite(d):
@@ -379,13 +392,14 @@ class InfoPanel:
 # --- Bottom: event log ----------------------------------------------------------------------------
 
 class EventLog:
+    """Bottom panel: the latest simulation events, newest at the bottom."""
+
     def __init__(self, app):
         self.app = app
         self.rect = pygame.Rect(0, 0, 0, 0)
 
     def layout(self, w, h):
-        x0 = GAP * 2 + LEFT_W if self.app.opts.panels else GAP
-        x1 = w - RIGHT_W - 2 * GAP if self.app.opts.panels else w - GAP
+        x0, x1, _ = self.app.center_span()
         self.rect = pygame.Rect(x0, h - LOG_H - GAP, x1 - x0, LOG_H)
 
     def draw(self, surf):
@@ -396,7 +410,8 @@ class EventLog:
         y = self.rect.bottom - 20
         for ev in reversed(sim.events[-7:]):
             col = theme.EVENT_COLORS.get(ev.kind, theme.DIM)
-            fonts.draw(surf, f"T+{format_duration(ev.t):>13}", (self.rect.x + 10, y), theme.FAINT, fonts.small)
+            fonts.draw(surf, f"T+{format_duration(ev.t):>13}", (self.rect.x + 10, y), theme.FAINT,
+                       fonts.small)
             fonts.draw(surf, ev.text[:110], (self.rect.x + 130, y), col, fonts.small)
             y -= 16
             if y < self.rect.y + 22:
@@ -434,6 +449,7 @@ HELP = [
 
 
 def draw_help(surf, app):
+    """The controls overlay (key H)."""
     fonts = app.fonts
     w, h = surf.get_size()
     rect = pygame.Rect(0, 0, 520, 34 + 20 * len(HELP) + 20)

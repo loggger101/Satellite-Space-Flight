@@ -1,6 +1,6 @@
 """Launch the interactive simulator.
 
-    python -m satflight                                  # start screen, then pick a scenario
+    python -m satflight                                  # start menu, then pick a scenario
     python -m satflight scenarios/walker_constellation.json
     python -m satflight --headless --frames 120 --screenshot out.png   # render offscreen
 """
@@ -73,7 +73,7 @@ def main(argv=None):
     ap.add_argument("--fullscreen", action="store_true",
                     help="start fullscreen (F11 or Alt+Enter switches back to a window)")
     ap.add_argument("--welcome", action=argparse.BooleanOptionalAction,
-                    help="show the start screen (default: only when no scenario is given "
+                    help="open on the start menu (default: only when no scenario is given "
                          "and not --headless)")
     ap.add_argument("--headless", action="store_true", help="render without a window (SDL dummy)")
     ap.add_argument("--frames", type=int, help="quit after this many frames")

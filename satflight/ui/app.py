@@ -15,7 +15,7 @@ from ..constants import R_EARTH
 from ..orbitinfo import orbit_info
 from ..scenario import Scenario
 from ..simulation import ACTIVE, Simulation
-from . import dialogs, launchui, theme
+from . import dialogs, launchui, theme, welcome
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .orbitviz import MODES as GEOMETRY_MODES
@@ -66,9 +66,11 @@ WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
 class App:
     """The window: owns the simulation, camera, panels and dialogs, and runs the
     event / update / draw loop. ``root`` is the repository folder holding
-    ``scenarios/`` and ``assets/``."""
+    ``scenarios/`` and ``assets/``. ``welcome`` opens the start screen over the
+    scenario."""
 
-    def __init__(self, scenario=None, size=(1600, 900), root: Path = ROOT):
+    def __init__(self, scenario=None, size=(1600, 900), root: Path = ROOT,
+                 welcome: bool = False):
         pygame.init()
         self.root = Path(root)
         self.scenario_dir = self.root / "scenarios"
@@ -102,6 +104,9 @@ class App:
         self._info_key = None
         self._info = None
         self.load_scenario(scenario if scenario is not None else self.scenario_dir / "default.json")
+        if welcome:
+            self.open("start")
+            self.toasts.clear()                 # "Loaded ..." would sit on top of it
 
     # --- scenario management -----------------------------------------------------------
     def scenario_files(self):
@@ -229,11 +234,13 @@ class App:
         factory = {"add": dialogs.add_satellite_dialog, "walker": dialogs.walker_dialog,
                    "maneuver": dialogs.maneuver_dialog, "station": dialogs.station_dialog,
                    "physics": dialogs.physics_dialog, "scenario": dialogs.scenario_dialog,
-                   "edit": dialogs.edit_satellite_dialog, "launch": launchui.launch_dialog}[name]
+                   "edit": dialogs.edit_satellite_dialog, "launch": launchui.launch_dialog,
+                   "start": welcome.StartScreen}[name]
         dlg = factory(self)
         if dlg is not None:
             self.dialogs.append(dlg)
-            pygame.key.start_text_input()
+            if name != "start":                 # the start screen has no text fields
+                pygame.key.start_text_input()
 
     def close_dialog(self, dlg):
         """Remove ``dlg`` from the dialog stack (dialogs call this themselves)."""
@@ -316,6 +323,7 @@ class App:
         k, ctrl, shift = ev.key, ev.mod & pygame.KMOD_CTRL, ev.mod & pygame.KMOD_SHIFT
         if ctrl:
             actions = {pygame.K_o: lambda: self.open("scenario"), pygame.K_s: self.quick_save,
+                       pygame.K_n: lambda: self.open("start"),
                        pygame.K_e: lambda: self.open("edit"), pygame.K_r: self.reset,
                        pygame.K_q: lambda: setattr(self, "running", False)}
             if k in actions:

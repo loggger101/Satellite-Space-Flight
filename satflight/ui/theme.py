@@ -39,6 +39,7 @@ class Fonts:
         self.ui = pygame.font.SysFont(sans, int(15 * scale))
         self.bold = pygame.font.SysFont(sans, int(15 * scale), bold=True)
         self.title = pygame.font.SysFont(sans, int(19 * scale), bold=True)
+        self.big = pygame.font.SysFont(sans, int(30 * scale), bold=True)
         self._cache: dict = {}
 
     def render(self, text: str, color=TEXT, font=None) -> pygame.Surface:

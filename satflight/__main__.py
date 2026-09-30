@@ -1,6 +1,6 @@
 """Launch the interactive simulator.
 
-    python -m satflight                                  # default scenario
+    python -m satflight                                  # start screen, then pick a scenario
     python -m satflight scenarios/walker_constellation.json
     python -m satflight --headless --frames 120 --screenshot out.png   # render offscreen
 """
@@ -18,6 +18,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="satflight", description="Satellite Space Flight simulator")
     ap.add_argument("scenario", nargs="?", help="scenario JSON (default: scenarios/default.json)")
     ap.add_argument("--size", default="1600x900", help="window size WxH")
+    ap.add_argument("--welcome", action=argparse.BooleanOptionalAction,
+                    help="show the start screen (default: only when no scenario is given "
+                         "and not --headless)")
     ap.add_argument("--headless", action="store_true", help="render without a window (SDL dummy)")
     ap.add_argument("--frames", type=int, help="quit after this many frames")
     ap.add_argument("--screenshot", help="save the last frame to this PNG")
@@ -43,7 +46,10 @@ def main(argv=None):
     from .ui.app import App
 
     w, h = (int(x) for x in args.size.lower().split("x"))
-    app = App(Path(args.scenario) if args.scenario else None, size=(w, h))
+    welcome = args.welcome
+    if welcome is None:
+        welcome = not (args.scenario or args.headless)
+    app = App(Path(args.scenario) if args.scenario else None, size=(w, h), welcome=welcome)
     if args.warp:
         app.warp = args.warp
     adv = parse_duration(args.advance)

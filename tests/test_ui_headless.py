@@ -14,7 +14,7 @@ import pytest
 
 from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
-from satflight.ui import theme
+from satflight.ui import glossary, theme, tips
 from satflight.ui.app import App
 from satflight.ui.panels import HELP, draw_help
 from satflight.ui.theme import px
@@ -565,6 +565,17 @@ def hover(app, pos):
     app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
 
 
+def rest(app, pos):
+    """Move the mouse to ``pos`` and let it rest there; returns the tip shown
+    (rect, text, key) and the tip box's rect."""
+    hover(app, pos)
+    frame(app, dt=0.0)
+    assert app.tip_rect is None                               # only after a short rest
+    tips._rest = (tips._rest[0], tips._rest[1] - 1.0)
+    frame(app, dt=0.0)
+    return tips.at(pos), app.tip_rect
+
+
 def test_every_button_explains_itself_in_a_tooltip_inside_the_window(scaled_app):
     app = scaled_app
     for size in ((1400, 850), (900, 600)):
@@ -572,13 +583,182 @@ def test_every_button_explains_itself_in_a_tooltip_inside_the_window(scaled_app)
         frame(app)
         for b in app._buttons():
             assert b.hint and b.tooltip, b.text
-            hover(app, b.rect.center)
-            assert app._tooltip(app.screen) is None           # only after a short rest
-            app._hover = (b, app._hover[1] - 1.0)
-            box = app._tooltip(app.screen)
+            tip, box = rest(app, b.rect.center)
+            assert tip[1] == b.hint and tip[2] == b.tooltip, b.text
             assert box is not None and app.screen.get_rect().contains(box), b.text
     app.open("walker")
     assert not any(b.hover for b in app._buttons())           # none left over afterwards
+    frame(app)
+    for b in app.dialogs[-1].buttons:
+        assert b.hint, b.text
+
+
+def tip_states(app):
+    """Draw the app in turn with every panel, tab, overlay and dialog showing."""
+    app.load_scenario(app.scenario_dir / "launch_day.json")
+    app.sim.advance(600)
+    app.opts.map = app.opts.plot = True
+    for tab in (0, 1):
+        app.info.tab = tab
+        for sel in range(app.sim.n):
+            app.select(sel)
+            frame(app, dt=0.0)
+            yield f"tab {tab}, satellite {sel}"
+    app.info.tab = 0
+    app.load_scenario(app.scenario_dir / "default.json")
+    for sel in range(app.sim.n):
+        app.select(sel)
+        frame(app, dt=0.0)
+        yield f"orbit tab, {app.sim.sats[sel].name}"
+    for name in ("add", "launch", "walker", "maneuver", "station", "physics", "scenario",
+                 "edit", "start"):
+        app.open(name)
+        frame(app, dt=0.0)
+        yield name
+        if name == "launch":
+            next(b for b in app.dialogs[-1].buttons if b.text == "Vehicle...").callback()
+            frame(app, dt=0.0)
+            yield "vehicle"
+        app.dialogs.clear()
+
+
+def test_every_part_of_the_window_has_a_tip_that_fits(scaled_app):
+    """Points all over every panel and tab have a tip, as do every row and button
+    of every dialog; every tip's box stays inside the window."""
+    app = scaled_app
+    w, h = app.screen.get_size()
+    screen = app.screen.get_rect()
+    step = px(24)
+    for state in tip_states(app):
+        regions = tips.regions()
+        assert regions, state
+        dlg = app.dialogs[-1] if app.dialogs else None
+        if dlg is None:
+            for area in (app.satlist.rect, app.info.rect, app.log.rect, app._map_rect(),
+                         app._plot_rect(), pygame.Rect(0, 0, w, px(38))):
+                pts = [(x, y) for x in range(area.x + px(6), area.right - px(6), step)
+                       for y in range(area.y + px(6), area.bottom - px(6), step)]
+                covered = sum(tips.at(p) is not None for p in pts)
+                # only the gaps between the top bar's readouts may go without a tip
+                assert covered >= 0.7 * len(pts), (state, area, covered, len(pts))
+        elif hasattr(dlg, "_rows"):
+            raw = dlg.raw()
+            for s, r in dlg._rows:
+                tip = tips.at((r.right - px(2), r.centery))
+                assert tip is not None and s.tip in tip[1], (state, s.key)
+                if s.kind != "info":
+                    assert tips.at((dlg.rect.x + px(22), r.centery))[1] == dlg.field_tip(s, raw)
+        else:                                               # the start screen
+            for r in dlg.card_rects:
+                assert "Click" in tips.at(r.center)[1]
+        for b in getattr(dlg, "buttons", []):
+            assert tips.at(b.rect.center) is not None, (state, b.text)
+        for rect, text, key in regions:
+            if text or key:
+                box = tips.draw_tip(app.screen, app.fonts, rect, text, key, rect.center)
+                assert screen.contains(box), (state, text)
+                for line in tips.wrap(text, app.fonts.ui, px(tips.MAX_W)):
+                    assert app.fonts.ui.size(line)[0] <= px(tips.MAX_W) or " " not in line, \
+                        (state, line)
+
+
+def test_every_property_row_and_form_field_is_explained(app):
+    """The right panel's rows (both tabs, every bundled orbit) and every dialog
+    field have their own explanation."""
+    from satflight.ui.orbitpanel import property_sections
+    missing = set()
+    for path in sorted(app.scenario_dir.glob("*.json")):
+        app.load_scenario(path)
+        app.sim.advance(900)
+        for i in range(app.sim.n):
+            app.select(i)
+            rows = [r for title, rs in app.info.report(i) if title != "GROUND CONTACT"
+                    for r in rs]
+            info = app.orbit_info()
+            if info is not None:
+                rows += [r for _, rs in property_sections(info, 0.0) for r in rs]
+            missing |= {label for label, _ in rows if not glossary.row(label)}
+            titles = [t for t, _ in app.info.report(i)]
+            assert all(glossary.section(t) for t in titles), titles
+    assert not missing, missing
+    app.load_scenario(app.scenario_dir / "default.json")
+    for name in ("add", "launch", "walker", "maneuver", "station", "physics", "scenario",
+                 "edit"):
+        app.open(name)
+        dlg = app.dialogs[-1]
+        assert all(s.tip for s in dlg.specs), [s.key for s in dlg.specs if not s.tip]
+        for s in dlg.specs:                           # every option of a choice says what it is
+            if s.option_tips:
+                assert set(s.option_tips) == set(s.options), s.key
+        app.dialogs.clear()
+
+
+def test_tips_follow_what_is_on_top(app):
+    frame(app)
+    # a list row names its satellite; the 3-D view names the satellite under the mouse
+    row = pygame.Rect(app.satlist.list_rect.x, app.satlist.list_rect.y, 50, px(20))
+    tip, box = rest(app, row.center)
+    assert app.sim.sats[0].name in tip[1] and box is not None
+    sx, sy, vis = app.renderer.sat_screen
+    k = next(k for k in range(app.sim.n)
+             if vis[k] and app.view_rect().collidepoint(sx[k], sy[k])
+             and app.renderer.legend_rect is not None
+             and not app.renderer.legend_rect.collidepoint(sx[k], sy[k]))
+    tip, _ = rest(app, (int(sx[k]), int(sy[k])))
+    assert tip is not None and tip[1].startswith(app.sim.sats[k].name), tip
+    # the Earth says where the mouse points on it
+    cx, cy, _ = app.camera.project(np.zeros((1, 3)))
+    r = app.camera.screen_radius(np.zeros(3), R_EARTH)
+    spots = [(int(cx[0] + r * a), int(cy[0] + r * b)) for a in (-0.5, 0.0, 0.5)
+             for b in (-0.5, 0.0, 0.5)]
+    earth = []
+    for p in spots:                     # the Earth's tip is made for where the mouse is
+        hover(app, p)
+        frame(app, dt=0.0)
+        earth.append(tips.at(p))
+    assert any(t is not None and "The Earth here" in t[1] for t in earth), earth
+    hover(app, (int(cx[0]), int(cy[0]) - int(0.3 * r)))
+    frame(app, dt=0.0)
+    lat, lon = app.renderer.ground_at(app.camera, app.mouse)
+    assert -90 <= lat <= 90 and -180 <= lon <= 180
+    assert app.renderer.ground_at(app.camera, (2, app.screen.get_height() - 2)) is None
+    # a known point of the globe (lat 20 N, lon 35 E) reads back where it is drawn
+    la, lo = np.radians(20.0), np.radians(35.0)
+    ecef = R_EARTH * np.array([np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)])
+    world = app.renderer.world_to_ecef.T @ ecef
+    app.camera.target, app.camera.distance = np.zeros(3), 4 * R_EARTH
+    app.camera.yaw, app.camera.pitch = 0.0, 0.0
+    app.camera.update()
+    for yaw in np.linspace(0, 2 * np.pi, 13):
+        app.camera.yaw = yaw
+        app.camera.update()
+        if not app.camera.hidden_by_sphere(world * 1.0001):
+            break
+    px_, py_, _ = app.camera.project(world[None, :])
+    lat, lon = app.renderer.ground_at(app.camera, (px_[0], py_[0]))
+    assert abs(lat - 20.0) < 0.5 and abs(lon - 35.0) < 0.5, (lat, lon)
+    # a dialog hides every tip beneath it: nothing from the top bar shows through
+    button = app.topbar.buttons[0].rect.center
+    app.open("walker")
+    frame(app)
+    assert tips.at(button) is None or tips.at(button)[1] != app.topbar.buttons[0].hint
+    dlg = app.dialogs[-1]
+    field = dlg.widgets["planes"].rect
+    tip, box = rest(app, field.center)
+    assert "planes" in tip[1] and box is not None
+    # a click hides the tip until the mouse moves again
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=field.center))
+    frame(app)
+    assert app.tip_rect is None
+
+
+def test_a_tip_line_is_never_wider_than_the_limit(app):
+    text = ("A long explanation that goes on and on to check that the tip wraps its "
+            "words onto several lines rather than running off the window. " * 3)
+    lines = tips.wrap(text, app.fonts.ui, px(tips.MAX_W))
+    assert len(lines) > 2
+    assert all(app.fonts.ui.size(line)[0] <= px(tips.MAX_W) for line in lines)
+    assert tips.wrap("one\ntwo", app.fonts.ui, 500) == ["one", "two"]
 
 
 def test_scene_labels_never_overlap(scaled_app):

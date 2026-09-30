@@ -41,6 +41,23 @@ from .widgets import FormDialog
 MODES = ["Circular altitude", "Perigee / apogee", "Elements (a, e)", "Surface launch",
          "State vector (ECI)", "Geostationary slot", "TLE"]
 _ELEM_MODES = MODES[:3]
+MODE_TIPS = {
+    "Circular altitude": "A circular orbit at one height.",
+    "Perigee / apogee": "An ellipse given by the heights of its lowest and highest points.",
+    "Elements (a, e)": "An ellipse given by its semi-major axis and eccentricity.",
+    "Surface launch": "Start at a point on (or above) the ground with a speed and heading, "
+                      "and see where it goes: a hop, an orbit or an escape.",
+    "State vector (ECI)": "Position and velocity in the Earth-centred inertial frame.",
+    "Geostationary slot": "A geostationary orbit parked over one longitude.",
+    "TLE": "Paste a NORAD two-line element set (e.g. from celestrak.org).",
+}
+INC_TIP = ("Tilt of the orbit against the equator in degrees: 0 equatorial, 90 polar, above "
+           "90 retrograde. Type 'sso' for the Sun-synchronous inclination of this orbit.")
+RAAN_TIP = ("Right ascension of the ascending node: where, measured east from the vernal "
+            "equinox, the orbit crosses the equator going north.")
+MASS_TIP = "Spacecraft mass; with the area and Cd it sets how strongly air drag slows it."
+AREA_TIP = "Cross-section facing the airflow, for air drag."
+CD_TIP = "Drag coefficient: about 2.2 for a typical satellite."
 
 
 def _mode(*names):
@@ -74,40 +91,75 @@ def _orbit_from(v: dict) -> dict:
 def add_satellite_dialog(app):
     """Add one satellite (or copies along its orbit) from any initial condition (key A)."""
     sim = app.sim
+    sv = _mode("State vector (ECI)")
+    sv_r = "Position component in the Earth-centred inertial frame (x towards the vernal " \
+           "equinox, z towards the north pole)."
+    sv_v = "Velocity component in the Earth-centred inertial frame."
     specs = [
-        F("name", "Name", "text", f"Sat {sim.n + 1}"),
-        F("preset", "Preset", "choice", "Custom", ["Custom"] + list(PRESETS)),
-        F("mode", "Initial condition", "choice", MODES[0], MODES),
-        F("alt", "Altitude (km)", "float", "550", visible=_mode("Circular altitude")),
-        F("hp", "Perigee altitude (km)", "float", "300", visible=_mode("Perigee / apogee")),
-        F("ha", "Apogee altitude (km)", "float", "2000", visible=_mode("Perigee / apogee")),
-        F("a", "Semi-major axis a (km)", "float", "8000", visible=_mode("Elements (a, e)")),
-        F("e", "Eccentricity e", "float", "0.1", visible=_mode("Elements (a, e)")),
-        F("i", "Inclination (deg or 'sso')", "floatx", "51.6", visible=_mode(*_ELEM_MODES)),
-        F("raan", "RAAN (deg)", "float", "0", visible=_mode(*_ELEM_MODES)),
+        F("name", "Name", "text", f"Sat {sim.n + 1}",
+          tip="Name shown in the list and the view. Copies get -1, -2, ... added."),
+        F("preset", "Preset", "choice", "Custom", ["Custom"] + list(PRESETS),
+          tip="Fill the form with a well-known orbit (ISS, GPS, Molniya, ...). You can "
+              "still change any field afterwards."),
+        F("mode", "Initial condition", "choice", MODES[0], MODES,
+          tip="How you describe where the satellite starts. The fields below change to "
+              "match.", option_tips=MODE_TIPS),
+        F("alt", "Altitude (km)", "float", "550", visible=_mode("Circular altitude"),
+          tip="Height of the circular orbit above the surface. The ISS flies at about 420 km, "
+              "geostationary satellites at 35,786 km."),
+        F("hp", "Perigee altitude (km)", "float", "300", visible=_mode("Perigee / apogee"),
+          tip="Height of the orbit's lowest point above the surface."),
+        F("ha", "Apogee altitude (km)", "float", "2000", visible=_mode("Perigee / apogee"),
+          tip="Height of the orbit's highest point above the surface."),
+        F("a", "Semi-major axis a (km)", "float", "8000", visible=_mode("Elements (a, e)"),
+          tip="Half the long axis of the ellipse, from the Earth's centre (the Earth's "
+              "radius is 6,378 km)."),
+        F("e", "Eccentricity e", "float", "0.1", visible=_mode("Elements (a, e)"),
+          tip="0 is a circle; the nearer to 1, the longer and thinner the ellipse."),
+        F("i", "Inclination (deg or 'sso')", "floatx", "51.6", visible=_mode(*_ELEM_MODES),
+          tip=INC_TIP),
+        F("raan", "RAAN (deg)", "float", "0", visible=_mode(*_ELEM_MODES), tip=RAAN_TIP),
         F("argp", "Arg. of perigee (deg)", "float", "0",
-          visible=_mode("Perigee / apogee", "Elements (a, e)")),
-        F("nu", "True anomaly (deg)", "float", "0", visible=_mode(*_ELEM_MODES)),
-        F("lat", "Latitude (deg)", "float", "28.5", visible=_mode("Surface launch")),
-        F("lon", "Longitude (deg E)", "float", "-80.6", visible=_mode("Surface launch")),
-        F("salt", "Altitude (km)", "float", "0", visible=_mode("Surface launch")),
-        F("speed", "Ground-relative speed (km/s)", "float", "7.5", visible=_mode("Surface launch")),
-        F("azimuth", "Azimuth (deg from N)", "float", "90", visible=_mode("Surface launch")),
-        F("fpa", "Flight-path angle (deg)", "float", "0", visible=_mode("Surface launch")),
-        F("x", "x (km)", "float", "7000", visible=_mode("State vector (ECI)")),
-        F("y", "y (km)", "float", "0", visible=_mode("State vector (ECI)")),
-        F("z", "z (km)", "float", "0", visible=_mode("State vector (ECI)")),
-        F("vx", "vx (km/s)", "float", "0", visible=_mode("State vector (ECI)")),
-        F("vy", "vy (km/s)", "float", "7.546", visible=_mode("State vector (ECI)")),
-        F("vz", "vz (km/s)", "float", "0", visible=_mode("State vector (ECI)")),
-        F("geolon", "Slot longitude (deg E)", "float", "-75", visible=_mode("Geostationary slot")),
-        F("line1", "Line 1", "text", "", visible=_mode("TLE"), wide=True),
-        F("line2", "Line 2", "text", "", visible=_mode("TLE"), wide=True),
-        F("count", "Copies along orbit", "int", "1"),
-        F("mass", "Mass (kg)", "float", "500"),
-        F("area", "Area (m^2)", "float", "5"),
-        F("cd", "Drag coefficient Cd", "float", "2.2"),
-        F("preview", "", "info", ""),
+          visible=_mode("Perigee / apogee", "Elements (a, e)"),
+          tip="Where the lowest point lies: the angle from the ascending node to the "
+              "perigee, in the direction of motion."),
+        F("nu", "True anomaly (deg)", "float", "0", visible=_mode(*_ELEM_MODES),
+          tip="Where on the orbit the satellite starts: the angle from the perigee (from the "
+              "ascending node on a circular orbit)."),
+        F("lat", "Latitude (deg)", "float", "28.5", visible=_mode("Surface launch"),
+          tip="Starting latitude, north positive."),
+        F("lon", "Longitude (deg E)", "float", "-80.6", visible=_mode("Surface launch"),
+          tip="Starting longitude, east positive (west is negative)."),
+        F("salt", "Altitude (km)", "float", "0", visible=_mode("Surface launch"),
+          tip="Starting height above the surface."),
+        F("speed", "Ground-relative speed (km/s)", "float", "7.5", visible=_mode("Surface launch"),
+          tip="Speed relative to the turning ground. About 7.8 km/s reaches low orbit, "
+              "about 11 km/s escapes."),
+        F("azimuth", "Azimuth (deg from N)", "float", "90", visible=_mode("Surface launch"),
+          tip="Compass heading: 0 north, 90 east (the Earth's spin helps), 180 south."),
+        F("fpa", "Flight-path angle (deg)", "float", "0", visible=_mode("Surface launch"),
+          tip="Angle above the horizontal: 0 flies level, 90 straight up."),
+        F("x", "x (km)", "float", "7000", visible=sv, tip=sv_r),
+        F("y", "y (km)", "float", "0", visible=sv, tip=sv_r),
+        F("z", "z (km)", "float", "0", visible=sv, tip=sv_r),
+        F("vx", "vx (km/s)", "float", "0", visible=sv, tip=sv_v),
+        F("vy", "vy (km/s)", "float", "7.546", visible=sv, tip=sv_v),
+        F("vz", "vz (km/s)", "float", "0", visible=sv, tip=sv_v),
+        F("geolon", "Slot longitude (deg E)", "float", "-75", visible=_mode("Geostationary slot"),
+          tip="The longitude the satellite hovers over, east positive."),
+        F("line1", "Line 1", "text", "", visible=_mode("TLE"), wide=True,
+          tip="First line of the two-line element set (starts with '1 '). Ctrl+V pastes."),
+        F("line2", "Line 2", "text", "", visible=_mode("TLE"), wide=True,
+          tip="Second line of the two-line element set (starts with '2 '). Ctrl+V pastes."),
+        F("count", "Copies along orbit", "int", "1",
+          tip="Add this many satellites on the same orbit, spaced evenly in time (mean "
+              "anomaly)."),
+        F("mass", "Mass (kg)", "float", "500", tip=MASS_TIP),
+        F("area", "Area (m^2)", "float", "5", tip=AREA_TIP),
+        F("cd", "Drag coefficient Cd", "float", "2.2", tip=CD_TIP),
+        F("preview", "", "info", "",
+          tip="The orbit these values give: semi-major axis, eccentricity, inclination, "
+              "perigee / apogee heights and period."),
     ]
 
     def on_change(dlg, key):
@@ -125,7 +177,8 @@ def add_satellite_dialog(app):
         return None
 
     dlg = FormDialog(app, "Add satellite", specs, on_ok, "Add", width=560, on_change=on_change,
-                     subtitle="Tab moves between fields - click or scroll a choice to change it")
+                     subtitle="Tab moves between fields - click or scroll a choice to change it",
+                     ok_hint="Add the satellite (or copies) and select it")
     _preview(dlg)
     return dlg
 
@@ -190,16 +243,32 @@ def walker_dialog(app):
     """Create a Walker constellation (key W)."""
     sim = app.sim
     specs = [
-        F("name", "Name", "text", "Walker"),
-        F("altitude", "Altitude (km)", "float", "1200"),
-        F("inclination", "Inclination (deg)", "float", "53"),
-        F("total", "Total satellites t", "int", "24"),
-        F("planes", "Planes p", "int", "6"),
-        F("phasing", "Phasing f (0..p-1)", "int", "1"),
-        F("pattern", "Pattern", "choice", "delta", ["delta", "star"]),
-        F("raan0", "First plane RAAN (deg)", "float", "0"),
-        F("mass", "Mass each (kg)", "float", "260"),
-        F("preview", "", "info", ""),
+        F("name", "Name", "text", "Walker",
+          tip="Base name; each satellite gets its plane and slot number added (-0102 is "
+              "plane 1, slot 2)."),
+        F("altitude", "Altitude (km)", "float", "1200",
+          tip="Height of every satellite's circular orbit."),
+        F("inclination", "Inclination (deg)", "float", "53",
+          tip="Tilt of every plane against the equator."),
+        F("total", "Total satellites t", "int", "24",
+          tip="How many satellites in all, shared evenly between the planes."),
+        F("planes", "Planes p", "int", "6",
+          tip="How many orbital planes, spread evenly in RAAN."),
+        F("phasing", "Phasing f (0..p-1)", "int", "1",
+          tip="How far each plane's satellites are shifted along the orbit relative to the "
+              "previous plane, in units of 360 / t degrees. It keeps planes from bunching."),
+        F("pattern", "Pattern", "choice", "delta", ["delta", "star"],
+          tip="How the planes are spread around the Earth.",
+          option_tips={"delta": "Delta: planes spread over the full 360 degrees of RAAN "
+                                "(Galileo, GPS-like).",
+                       "star": "Star: planes spread over 180 degrees, so they meet near the "
+                               "poles (Iridium-like polar orbits)."}),
+        F("raan0", "First plane RAAN (deg)", "float", "0",
+          tip="RAAN of the first plane; the others follow from it."),
+        F("mass", "Mass each (kg)", "float", "260", tip=MASS_TIP),
+        F("preview", "", "info", "",
+          tip="The constellation in Walker notation i:t/p/f, satellites per plane and "
+              "the orbital period."),
     ]
 
     def on_change(dlg, key):
@@ -229,7 +298,8 @@ def walker_dialog(app):
         return None
 
     dlg = FormDialog(app, "Walker constellation", specs, on_ok, "Create", on_change=on_change,
-                     subtitle="i:t/p/f - delta spreads planes over 360 deg, star over 180 deg")
+                     subtitle="i:t/p/f - delta spreads planes over 360 deg, star over 180 deg",
+                     ok_hint="Add every satellite of the constellation")
     on_change(dlg, None)
     return dlg
 
@@ -245,6 +315,39 @@ TIMINGS = {"Now": "now", "After delay": "delay", "Next periapsis": "periapsis",
            "Descending node": "descending_node"}
 DIRECTIONS = {"Prograde": (1, 0, 0), "Retrograde": (-1, 0, 0), "Normal": (0, 1, 0),
               "Anti-normal": (0, -1, 0), "Radial out": (0, 0, 1), "Radial in": (0, 0, -1)}
+KIND_TIPS = {
+    "Impulse (V/N/B components)": "An instant kick of the velocity, given by its three "
+                                  "components.",
+    "Hohmann transfer": "Two burns to a new circular altitude: one to enter a transfer "
+                        "ellipse, one half an orbit later to circularise. The cheapest way "
+                        "between two circular orbits of similar size.",
+    "Bi-elliptic transfer": "Three burns via a high intermediate apoapsis. Cheaper than "
+                            "Hohmann only when the target is more than about 12 times the "
+                            "starting radius.",
+    "Circularize": "One burn that makes the orbit circular at the height where it fires. "
+                   "Best at perigee or apogee.",
+    "Plane change": "Tilt the orbit by a number of degrees. Cheapest at a node, and costly: "
+                    "10 degrees in low orbit takes about 1.3 km/s.",
+    "Rendezvous (Lambert)": "Fly to another satellite: a Lambert arc that meets it after the "
+                            "time of flight, then a burn to match its velocity.",
+    "Finite burn (thrust)": "A real engine firing for a while along a fixed direction, "
+                            "instead of an instant kick.",
+}
+TIMING_TIPS = {
+    "Now": "Burn at once.",
+    "After delay": "Burn after the delay below.",
+    "Next periapsis": "Burn at the orbit's next lowest point.",
+    "Next apoapsis": "Burn at the orbit's next highest point.",
+    "Ascending node": "Burn where the orbit next crosses the equator going north.",
+    "Descending node": "Burn where the orbit next crosses the equator going south.",
+}
+FRAME_TIPS = {
+    "VNB": "VNB: V along the velocity, N along the orbit normal, B = V x N.",
+    "RSW": "RSW: the three numbers are radial (out from the Earth), along-track and "
+           "cross-track (orbit normal).",
+    "ECI": "ECI: the three numbers are x, y, z in the inertial frame.",
+}
+DV_TIP = "Velocity change, in m/s, along this axis of the chosen frame (see Frame)."
 
 
 def _kind(*names):
@@ -264,28 +367,48 @@ def maneuver_dialog(app):
     cur = sim.sats[app.selected].name if 0 <= app.selected < sim.n else names[0]
     other = next((n for n in names if n != cur), cur)
     specs = [
-        F("sat", "Satellite", "choice", cur, names),
-        F("kind", "Manoeuvre", "choice", "Hohmann transfer", list(KINDS)),
-        F("timing", "Execute", "choice", "Now", list(TIMINGS)),
-        F("delay", "Delay (s)", "float", "600", visible=lambda r: r.get("timing") == "After delay"),
-        F("dv_v", "dV prograde V (m/s)", "float", "100", visible=_kind("impulse")),
-        F("dv_n", "dV normal N (m/s)", "float", "0", visible=_kind("impulse")),
-        F("dv_b", "dV binormal B (m/s)", "float", "0", visible=_kind("impulse")),
-        F("frame", "Frame", "choice", "VNB", ["VNB", "RSW", "ECI"], visible=_kind("impulse")),
+        F("sat", "Satellite", "choice", cur, names, tip="The satellite that will burn."),
+        F("kind", "Manoeuvre", "choice", "Hohmann transfer", list(KINDS),
+          tip="What the burn should achieve.", option_tips=KIND_TIPS),
+        F("timing", "Execute", "choice", "Now", list(TIMINGS),
+          tip="When the (first) burn fires.", option_tips=TIMING_TIPS),
+        F("delay", "Delay (s)", "float", "600", visible=lambda r: r.get("timing") == "After delay",
+          tip="Seconds of simulated time until the burn."),
+        F("dv_v", "dV prograde V (m/s)", "float", "100", visible=_kind("impulse"), tip=DV_TIP),
+        F("dv_n", "dV normal N (m/s)", "float", "0", visible=_kind("impulse"), tip=DV_TIP),
+        F("dv_b", "dV binormal B (m/s)", "float", "0", visible=_kind("impulse"), tip=DV_TIP),
+        F("frame", "Frame", "choice", "VNB", ["VNB", "RSW", "ECI"], visible=_kind("impulse"),
+          tip="The axes the three velocity changes are measured along.",
+          option_tips=FRAME_TIPS),
         F("target_alt", "Target altitude (km)", "float", "35786",
-          visible=_kind("hohmann", "bielliptic")),
-        F("rb_alt", "Intermediate apoapsis (km)", "float", "100000", visible=_kind("bielliptic")),
-        F("delta_i", "Inclination change (deg)", "float", "-10", visible=_kind("plane_change")),
-        F("target", "Target satellite", "choice", other, names, visible=_kind("rendezvous")),
-        F("auto_tof", "Cheapest safe time of flight", "bool", True, visible=_kind("rendezvous")),
+          visible=_kind("hohmann", "bielliptic"),
+          tip="Height of the circular orbit to end in (35,786 km is geostationary)."),
+        F("rb_alt", "Intermediate apoapsis (km)", "float", "100000", visible=_kind("bielliptic"),
+          tip="How high the first transfer ellipse reaches before the second burn."),
+        F("delta_i", "Inclination change (deg)", "float", "-10", visible=_kind("plane_change"),
+          tip="Degrees to add to the inclination (negative lowers it)."),
+        F("target", "Target satellite", "choice", other, names, visible=_kind("rendezvous"),
+          tip="The satellite to fly to."),
+        F("auto_tof", "Cheapest safe time of flight", "bool", True, visible=_kind("rendezvous"),
+          tip="Search transfer times for the one needing the least delta-v whose path stays "
+              "clear of the atmosphere. Untick to type your own."),
         F("tof", "Time of flight (min)", "float", "45",
-          visible=lambda r: KINDS.get(r.get("kind")) == "rendezvous" and not r.get("auto_tof")),
-        F("thrust", "Thrust (N)", "float", "400", visible=_kind("finite")),
-        F("duration", "Burn duration (s)", "float", "300", visible=_kind("finite")),
+          visible=lambda r: KINDS.get(r.get("kind")) == "rendezvous" and not r.get("auto_tof"),
+          tip="Minutes from the first burn until meeting the target."),
+        F("thrust", "Thrust (N)", "float", "400", visible=_kind("finite"),
+          tip="Engine force in newtons."),
+        F("duration", "Burn duration (s)", "float", "300", visible=_kind("finite"),
+          tip="How long the engine fires."),
         F("direction", "Direction", "choice", "Prograde", list(DIRECTIONS),
-          visible=_kind("finite")),
-        F("isp", "Specific impulse Isp (s)", "float", "320"),
-        F("preview", "", "info", ""),
+          visible=_kind("finite"),
+          tip="Where the thrust points, relative to the orbit: prograde speeds the satellite "
+              "up (raising the far side of the orbit), retrograde slows it, normal / "
+              "anti-normal tilt the plane, radial points away from / towards the Earth."),
+        F("isp", "Specific impulse Isp (s)", "float", "320",
+          tip="Engine efficiency: the higher it is, the less propellant a burn uses. "
+              "Chemical engines 300-450 s, ion engines 1,500 s and more."),
+        F("preview", "", "info", "",
+          tip="The planned burns' delta-v, or why the manoeuvre is impossible."),
     ]
 
     scan_cache: dict = {}     # the rendezvous TOF scan is slow: reuse it while the form changes
@@ -304,7 +427,8 @@ def maneuver_dialog(app):
         return None
 
     dlg = FormDialog(app, "Plan manoeuvre", specs, on_ok, "Schedule", width=560,
-                     on_change=on_change,
+                     on_change=on_change, ok_hint="Schedule the burns; the event log shows "
+                                                  "them when they fire",
                      subtitle="VNB: V prograde, N orbit normal, B = V x N "
                               "(radial out on circular orbits)")
     on_change(dlg, None)
@@ -363,11 +487,14 @@ def _plan_maneuver(sim, v: dict, scan_cache: dict):
 def station_dialog(app):
     """Add a ground station (key N)."""
     specs = [
-        F("name", "Name", "text", f"Station {len(app.sim.stations) + 1}"),
-        F("lat", "Latitude (deg)", "float", "51.48"),
-        F("lon", "Longitude (deg E)", "float", "0.0"),
-        F("alt", "Altitude (km)", "float", "0.05"),
-        F("min_el", "Minimum elevation (deg)", "float", "10"),
+        F("name", "Name", "text", f"Station {len(app.sim.stations) + 1}",
+          tip="Name shown on the map and in the event log."),
+        F("lat", "Latitude (deg)", "float", "51.48", tip="North positive, -90 to 90."),
+        F("lon", "Longitude (deg E)", "float", "0.0", tip="East positive (west is negative)."),
+        F("alt", "Altitude (km)", "float", "0.05", tip="Height of the antenna above sea level."),
+        F("min_el", "Minimum elevation (deg)", "float", "10",
+          tip="A satellite counts as in contact (AOS) once it rises this many degrees above "
+              "the station's horizon; hills and buildings block lower ones."),
     ]
 
     def on_ok(v):
@@ -377,7 +504,8 @@ def station_dialog(app):
                                           v["min_el"]))
         return None
 
-    return FormDialog(app, "Add ground station", specs, on_ok, "Add")
+    return FormDialog(app, "Add ground station", specs, on_ok, "Add",
+                      ok_hint="Add the station; the log reports each satellite it sees")
 
 
 # --- Physics settings -----------------------------------------------------------------------
@@ -388,19 +516,48 @@ def physics_dialog(app):
     fm = sim.forces
     it = sim.integrator
     specs = [
-        F("propagator", "Propagator", "choice", sim.propagator, list(PROPAGATORS)),
-        F("method", "Integrator (Cowell)", "choice", it.method, list(METHODS)),
-        F("rtol", "Relative tolerance", "float", f"{it.rtol:g}"),
-        F("atol", "Absolute tolerance", "float", f"{it.atol:g}"),
-        F("h_max", "Max step (s)", "float", f"{it.h_max:g}"),
-        F("h_fixed", "Fixed step rk4/leapfrog (s)", "float", f"{it.h_fixed:g}"),
-        F("j2", "J2 oblateness", "bool", fm.j2),
-        F("j3", "J3", "bool", fm.j3),
-        F("j4", "J4", "bool", fm.j4),
-        F("drag", "Atmospheric drag", "bool", fm.drag),
-        F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}"),
-        F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}"),
-        F("conj", "Close-approach alert (km)", "float", f"{sim.conjunction_km:g}"),
+        F("propagator", "Propagator", "choice", sim.propagator, list(PROPAGATORS),
+          tip="How orbits are moved forward in time.",
+          option_tips={"cowell": "cowell: integrate every enabled force numerically. The "
+                                 "most complete, and the only one with drag and burns.",
+                       "kepler": "kepler: the exact two-body ellipse. Fast, but ignores the "
+                                 "Earth's shape and air.",
+                       "j2mean": "j2mean: the ellipse plus the average drift caused by the "
+                                 "Earth's bulge (J2). Fast and good for long runs."}),
+        F("method", "Integrator (Cowell)", "choice", it.method, list(METHODS),
+          tip="The numerical method Cowell uses.",
+          option_tips={"dopri5": "dopri5: Dormand-Prince 5(4), adapts its step to meet the "
+                                 "tolerances. The accurate default.",
+                       "rk4": "rk4: classic Runge-Kutta with the fixed step below.",
+                       "leapfrog": "leapfrog: a symplectic fixed-step method. Its energy "
+                                   "error stays bounded over very long runs."}),
+        F("rtol", "Relative tolerance", "float", f"{it.rtol:g}",
+          tip="dopri5's allowed error per step, relative to the state. Smaller is more "
+              "accurate and slower."),
+        F("atol", "Absolute tolerance", "float", f"{it.atol:g}",
+          tip="dopri5's allowed error per step in km and km/s, for values near zero."),
+        F("h_max", "Max step (s)", "float", f"{it.h_max:g}",
+          tip="Longest step dopri5 may take, however smooth the motion."),
+        F("h_fixed", "Fixed step rk4/leapfrog (s)", "float", f"{it.h_fixed:g}",
+          tip="Step length of the fixed-step methods. Low orbits need about 30 s or less."),
+        F("j2", "J2 oblateness", "bool", fm.j2,
+          tip="The Earth's equatorial bulge. It turns orbital planes (node drift) and "
+              "ellipses (perigee drift): the largest effect after central gravity."),
+        F("j3", "J3", "bool", fm.j3,
+          tip="The Earth's slight pear shape (north-south asymmetry). It slowly changes "
+              "eccentricity."),
+        F("j4", "J4", "bool", fm.j4, tip="The next, smaller term of the Earth's shape."),
+        F("drag", "Atmospheric drag", "bool", fm.drag,
+          tip="Air resistance from the upper atmosphere. It makes low orbits decay until the "
+              "satellite re-enters."),
+        F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}",
+          tip="Multiplies the air density: about 0.3 at solar minimum, 1 on average, 3 at "
+              "solar maximum (when the Sun heats and puffs up the upper atmosphere)."),
+        F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}",
+          tip="Seconds of simulated time between the points stored for trails, the map "
+              "tracks and the plot."),
+        F("conj", "Close-approach alert (km)", "float", f"{sim.conjunction_km:g}",
+          tip="Log an alert when two satellites pass closer than this."),
     ]
 
     def on_ok(v):
@@ -420,6 +577,7 @@ def physics_dialog(app):
         return None
 
     return FormDialog(app, "Physics & integrator", specs, on_ok, "Apply", width=520,
+                      ok_hint="Use these settings from now on",
                       subtitle="Cowell integrates every enabled force; "
                                "kepler / j2mean are analytic")
 
@@ -436,9 +594,12 @@ def scenario_dialog(app):
     current = app.scenario_path
     cur_label = label(current) if current else (labels[0] if labels else "")
     specs = [
-        F("file", "Scenario file", "choice", cur_label, labels or ["(none found)"]),
-        F("save_name", "Save snapshot as", "text", "my_scenario"),
-        F("desc", "", "info", ""),
+        F("file", "Scenario file", "choice", cur_label, labels or ["(none found)"],
+          tip="The scenario Load opens: the bundled ones, then those you saved "
+              "(scenarios/user)."),
+        F("save_name", "Save snapshot as", "text", "my_scenario",
+          tip="File name for Save snapshot, stored in scenarios/user."),
+        F("desc", "", "info", "", tip="What the chosen scenario contains."),
     ]
     lookup = dict(zip(labels, files, strict=True))
 
@@ -480,8 +641,14 @@ def scenario_dialog(app):
         dlg.close()
 
     dlg = FormDialog(app, "Scenarios", specs, on_ok, "Load", width=620, on_change=describe,
-                     extra_buttons=[("Save snapshot", save), ("Export CSV", export),
-                                    ("Reset current", reset)],
+                     extra_buttons=[
+                         ("Save snapshot", save, "Save every satellite as it is now, as a new "
+                                                 "scenario starting at this moment"),
+                         ("Export CSV", export, "Write the recorded history (time, position, "
+                                                "velocity of each satellite) to a CSV file"),
+                         ("Reset current", reset, "Restart the current scenario from its "
+                                                  "beginning (Ctrl+R)")],
+                     ok_hint="Replace what is running with the chosen scenario",
                      subtitle="Load a scenario, save the current state (epoch = now), "
                               "or export history")
     describe(dlg)
@@ -498,10 +665,11 @@ def edit_satellite_dialog(app):
         return None
     s = sim.sats[app.selected]
     specs = [
-        F("name", "Name", "text", s.name),
-        F("mass", "Mass (kg)", "float", f"{s.mass:g}"),
-        F("area", "Area (m^2)", "float", f"{s.area:g}"),
-        F("cd", "Drag coefficient Cd", "float", f"{s.cd:g}"),
+        F("name", "Name", "text", s.name,
+          tip="A new name; planned manoeuvres follow the satellite."),
+        F("mass", "Mass (kg)", "float", f"{s.mass:g}", tip=MASS_TIP),
+        F("area", "Area (m^2)", "float", f"{s.area:g}", tip=AREA_TIP),
+        F("cd", "Drag coefficient Cd", "float", f"{s.cd:g}", tip=CD_TIP),
     ]
 
     def on_ok(v):
@@ -519,4 +687,5 @@ def edit_satellite_dialog(app):
         s.mass, s.area, s.cd = v["mass"], v["area"], v["cd"]
         return None
 
-    return FormDialog(app, "Edit satellite", specs, on_ok, "Apply")
+    return FormDialog(app, "Edit satellite", specs, on_ok, "Apply",
+                      ok_hint="Apply the changes to the selected satellite")

@@ -10,7 +10,7 @@ from typing import Any
 
 import pygame
 
-from . import theme
+from . import theme, tips
 from .theme import px
 
 
@@ -33,7 +33,8 @@ class Widget:
 class Button(Widget):
     """Push button. ``active()`` highlights it as a toggle that is on; ``tooltip``
     records the matching keyboard shortcut and ``hint`` says what the button
-    does (both shown by :func:`draw_tooltip`); ``accent`` marks the primary action."""
+    does (both shown in its hover tip, see :mod:`.tips`); ``accent`` marks the
+    primary action."""
 
     def __init__(self, text: str, callback: Callable[[], Any],
                  active: Callable[[], bool] | None = None, tooltip: str = "",
@@ -65,27 +66,7 @@ class Button(Widget):
         pygame.draw.rect(surf, edge, self.rect, 1, border_radius=px(5))
         if self.text:
             fonts.draw(surf, self.text, self.rect.center, theme.TEXT, fonts.ui, "center")
-
-
-def draw_tooltip(surf, fonts, button: Button):
-    """A box under ``button`` with its ``hint`` and keyboard shortcut, kept
-    inside the window; returns its rect (None if there is nothing to say)."""
-    hint = fonts.render(button.hint, theme.TEXT, fonts.ui) if button.hint else None
-    key = fonts.render(button.tooltip, theme.ACCENT, fonts.mono) if button.tooltip else None
-    if hint is None and key is None:
-        return None
-    parts = [p for p in (hint, key) if p is not None]
-    w = sum(p.get_width() for p in parts) + px(14) * (len(parts) - 1) + px(20)
-    h = max(p.get_height() for p in parts) + px(10)
-    box = pygame.Rect(0, 0, w, h)
-    box.midtop = (button.rect.centerx, button.rect.bottom + px(6))
-    box.clamp_ip(surf.get_rect().inflate(-px(8), -px(8)))
-    theme.panel(surf, box, (20, 30, 55, 245), theme.ACCENT, 5)
-    x = box.x + px(10)
-    for p in parts:
-        surf.blit(p, (x, box.centery - p.get_height() // 2))
-        x += p.get_width() + px(14)
-    return box
+        tips.add(self.rect, self.hint, self.tooltip)
 
 
 class TextField(Widget):
@@ -246,7 +227,9 @@ class Checkbox(Widget):
 
 @dataclass
 class FieldSpec:
-    """One row of a :class:`FormDialog`; ``visible(raw_values)`` hides it conditionally."""
+    """One row of a :class:`FormDialog`; ``visible(raw_values)`` hides it conditionally.
+    ``tip`` explains the field on hover; ``option_tips`` adds a line about the
+    option a choice currently shows."""
 
     key: str
     label: str
@@ -255,20 +238,26 @@ class FieldSpec:
     options: list = field(default_factory=list)
     visible: Callable[[dict], bool] | None = None
     wide: bool = False             # text spanning the full row (e.g. TLE lines)
+    tip: str = ""
+    option_tips: dict = field(default_factory=dict)
+
+
+CHOICE_HELP = "Click or scroll to change it; right-click goes back."
 
 
 class FormDialog:
     """A modal form. ``side`` is an optional panel drawn to the right of the
     fields: any object with ``width``, ``min_height``, ``draw(surf, rect,
     dialog)`` and ``handle(ev, dialog) -> bool``. It is left out when the
-    window is too narrow for it."""
+    window is too narrow for it. ``extra_buttons`` are (text, callback) or
+    (text, callback, hint); ``ok_hint`` explains the OK button."""
 
     ROW = 32                       # design px, like ``width`` and the side panel's sizes
     MIN_ROW = 22
 
     def __init__(self, app, title: str, specs: list[FieldSpec], on_ok, ok_text: str = "OK",
                  width: int = 520, on_change=None, extra_buttons=None, subtitle: str = "",
-                 side=None):
+                 side=None, ok_hint: str = ""):
         self.app = app
         self.title = title
         self.subtitle = subtitle
@@ -295,9 +284,13 @@ class FormDialog:
                 self.info[s.key] = str(s.default)
             else:
                 self.widgets[s.key] = TextField(s.default, s.kind)
-        self.buttons = [Button(ok_text, self.submit, accent=True), Button("Cancel", self.close)]
-        for text, cb in (extra_buttons or []):
-            self.buttons.insert(-1, Button(text, lambda cb=cb: self._extra(cb)))
+        self.buttons = [Button(ok_text, self.submit, accent=True, tooltip="Enter",
+                               hint=ok_hint or f"{ok_text} with these settings"),
+                        Button("Cancel", self.close, tooltip="Esc",
+                               hint="Close without changing anything")]
+        for text, cb, *hint in (extra_buttons or []):
+            self.buttons.insert(-1, Button(text, lambda cb=cb: self._extra(cb),
+                                           hint=hint[0] if hint else ""))
         self.rect = pygame.Rect(0, 0, px(width), px(100))
         self.layout()
 
@@ -470,30 +463,48 @@ class FormDialog:
                 return True
         return True    # modal: swallow everything
 
+    def field_tip(self, s: FieldSpec, raw: dict) -> str:
+        """The hover tip of field ``s``: its ``tip``, what the chosen option means,
+        and how to change a choice."""
+        parts = [s.tip]
+        if s.kind == "choice":
+            parts += [s.option_tips.get(raw.get(s.key), ""), CHOICE_HELP]
+        return "\n".join(p for p in parts if p)
+
     def draw(self, surf):
         """Shade the window, then draw the frame, rows, side panel, buttons and error."""
         fonts = self.app.fonts
         shade = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 110))
         surf.blit(shade, (0, 0))
+        tips.block(surf.get_rect())             # nothing under the shade explains itself
         theme.panel(surf, self.rect, (14, 20, 36, 245), theme.ACCENT)
-        fonts.draw(surf, self.title, (self.rect.x + px(18), self.rect.y + px(14)), theme.TEXT,
-                   fonts.title)
+        head = fonts.draw(surf, self.title, (self.rect.x + px(18), self.rect.y + px(14)),
+                          theme.TEXT, fonts.title)
+        tips.add(head, "Enter applies the form, Esc closes it, Tab moves between the text "
+                       "fields. Rest the mouse on a field to see what it means.")
         if self.subtitle:
-            fonts.draw(surf, self.subtitle, (self.rect.x + px(18), self.rect.y + px(42)),
-                       theme.DIM, fonts.small)
+            sub = fonts.draw(surf, self.subtitle, (self.rect.x + px(18), self.rect.y + px(42)),
+                             theme.DIM, fonts.small)
+            tips.add(sub, self.subtitle)
+        raw = self.raw()
         for s, r in self._rows:
             if s.kind == "info":
-                fonts.draw(surf, self.info.get(s.key, ""), (r.x, r.centery), theme.ACCENT,
-                           fonts.small, "midleft")
+                text = self.info.get(s.key, "")
+                fonts.draw(surf, text, (r.x, r.centery), theme.ACCENT, fonts.small, "midleft")
+                tips.add(r, "\n".join(p for p in (text, s.tip) if p))
                 continue
             fonts.draw(surf, s.label, (self.rect.x + px(18), r.centery), theme.DIM, fonts.ui,
                        "midleft")
             self.widgets[s.key].draw(surf, fonts)
+            tips.add(pygame.Rect(self.rect.x + px(18), r.y, r.right - self.rect.x - px(18), r.h),
+                     self.field_tip(s, raw))
         if self.side_rect is not None:
             self.side.draw(surf, self.side_rect, self)
         for b in self.buttons:
             b.draw(surf, fonts)
         if self.error:
-            fonts.draw(surf, self.error[:90], (self.rect.x + px(18), self.rect.bottom - px(30)),
-                       theme.BAD, fonts.small, "midleft")
+            err = fonts.draw(surf, self.error[:90], (self.rect.x + px(18),
+                                                     self.rect.bottom - px(30)),
+                             theme.BAD, fonts.small, "midleft")
+            tips.add(err, self.error)

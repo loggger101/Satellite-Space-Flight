@@ -33,7 +33,7 @@ from ..launch import (
     vehicle_preset,
 )
 from ..simulation import ACTIVE
-from . import theme
+from . import glossary, theme, tips
 from .groundtrack import GroundTrackView
 from .orbitpanel import countdown, draw_section, num
 from .theme import px
@@ -148,6 +148,9 @@ class LaunchPreview:
         mh = min(w // 2, max(px(120), rect.h - px(330)))
         mw = mh * 2
         self.map_rect = pygame.Rect(x, y, mw, mh)
+        tips.add(self.map_rect, "Click anywhere to move the pad there. The red triangle is the "
+                                "pad, grey dots the known spaceports, orange the planned "
+                                "climb and blue the first orbit after separation.")
         self._draw_map(surf, self.map_rect, dlg)
         y += mh + px(8)
         ph = max(px(90), min(px(150), rect.bottom - y - px(130)))
@@ -156,6 +159,11 @@ class LaunchPreview:
         draw_profile(surf, prof, fonts, flight.samples if flight else [],
                      flight.stage_marks if flight else [], None, None, TRACK)
         y += ph + px(8)
+        tips.add(pygame.Rect(x, y, w, rect.bottom - y),
+                 "The preview flight: the vehicle's mass, thrust-to-weight (T/W) and ideal "
+                 "delta-v, when it lifts off and which way it heads, the orbit reached, and "
+                 "where the delta-v went (gravity, drag and steering losses). It is flown again "
+                 "shortly after every change.")
         for text, col in self._lines():
             for line in _wrap(fonts.small, text, w):
                 if y > rect.bottom - px(14):
@@ -276,6 +284,11 @@ def draw_profile(surf, rect, fonts, samples, marks, planned, now, color):
     (downrange, alt) of the vehicle."""
     pygame.draw.rect(surf, (8, 12, 24), rect, border_radius=px(6))
     pygame.draw.rect(surf, theme.PANEL_EDGE, rect, 1, border_radius=px(6))
+    tips.add(rect, "The climb seen from the side: height against ground distance from the pad. "
+                   "White dots mark events (lift-off, ignitions, separations, fairing, "
+                   "cut-off)"
+                   + (", the dashed line is the planned path and the ringed dot the vehicle "
+                      "now." if planned or now is not None else "."), clip=surf.get_clip())
     fonts.draw(surf, "ALTITUDE vs DOWNRANGE", (rect.x + px(8), rect.y + px(4)), theme.FAINT,
                fonts.small)
     rows = [*(planned or []), *samples]
@@ -370,34 +383,75 @@ def launch_dialog(app):
     lat0, lon0, alt0 = LAUNCH_SITES[site0]
     n = sum(1 for s in sim.sats if s.family == s.name) + 1
     specs = [
-        F("name", "Payload name", "text", f"Launch {n}"),
-        F("vehicle", "Launch vehicle", "choice", default_vehicle, [*VEHICLES, CUSTOM_VEHICLE]),
-        F("payload_mass", "Payload mass (kg)", "float", "5000"),
-        F("payload_area", "Payload area (m^2)", "float", "10"),
-        F("site", "Launch site", "choice", site0, [*LAUNCH_SITES, CUSTOM_SITE]),
-        F("lat", "Latitude (deg)", "float", f"{lat0}"),
-        F("lon", "Longitude (deg E)", "float", f"{lon0}"),
-        F("salt", "Site altitude (km)", "float", f"{alt0}"),
-        F("guidance", "Guidance", "choice", "Closed loop to orbit", list(GUIDANCE)),
-        F("hp", "Target perigee alt (km)", "float", "400", visible=_orbit),
-        F("ha", "Target apogee alt (km)", "float", "400", visible=_orbit),
+        F("name", "Payload name", "text", f"Launch {n}",
+          tip="Name of the satellite the rocket carries."),
+        F("vehicle", "Launch vehicle", "choice", default_vehicle, [*VEHICLES, CUSTOM_VEHICLE],
+          tip="The rocket. 'Vehicle...' shows and edits its stages."),
+        F("payload_mass", "Payload mass (kg)", "float", "5000",
+          tip="Mass of the satellite. Heavier payloads need more delta-v from the rocket; the "
+              "preview says whether it still reaches orbit."),
+        F("payload_area", "Payload area (m^2)", "float", "10",
+          tip="Cross-section of the satellite once in orbit, for air drag."),
+        F("site", "Launch site", "choice", site0, [*LAUNCH_SITES, CUSTOM_SITE],
+          tip="A spaceport, or 'Custom location' to type coordinates or click the map. The "
+              "lowest inclination reachable directly equals the site's latitude."),
+        F("lat", "Latitude (deg)", "float", f"{lat0}", tip="Pad latitude, north positive."),
+        F("lon", "Longitude (deg E)", "float", f"{lon0}",
+          tip="Pad longitude, east positive (west is negative)."),
+        F("salt", "Site altitude (km)", "float", f"{alt0}", tip="Pad height above sea level."),
+        F("guidance", "Guidance", "choice", "Closed loop to orbit", list(GUIDANCE),
+          tip="How the rocket steers.",
+          option_tips={"Closed loop to orbit": "Closed loop: after the gravity turn the "
+                                               "guidance steers into the target orbit and "
+                                               "cuts the engine there.",
+                       "Open loop (gravity turn)": "Open loop: a fixed pitch-over, then the "
+                                                   "rocket follows its velocity until the "
+                                                   "propellant runs out."}),
+        F("hp", "Target perigee alt (km)", "float", "400", visible=_orbit,
+          tip="Height of the target orbit's lowest point."),
+        F("ha", "Target apogee alt (km)", "float", "400", visible=_orbit,
+          tip="Height of the target orbit's highest point (the same as the perigee for a "
+              "circular orbit)."),
         F("inc", "Inclination (deg)", "float", "51.6",
-          visible=lambda r: _orbit(r) and r.get("when") != "Window: plane of satellite"),
+          visible=lambda r: _orbit(r) and r.get("when") != "Window: plane of satellite",
+          tip="Tilt of the target orbit. It cannot be below the pad's latitude without a "
+              "costly plane change."),
         F("direction", "Direction over the pad", "choice", "Northbound", list(DIRECTION),
-          visible=_orbit),
+          visible=_orbit,
+          tip="An inclined orbit can be reached flying north-east or south-east from the pad; "
+              "this picks which."),
         F("azimuth", "Flight azimuth (deg from N)", "float", "90",
-          visible=lambda r: not _orbit(r)),
-        F("when", "Lift-off", "choice", "Now", list(WHEN)),
-        F("delay", "Delay (min)", "float", "10", visible=_is("when", "After delay")),
+          visible=lambda r: not _orbit(r),
+          tip="Compass heading of the ascent: 90 is due east, which gains the most from the "
+              "Earth's spin."),
+        F("when", "Lift-off", "choice", "Now", list(WHEN), tip="When the rocket lifts off.",
+          option_tips={"Now": "Lift off at once.",
+                       "After delay": "Wait on the pad for the delay below.",
+                       "Window: RAAN": "Wait until the pad turns under an orbital plane "
+                                       "with the RAAN below.",
+                       "Window: plane of satellite": "Wait until the pad passes under "
+                                                     "another satellite's orbital plane, to "
+                                                     "launch into it (e.g. to meet a space "
+                                                     "station)."}),
+        F("delay", "Delay (min)", "float", "10", visible=_is("when", "After delay"),
+          tip="Minutes on the pad before lift-off."),
         F("raan", "Plane RAAN (deg)", "float", "0",
-          visible=lambda r: _orbit(r) and r.get("when") == "Window: RAAN"),
+          visible=lambda r: _orbit(r) and r.get("when") == "Window: RAAN",
+          tip="RAAN of the plane to launch into; the countdown waits for it."),
         F("target", "Into the plane of", "choice", targets[0] if targets else "(none)",
           targets or ["(none)"],
-          visible=lambda r: _orbit(r) and r.get("when") == "Window: plane of satellite"),
-        F("kick", "Pitch kick (deg or 'auto')", "floatx", "auto"),
-        F("vertical", "Vertical rise (s)", "float", "10"),
-        F("circ", "Circularise at apogee", "bool", False, visible=_orbit),
-        F("track", "Keep spent stages as objects", "bool", True),
+          visible=lambda r: _orbit(r) and r.get("when") == "Window: plane of satellite",
+          tip="The satellite whose orbital plane to launch into."),
+        F("kick", "Pitch kick (deg or 'auto')", "floatx", "auto",
+          tip="How far the rocket tips over after its vertical rise to start the gravity "
+              "turn. 'auto' finds the kick that reaches the target best."),
+        F("vertical", "Vertical rise (s)", "float", "10",
+          tip="Seconds of straight-up flight to clear the pad before the pitch kick."),
+        F("circ", "Circularise at apogee", "bool", False, visible=_orbit,
+          tip="Add a burn at the first apogee to raise the perigee to the apogee height."),
+        F("track", "Keep spent stages as objects", "bool", True,
+          tip="Keep discarded stages as objects you can follow as they fall back or stay in "
+              "orbit."),
     ]
     preview = LaunchPreview(app, vehicle_preset(default_vehicle))
 
@@ -440,7 +494,10 @@ def launch_dialog(app):
         return None
 
     dlg = FormDialog(app, "Launch", specs, on_ok, "Launch", width=500, on_change=on_change,
-                     extra_buttons=[("Vehicle...", edit_vehicle)], side=preview,
+                     extra_buttons=[("Vehicle...", edit_vehicle,
+                                     "See and change the rocket's stages, fairing and "
+                                     "limits")],
+                     side=preview, ok_hint="Put the rocket on its pad (or lift off now)",
                      subtitle="Fly a rocket from any point on Earth - "
                               "the preview flies it first")
     dlg.preview = preview
@@ -452,6 +509,17 @@ STAGE_FIELDS = [("name", "Name", "text"), ("thrust", "Thrust, vacuum (kN)", "flo
                 ("isp_vac", "Isp vacuum (s)", "float"),
                 ("isp_sl", "Isp sea level (s, 0 = vac.)", "float"),
                 ("propellant", "Propellant (t)", "float"), ("dry", "Dry mass (t)", "float")]
+STAGE_TIPS = {
+    "name": "What the stage is called in the log and the ascent view.",
+    "thrust": "Engine force in a vacuum, in kilonewtons. Thrust divided by the weight above "
+              "it must exceed 1 for the first stage to lift off.",
+    "isp_vac": "Engine efficiency in a vacuum (specific impulse): higher uses less "
+               "propellant for the same delta-v.",
+    "isp_sl": "Efficiency at sea level, lower than in a vacuum; thrust and Isp rise towards "
+              "the vacuum values as the air thins. 0 uses the vacuum value throughout.",
+    "propellant": "Propellant the stage carries, in tonnes.",
+    "dry": "Mass of the empty stage (tanks, engines), in tonnes: dropped at separation.",
+}
 MAX_STAGES = 4
 
 
@@ -461,9 +529,11 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
                                      for k in range(len(vehicle.stages), MAX_STAGES)]
     counts = [str(k) for k in range(1, MAX_STAGES + 1)]
     specs = [
-        F("vname", "Vehicle name", "text", vehicle.name),
-        F("count", "Number of stages", "choice", str(len(vehicle.stages)), counts),
-        F("edit", "Edit stage", "choice", "1", counts),
+        F("vname", "Vehicle name", "text", vehicle.name, tip="Name of the rocket."),
+        F("count", "Number of stages", "choice", str(len(vehicle.stages)), counts,
+          tip="How many stages burn one after the other."),
+        F("edit", "Edit stage", "choice", "1", counts,
+          tip="Which stage the fields below describe (1 fires first)."),
     ]
     for k, st in enumerate(stages, start=1):
         def vis(r, k=k):
@@ -475,17 +545,28 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
                 val = f"{val / 1000:g}"          # tonnes in the form
             elif isinstance(val, float):
                 val = f"{val:g}"
-            specs.append(F(f"s{k}_{key}", label, kind, val, visible=vis))
+            specs.append(F(f"s{k}_{key}", label, kind, val, visible=vis,
+                           tip=f"Stage {k}: {STAGE_TIPS[key]}"))
     specs += [
-        F("fairing", "Fairing mass (kg)", "float", f"{vehicle.fairing:g}"),
-        F("fairing_alt", "Fairing jettison alt (km)", "float", f"{vehicle.fairing_alt:g}"),
-        F("diameter", "Diameter (m)", "float", f"{vehicle.diameter:g}"),
-        F("cd", "Drag coefficient Cd", "float", f"{vehicle.cd:g}"),
-        F("max_g", "Acceleration limit (g, 0 = none)", "float", f"{vehicle.max_g:g}"),
-        F("coast", "Coast between stages (s)", "float", f"{vehicle.stage_coast:g}"),
+        F("fairing", "Fairing mass (kg)", "float", f"{vehicle.fairing:g}",
+          tip="The nose cover that protects the payload through the air."),
+        F("fairing_alt", "Fairing jettison alt (km)", "float", f"{vehicle.fairing_alt:g}",
+          tip="Height at which the fairing is dropped, once the air is thin enough."),
+        F("diameter", "Diameter (m)", "float", f"{vehicle.diameter:g}",
+          tip="Body diameter: with Cd it sets the air drag during the climb."),
+        F("cd", "Drag coefficient Cd", "float", f"{vehicle.cd:g}",
+          tip="Drag coefficient of the rocket's body."),
+        F("max_g", "Acceleration limit (g, 0 = none)", "float", f"{vehicle.max_g:g}",
+          tip="The engines throttle down to keep the acceleration below this, as the "
+              "vehicle gets lighter (to protect crew and payload)."),
+        F("coast", "Coast between stages (s)", "float", f"{vehicle.stage_coast:g}",
+          tip="Seconds with no thrust between one stage's burnout and the next ignition."),
     ]
     shown: dict = {}         # summary rows that have text (empty ones take no space)
-    specs += [F(f"sum{k}", "", "info", "", visible=lambda r, k=k: bool(shown.get(k)))
+    specs += [F(f"sum{k}", "", "info", "", visible=lambda r, k=k: bool(shown.get(k)),
+                tip="Ignition mass, burn time, thrust-to-weight ratio at ignition and ideal "
+                    "delta-v (rocket equation) of each stage, then the total. Reaching low "
+                    "orbit takes about 9.3-9.8 km/s including losses.")
               for k in range(MAX_STAGES + 1)]
 
     def build(dlg) -> Vehicle:
@@ -537,7 +618,7 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
         return None
 
     dlg = FormDialog(app, "Launch vehicle", specs, on_ok, "Use vehicle", width=560,
-                     on_change=on_change,
+                     on_change=on_change, ok_hint="Fly this vehicle in the Launch dialog",
                      subtitle="Stages burn in order; thrust and Isp rise from sea level to vacuum")
     on_change(dlg, None)
     dlg.layout()
@@ -556,11 +637,16 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
     head = "ON THE PAD" if asc.phase == "pad" else PHASE_LABELS.get(asc.phase, asc.phase).upper()
     if asc.phase != "pad" and not asc.burning and not asc.released:
         head = "STAGING COAST"
-    fonts.draw(surf, _clock(met), (x, y), theme.WARN if met < 0 else theme.GOOD, fonts.title)
-    fonts.draw(surf, head, (x + w, y + px(4)), theme.TEXT, fonts.small, "topright")
+    clip = surf.get_clip()
+    tips.add(fonts.draw(surf, _clock(met), (x, y), theme.WARN if met < 0 else theme.GOOD,
+                        fonts.title), "Mission clock: T- counts down to lift-off, T+ up "
+                                      "from it.", clip=clip)
+    tips.add(fonts.draw(surf, head, (x + w, y + px(4)), theme.TEXT, fonts.small, "topright"),
+             glossary.ROWS["Phase"], clip=clip)
     y += px(28)
     site = spec.site or f"{spec.lat:.2f}, {spec.lon:.2f}"
-    fonts.draw(surf, f"{spec.vehicle.name} from {site}"[:52], (x, y), theme.DIM, fonts.small)
+    tips.add(fonts.draw(surf, f"{spec.vehicle.name} from {site}"[:52], (x, y), theme.DIM,
+                        fonts.small), f"{spec.vehicle.name} from {site}.", clip=clip)
     y += px(20)
     st = asc.telemetry()
     planned = asc.planned
@@ -614,9 +700,15 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
 def _draw_stages(surf, fonts, x, y, w, asc, color) -> int:
     """A propellant bar per stage (separated, burning/coasting or still full);
     returns the y below the list."""
-    fonts.draw(surf, "STAGES", (x, y), theme.ACCENT, fonts.small)
+    clip = surf.get_clip()
+    tips.add(fonts.draw(surf, "STAGES", (x, y), theme.ACCENT, fonts.small),
+             glossary.section("STAGES"), clip=clip)
     y += px(18)
     for k, stg in enumerate(asc.spec.vehicle.stages):
+        tips.add(pygame.Rect(x, y, w, px(17)),
+                 f"{stg.name}: {stg.thrust:,.0f} kN, Isp {stg.isp_vac:.0f} s, "
+                 f"{stg.propellant / 1000:,.1f} t of propellant. The bar is the share left.",
+                 clip=clip)
         if k < asc.k:
             frac, note, col = 0.0, "separated", theme.FAINT
         elif k == asc.k:

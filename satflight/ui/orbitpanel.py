@@ -23,7 +23,7 @@ from ..eclipse import shadow_fraction
 from ..elements import perifocal_axes
 from ..ephemeris import sun_position
 from ..orbitinfo import OrbitInfo
-from . import theme
+from . import glossary, theme, tips
 from .theme import px
 
 SUNLIT = (255, 214, 120)
@@ -122,8 +122,25 @@ def _arc(surf, color, center, radius, a0, a1, width=1):
     pygame.draw.lines(surf, color, False, pts.tolist(), width)
 
 
+DIAGRAM_TIPS = {        # by the first word of the diagram's title
+    "ORBITAL": "The orbit seen face-on and to scale, perigee to the right, the satellite "
+               "moving anticlockwise. The line is bright in sunlight and dark in the Earth's "
+               "shadow (the dark band); the arrow is the velocity; e is the eccentricity.",
+    "INCLINATION": "The orbit seen edge-on, looking along the line of nodes: the dashed line "
+                   "is the equator, the coloured one the orbital plane, the arc between them "
+                   "the inclination. h is the orbit normal, N the north pole.",
+    "FROM": "The orbit seen from above the north pole. The arc from the vernal equinox "
+            "(\N{GREEK SMALL LETTER GAMMA}) to the ascending node (AN) is the RAAN; the "
+            "dashed yellow line points to the Sun. LTAN is the local solar time at the node.",
+    "NEXT": "The next revolution, from now (left) to one period later (right): yellow in "
+            "sunlight, blue in the Earth's shadow, with the times until perigee (Pe), apogee "
+            "(Ap) and the ascending and descending nodes (AN, DN).",
+}
+
+
 def _box(surf, rect, fonts, title, right=None):
     """Diagram frame with a title (and optional right-aligned note)."""
+    tips.add(rect, DIAGRAM_TIPS.get(title.split(" ")[0], ""), clip=surf.get_clip())
     theme.panel(surf, rect, BOX, theme.PANEL_EDGE, 6)
     fonts.draw(surf, title, (rect.x + px(8), rect.y + px(5)), theme.ACCENT, fonts.small)
     if right:
@@ -151,6 +168,7 @@ def _label(surf, fonts, text, pos, color, anchor="center", bounds=None, placed=N
         placed.append(r)
     theme.panel(surf, r.inflate(px(6), 0), LABEL_BACK, None, 3)
     surf.blit(txt, r)
+    tips.add(r.inflate(px(6), px(2)), glossary.label(text), clip=surf.get_clip())
     return r
 
 
@@ -301,6 +319,10 @@ def _legend(surf, fonts, rect, color, dark):
     y = rect.bottom - px(13)
     x = rect.x + px(8)
     ly, sw = y + px(6), px(14)                  # the sample line's height and length
+    tips.add(pygame.Rect(rect.x, y - px(2), rect.w, px(15)),
+             "Key: the orbit in sunlight and in shadow; the dashed line of apsides joins "
+             "perigee and apogee, the line of nodes the two equator crossings.",
+             clip=surf.get_clip())
     for c, text, dashed in ((color, "sunlit", False), (dark, "shadow", False),
                             (APSIS, "apsides", True), (NODE, "nodes", True)):
         if dashed:
@@ -460,10 +482,16 @@ def draw_timeline(surf, rect, info: OrbitInfo, fonts):
         placed.append(r)
         theme.panel(surf, r.inflate(px(6), 0), LABEL_BACK, None, 3)
         fonts.draw(surf, text, r.topleft, col, fonts.small)
+        tips.add(r.inflate(px(6), px(2)), f"{glossary.label(name)} Next pass in {countdown(t)}.",
+                 clip=surf.get_clip())
 
 
 def draw_gauge(surf, rect, fonts, label, lo, hi, val, unit, prec, color):
     """Horizontal bar from ``lo`` to ``hi`` with a marker at ``val``."""
+    what = label.split(" (")[0].lower()
+    tips.add(rect, f"Where the satellite's {what} is now (the dot) between its lowest and "
+                   f"highest values on this orbit (the numbers at the ends).",
+             clip=surf.get_clip())
     fonts.draw(surf, label, (rect.x, rect.y), theme.DIM, fonts.small)
     fonts.draw(surf, f"{val:,.{prec}f} {unit}", (rect.right, rect.y), theme.TEXT, fonts.small,
                "topright")
@@ -491,11 +519,14 @@ def draw_gauge(surf, rect, fonts, label, lo, hi, val, unit, prec, color):
 def draw_section(surf, fonts, x, y, w, title, rows) -> int:
     """A titled block of (label, value) rows, values right-aligned at ``x + w``;
     returns the y just below it."""
-    fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small)
+    clip = surf.get_clip()                      # the panel's scrolled body
+    about = glossary.section(title)
+    tips.add(fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small), about, clip=clip)
     y += px(18)
     for label, value in rows:
         fonts.draw(surf, label, (x + px(4), y), theme.DIM, fonts.small)
         fonts.draw(surf, value, (x + w, y), theme.TEXT, fonts.small, "topright")
+        tips.add(pygame.Rect(x, y, w, px(16)), glossary.row(label) or about, clip=clip)
         y += px(16)
     return y + px(6)
 

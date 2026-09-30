@@ -1,5 +1,5 @@
 """Scenario-building dialogs: add satellites, Walker constellations,
-manoeuvres, ground stations, physics settings and scenario files."""
+maneuvers, ground stations, physics settings and scenario files."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ MODE_TIPS = {
     "Elements (a, e)": "An ellipse given by its semi-major axis and eccentricity.",
     "Surface launch": "Start at a point on (or above) the ground with a speed and heading, "
                       "and see where it goes: a hop, an orbit or an escape.",
-    "State vector (ECI)": "Position and velocity in the Earth-centred inertial frame.",
+    "State vector (ECI)": "Position and velocity in the Earth-centered inertial frame.",
     "Geostationary slot": "A geostationary orbit parked over one longitude.",
     "TLE": "Paste a NORAD two-line element set (e.g. from celestrak.org).",
 }
@@ -92,15 +92,15 @@ def add_satellite_dialog(app):
     """Add one satellite (or copies along its orbit) from any initial condition (key A)."""
     sim = app.sim
     sv = _mode("State vector (ECI)")
-    sv_r = "Position component in the Earth-centred inertial frame (x towards the vernal " \
-           "equinox, z towards the north pole)."
-    sv_v = "Velocity component in the Earth-centred inertial frame."
+    sv_r = "Position component in the Earth-centered inertial frame (x toward the vernal " \
+           "equinox, z toward the north pole)."
+    sv_v = "Velocity component in the Earth-centered inertial frame."
     specs = [
         F("name", "Name", "text", f"Sat {sim.n + 1}",
           tip="Name shown in the list and the view. Copies get -1, -2, ... added."),
         F("preset", "Preset", "choice", "Custom", ["Custom"] + list(PRESETS),
           tip="Fill the form with a well-known orbit (ISS, GPS, Molniya, ...). You can "
-              "still change any field afterwards."),
+              "still change any field afterward."),
         F("mode", "Initial condition", "choice", MODES[0], MODES,
           tip="How you describe where the satellite starts. The fields below change to "
               "match.", option_tips=MODE_TIPS),
@@ -112,7 +112,7 @@ def add_satellite_dialog(app):
         F("ha", "Apogee altitude (km)", "float", "2000", visible=_mode("Perigee / apogee"),
           tip="Height of the orbit's highest point above the surface."),
         F("a", "Semi-major axis a (km)", "float", "8000", visible=_mode("Elements (a, e)"),
-          tip="Half the long axis of the ellipse, from the Earth's centre (the Earth's "
+          tip="Half the long axis of the ellipse, from the Earth's center (the Earth's "
               "radius is 6,378 km)."),
         F("e", "Eccentricity e", "float", "0.1", visible=_mode("Elements (a, e)"),
           tip="0 is a circle; the nearer to 1, the longer and thinner the ellipse."),
@@ -304,7 +304,7 @@ def walker_dialog(app):
     return dlg
 
 
-# --- Manoeuvres ------------------------------------------------------------------------------
+# --- Maneuvers -------------------------------------------------------------------------------
 
 KINDS = {"Impulse (V/N/B components)": "impulse", "Hohmann transfer": "hohmann",
          "Bi-elliptic transfer": "bielliptic", "Circularize": "circularize",
@@ -319,7 +319,7 @@ KIND_TIPS = {
     "Impulse (V/N/B components)": "An instant kick of the velocity, given by its three "
                                   "components.",
     "Hohmann transfer": "Two burns to a new circular altitude: one to enter a transfer "
-                        "ellipse, one half an orbit later to circularise. The cheapest way "
+                        "ellipse, one half an orbit later to circularize. The cheapest way "
                         "between two circular orbits of similar size.",
     "Bi-elliptic transfer": "Three burns via a high intermediate apoapsis. Cheaper than "
                             "Hohmann only when the target is more than about 12 times the "
@@ -351,24 +351,24 @@ DV_TIP = "Velocity change, in m/s, along this axis of the chosen frame (see Fram
 
 
 def _kind(*names):
-    """Visibility predicate: the manoeuvre kind is one of ``names``."""
+    """Visibility predicate: the maneuver kind is one of ``names``."""
     return lambda raw: KINDS.get(raw.get("kind")) in names
 
 
 def maneuver_dialog(app):
-    """Plan and schedule a manoeuvre, previewing its delta-v (key B)."""
+    """Plan and schedule a maneuver, previewing its delta-v (key B)."""
     sim = app.sim
-    # a payload still riding its rocket cannot manoeuvre until it separates
+    # a payload still riding its rocket cannot maneuver until it separates
     names = [s.name for i, s in enumerate(sim.sats)
              if s.status == ACTIVE and sim.ascent_of(i) is None]
     if not names:
-        app.toast("No active satellites to manoeuvre")
+        app.toast("No active satellites to maneuver")
         return None
     cur = sim.sats[app.selected].name if 0 <= app.selected < sim.n else names[0]
     other = next((n for n in names if n != cur), cur)
     specs = [
         F("sat", "Satellite", "choice", cur, names, tip="The satellite that will burn."),
-        F("kind", "Manoeuvre", "choice", "Hohmann transfer", list(KINDS),
+        F("kind", "Maneuver", "choice", "Hohmann transfer", list(KINDS),
           tip="What the burn should achieve.", option_tips=KIND_TIPS),
         F("timing", "Execute", "choice", "Now", list(TIMINGS),
           tip="When the (first) burn fires.", option_tips=TIMING_TIPS),
@@ -403,12 +403,12 @@ def maneuver_dialog(app):
           visible=_kind("finite"),
           tip="Where the thrust points, relative to the orbit: prograde speeds the satellite "
               "up (raising the far side of the orbit), retrograde slows it, normal / "
-              "anti-normal tilt the plane, radial points away from / towards the Earth."),
+              "anti-normal tilt the plane, radial points away from / toward the Earth."),
         F("isp", "Specific impulse Isp (s)", "float", "320",
           tip="Engine efficiency: the higher it is, the less propellant a burn uses. "
               "Chemical engines 300-450 s, ion engines 1,500 s and more."),
         F("preview", "", "info", "",
-          tip="The planned burns' delta-v, or why the manoeuvre is impossible."),
+          tip="The planned burns' delta-v, or why the maneuver is impossible."),
     ]
 
     scan_cache: dict = {}     # the rendezvous TOF scan is slow: reuse it while the form changes
@@ -426,7 +426,7 @@ def maneuver_dialog(app):
             sim.schedule(b)
         return None
 
-    dlg = FormDialog(app, "Plan manoeuvre", specs, on_ok, "Schedule", width=560,
+    dlg = FormDialog(app, "Plan maneuver", specs, on_ok, "Schedule", width=560,
                      on_change=on_change, ok_hint="Schedule the burns; the event log shows "
                                                   "them when they fire",
                      subtitle="VNB: V prograde, N orbit normal, B = V x N "
@@ -436,8 +436,8 @@ def maneuver_dialog(app):
 
 
 def _plan_maneuver(sim, v: dict, scan_cache: dict):
-    """(burns, summary) for the manoeuvre form values ``v``; raises ValueError
-    if the manoeuvre is impossible. ``scan_cache`` keeps the automatic
+    """(burns, summary) for the maneuver form values ``v``; raises ValueError
+    if the maneuver is impossible. ``scan_cache`` keeps the automatic
     rendezvous time of flight between calls."""
     kind = KINDS[v["kind"]]
     timing = TIMINGS[v["timing"]]
@@ -666,7 +666,7 @@ def edit_satellite_dialog(app):
     s = sim.sats[app.selected]
     specs = [
         F("name", "Name", "text", s.name,
-          tip="A new name; planned manoeuvres follow the satellite."),
+          tip="A new name; planned maneuvers follow the satellite."),
         F("mass", "Mass (kg)", "float", f"{s.mass:g}", tip=MASS_TIP),
         F("area", "Area (m^2)", "float", f"{s.area:g}", tip=AREA_TIP),
         F("cd", "Drag coefficient Cd", "float", f"{s.cd:g}", tip=CD_TIP),

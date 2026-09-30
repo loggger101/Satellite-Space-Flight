@@ -216,7 +216,7 @@ def test_every_bundled_scenario_draws(app):
 
 
 def test_separable_ray_geometry_matches_brute_force(app):
-    """The optimised Earth tracer must hit exactly the pixels a direct
+    """The optimized Earth tracer must hit exactly the pixels a direct
     per-pixel ray-sphere intersection hits, with the same normals."""
     from satflight.constants import R_EARTH
     cam = app.camera
@@ -433,7 +433,7 @@ def test_launch_dialog_map_pick_preview_and_flight(app):
     i = app.selected
     asc = app.sim.ascent_of(i)
     assert asc is not None and app.sim.sats[i].name == "Launch 1"
-    assert asc.kick_deg == pytest.approx(prev.plan.kick)   # the optimised kick is flown
+    assert asc.kick_deg == pytest.approx(prev.plan.kick)   # the optimized kick is flown
     app.paused = False
     for t, tab in ((30, 0), (200, 1), (200, 0)):
         app.sim.advance(t)
@@ -587,7 +587,7 @@ def test_every_button_explains_itself_in_a_tooltip_inside_the_window(scaled_app)
             assert tip[1] == b.hint and tip[2] == b.tooltip, b.text
             assert box is not None and app.screen.get_rect().contains(box), b.text
     app.open("walker")
-    assert not any(b.hover for b in app._buttons())           # none left over afterwards
+    assert not any(b.hover for b in app._buttons())           # none left over afterward
     frame(app)
     for b in app.dialogs[-1].buttons:
         assert b.hint, b.text

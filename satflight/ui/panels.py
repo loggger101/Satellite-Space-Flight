@@ -57,7 +57,7 @@ class FullscreenButton(Button):
         into = self.active is not None and self.active()
         for cx, cy, dx, dy in ((r.left, r.top, 1, 1), (r.right - 1, r.top, -1, 1),
                                (r.left, r.bottom - 1, 1, -1), (r.right - 1, r.bottom - 1, -1, -1)):
-            if into:                             # the corner sits inside, arms point outwards
+            if into:                             # the corner sits inside, arms point outward
                 cx, cy, dx, dy = cx + dx * k, cy + dy * k, -dx, -dy
             pygame.draw.lines(surf, theme.TEXT, False,
                               [(cx + dx * k, cy), (cx, cy), (cx, cy + dy * k)], px(2))
@@ -184,7 +184,7 @@ class SatList:
                    hint="Launch a rocket from anywhere on Earth"),
             Button("Walker", lambda: a.open("walker"), tooltip="W",
                    hint="Add a Walker constellation"),
-            Button("Manoeuvre", lambda: a.open("maneuver"), tooltip="B",
+            Button("Maneuver", lambda: a.open("maneuver"), tooltip="B",
                    hint="Plan a burn for the selected satellite"),
             Button("Station", lambda: a.open("station"), tooltip="N", hint="Add a ground station"),
             Button("Physics", lambda: a.open("physics"), tooltip="P",
@@ -274,7 +274,7 @@ class SatList:
             asc = sim.ascent_of(k) if sim.ascents else None
             if asc is not None and asc.phase == "pad":
                 txt, col = f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN
-                what = "a rocket on its pad; the countdown to lift-off"
+                what = "a rocket on its pad; the countdown to liftoff"
             elif asc is not None:
                 alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
                 txt, col = f"{alt:,.0f} km ^", theme.WARN
@@ -283,7 +283,7 @@ class SatList:
                 alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
                 txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
                 col = theme.DIM if s.shadow > 0.5 else (150, 140, 230)
-                what = ("altitude, grey in sunlight" if s.shadow > 0.5
+                what = ("altitude, gray in sunlight" if s.shadow > 0.5
                         else "altitude, violet while in the Earth's shadow")
             else:
                 txt, col = s.status, theme.BAD
@@ -488,7 +488,7 @@ class InfoPanel:
         pygame.draw.circle(surf, s.color, (x + px(6), y + px(11)), px(6))
         r = fonts.draw(surf, s.name, (x + px(20), y), theme.TEXT, fonts.title)
         tips.add(r.union(pygame.Rect(x, y, px(20), r.h)),
-                 "The selected satellite, drawn in its colour. Ctrl+E renames it or changes "
+                 "The selected satellite, drawn in its color. Ctrl+E renames it or changes "
                  "its mass and drag area.", "Ctrl+E")
         status_col = theme.GOOD if s.status == ACTIVE else theme.BAD
         r = fonts.draw(surf, s.status.upper(), (self.rect.right - px(12), y + px(4)), status_col,
@@ -608,7 +608,7 @@ HELP = [
     ("D", "orbit geometry: full / basic / off"),
     ("Q  PgUp PgDn", "right panel: switch tab / scroll it"),
     ("M  G", "ground-track map, telemetry plot"),
-    ("A  W  B  N", "add satellite, Walker, manoeuvre, station"),
+    ("A  W  B  N", "add satellite, Walker, maneuver, station"),
     ("U", "launch a rocket from anywhere on Earth"),
     ("P", "physics & integrator settings"),
     ("Ctrl+N  O  S", "start screen / scenarios / save snapshot"),
@@ -633,7 +633,7 @@ def help_layout(fonts, w, h):
 
 
 def draw_help(surf, app):
-    """The controls overlay (key H), centred; returns its rect."""
+    """The controls overlay (key H), centered; returns its rect."""
     fonts = app.fonts
     line = px(20)
     rect, key_x, desc_x = help_layout(fonts, *surf.get_size())

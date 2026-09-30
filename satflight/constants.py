@@ -1,6 +1,6 @@
 """Physical constants used throughout the simulation.
 
-Units are kilometres, seconds and kilograms unless a name says otherwise.
+Units are kilometers, seconds and kilograms unless a name says otherwise.
 Earth values follow WGS-84 for shape and EGM-96 / EGM-2008 for gravity, the
 same families used by Vallado's *Fundamentals of Astrodynamics* and by
 astropy / skyfield.
@@ -16,7 +16,7 @@ E2_EARTH = F_EARTH * (2.0 - F_EARTH)   # first eccentricity squared
 R_EARTH_POLAR = R_EARTH * (1.0 - F_EARTH)
 OMEGA_EARTH = 7.292115146706979e-5     # rad/s, sidereal rotation rate
 
-# Unnormalised zonal harmonics (EGM-96)
+# Unnormalized zonal harmonics (EGM-96)
 J2 = 1.08262668355e-3
 J3 = -2.53265648533e-6
 J4 = -1.61962159137e-6

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "satflight"
 version = "0.1.0"
-description = "Earth-centred 3-D satellite orbit simulator with an interactive pygame front end"
+description = "Earth-centered 3-D satellite orbit simulator with an interactive pygame front end"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

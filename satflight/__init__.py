@@ -1,4 +1,4 @@
-"""Satellite Space Flight - an Earth-centred, 3-D satellite orbit simulator.
+"""Satellite Space Flight - an Earth-centered, 3-D satellite orbit simulator.
 
 The physics lives in pure-Python/numpy modules (``elements``, ``forces``,
 ``integrators``, ``simulation`` ...) usable without any graphics; the

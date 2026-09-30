@@ -26,11 +26,14 @@ from ..timeutil import format_duration
 from . import theme
 from .earth import EarthRenderer
 
-CLIP = 30000.0
+CLIP = 30000.0      # px: screen coordinates are clamped here before pygame draws them
 
 
 @dataclass
 class Line:
+    """A world-space polyline; the part hidden by the Earth is drawn dimmed by
+    ``behind_dim`` (0 hides it)."""
+
     pts: np.ndarray          # (M, 3) world km
     color: tuple
     width: int = 1
@@ -38,11 +41,14 @@ class Line:
 
 
 class SceneRenderer:
+    """Draws the 3-D view each frame; see :meth:`draw` for the pass order."""
+
     def __init__(self, asset_dir):
         self.earth = EarthRenderer(asset_dir)
         self._build_sky()
         self._sprites: dict = {}
         self._sat_lit = np.zeros(0)
+        self._sat_start = 0         # index of the first satellite marker
         self.sat_screen = None      # (sx, sy, visible) of last frame, for picking
 
     def _build_sky(self):
@@ -67,13 +73,14 @@ class SceneRenderer:
         xg /= np.linalg.norm(xg)
         yg = np.cross(zg, xg)
         n = 16000
-        lon = np.where(rng.random(n) < 0.45, rng.normal(0.0, 0.6, n), rng.uniform(-np.pi, np.pi, n))
+        lon = np.where(rng.random(n) < 0.45, rng.normal(0.0, 0.6, n),
+                       rng.uniform(-np.pi, np.pi, n))
         sig = np.radians(3.5 + 7.0 * np.exp(-(lon / 0.35) ** 2))
         lat = rng.normal(0.0, 1.0, n) * sig
-        mw = (np.cos(lat) * np.cos(lon))[:, None] * xg + (np.cos(lat) * np.sin(lon))[:, None] * yg \
-            + np.sin(lat)[:, None] * zg
+        mw = ((np.cos(lat) * np.cos(lon))[:, None] * xg + (np.cos(lat) * np.sin(lon))[:, None] * yg
+              + np.sin(lat)[:, None] * zg)
         glow = (10 + 34 * rng.random(n) ** 2) * (0.6 + 0.4 * np.exp(-(lon / 0.8) ** 2))
-        mw_col = np.clip(np.array([0.82, 0.86, 1.0])[None, :] * glow[:, None], 0, 255).astype(np.uint8)
+        mw_col = np.clip(np.array([0.82, 0.86, 1.0]) * glow[:, None], 0, 255).astype(np.uint8)
         self.sky_dirs = np.vstack([mw, dirs])
         self.sky_col = np.vstack([mw_col, star_col])
         self.sky_big = np.r_[np.zeros(n, bool), mag > 0.8]
@@ -89,7 +96,8 @@ class SceneRenderer:
             if kind == "sun":
                 inten = (np.exp(-(r / (radius * 0.07)) ** 2) * 1.6
                          + 0.55 / (1 + (r / (radius * 0.12)) ** 2)
-                         + 0.25 * np.exp(-np.abs(yy.T) / 1.2) * np.exp(-np.abs(xx.T) / (radius * 0.5)))
+                         + 0.25 * np.exp(-np.abs(yy.T) / 1.2)
+                         * np.exp(-np.abs(xx.T) / (radius * 0.5)))
             else:
                 inten = 0.9 / (1 + (r / (radius * 0.28)) ** 2) * np.clip(1 - r / radius, 0, 1)
             arr = np.clip(inten[..., None] * np.asarray(color, np.float32)[None, None, :], 0, 255)
@@ -109,6 +117,8 @@ class SceneRenderer:
         return np.eye(3)
 
     def _draw_lines(self, surf, cam, lines: list[Line], behind: bool, cache):
+        """Draw the hidden (``behind``) or visible parts of ``lines``; the projection is
+        shared between both passes through ``cache``."""
         if not lines:
             return
         if cache.get("proj") is None:
@@ -139,6 +149,8 @@ class SceneRenderer:
 
     # --- main entry -----------------------------------------------------------------------
     def draw(self, surf: pygame.Surface, app):
+        """Sky and Sun, then everything hidden by the Earth, the Earth itself, then
+        everything in front of it; finally the selected satellite's callout."""
         sim, cam, opts = app.sim, app.camera, app.opts
         W = self.world_rotation(sim, opts.frame)
         world_to_ecef = rot3(sim.gmst()) @ W.T
@@ -155,8 +167,10 @@ class SceneRenderer:
         sel = app.selected if 0 <= app.selected < sim.n else -1
 
         if opts.axes:
-            names = ("X (vernal equinox)", "Y", "Z (north pole)") if opts.frame == "ECI" else \
-                    ("X (Greenwich)", "Y (90E)", "Z (north pole)")
+            if opts.frame == "ECI":
+                names = ("X (vernal equinox)", "Y", "Z (north pole)")
+            else:
+                names = ("X (Greenwich)", "Y (90E)", "Z (north pole)")
             for k, col in enumerate((theme.AXIS_X, theme.AXIS_Y, theme.AXIS_Z)):
                 end = np.zeros(3)
                 end[k] = 2.3 * R_EARTH
@@ -181,8 +195,8 @@ class SceneRenderer:
         show_orbit = self._orbit_indices(app)
         if show_orbit:
             idx = np.array(show_orbit)
-            pts = conic_points(sim.y[idx, :3], sim.y[idx, 3:], n=180,
-                               r_max=max(3e5, 1.5 * float(np.max(np.linalg.norm(sim.y[idx, :3], axis=1)))))
+            r_far = float(np.max(np.linalg.norm(sim.y[idx, :3], axis=1)))
+            pts = conic_points(sim.y[idx, :3], sim.y[idx, 3:], n=180, r_max=max(3e5, 1.5 * r_far))
             for k, i in enumerate(idx):
                 col = sim.sats[i].color
                 w = 2 if i == sel else 1
@@ -197,7 +211,8 @@ class SceneRenderer:
             r_ecef = eci_to_ecef(sim.y[:, :3], theta) if sim.n else np.zeros((0, 3))
             for st in sim.stations:
                 p_ecef = st.ecef()
-                p_world = (p_ecef / np.linalg.norm(p_ecef) * (np.linalg.norm(p_ecef) + 5)) @ world_to_ecef
+                p_ecef = p_ecef * (1 + 5 / np.linalg.norm(p_ecef))   # 5 km up, above the globe
+                p_world = p_ecef @ world_to_ecef
                 markers.append((p_world, st.color or (120, 255, 160), -3, st.name, False))
                 if sim.n:
                     for i in np.flatnonzero(st.sees(r_ecef) & active):
@@ -212,8 +227,8 @@ class SceneRenderer:
         info = app.orbit_info() if sel >= 0 else None
         if info is not None:
             lines.extend(self._selected_extras(sim, sel, W, world_to_ecef, opts, markers))
-            ol, om, fills = orbitviz.build(info, sim.y[sel, :3], sim.y[sel, 3:], sim.sats[sel].color,
-                                           W, cam, opts.geometry)
+            ol, om, fills = orbitviz.build(info, sim.y[sel, :3], sim.y[sel, 3:],
+                                           sim.sats[sel].color, W, cam, opts.geometry)
             lines.extend(ol)
             markers.extend(om)
 
@@ -224,8 +239,8 @@ class SceneRenderer:
         for i, s in enumerate(sim.sats):
             p = W @ sim.y[i, :3]
             if s.status != ACTIVE:
-                markers.append((p, (110, 110, 110), 2, s.name + f" ({s.status})"
-                                if (sim.n <= 40 or i == sel) else None, i == sel))
+                label = f"{s.name} ({s.status})" if sim.n <= 40 or i == sel else None
+                markers.append((p, (110, 110, 110), 2, label, i == sel))
                 continue
             label = s.name if (opts.labels and (sim.n <= 40 or i == sel)) else None
             if label and i in pads:
@@ -236,7 +251,8 @@ class SceneRenderer:
             if opts.vectors and (sim.n <= 40 or i == sel):
                 v = sim.y[i, 3:]
                 tip = sim.y[i, :3] + v * 180.0
-                lines.append(Line(np.linspace(p, W @ tip, 8), theme.mix(s.color, (255, 255, 255), 0.4), 2))
+                lines.append(Line(np.linspace(p, W @ tip, 8),
+                                  theme.mix(s.color, (255, 255, 255), 0.4), 2))
 
         cache: dict = {}
         mpos = self._project_markers(cam, markers)
@@ -251,8 +267,7 @@ class SceneRenderer:
         self._draw_markers(surf, app, markers, mpos, behind=False)
         self._exhaust(surf, sim, cam, W)
 
-        # picking data
-        # satellites are the last markers appended
+        # picking data: the satellites are the last markers appended
         nsat = sim.n
         if nsat:
             sx, sy, vis = mpos
@@ -264,10 +279,12 @@ class SceneRenderer:
             if vis[sel] and np.isfinite(sx[sel]):
                 bounds = app.view_rect()
                 if bounds.collidepoint(sx[sel], sy[sel]):
-                    orbitviz.draw_callout(surf, app, info, sim.sats[sel], (sx[sel], sy[sel]), bounds)
+                    orbitviz.draw_callout(surf, app, info, sim.sats[sel], (sx[sel], sy[sel]),
+                                          bounds)
 
     # --- pieces -----------------------------------------------------------------------------
     def _orbit_indices(self, app):
+        """Satellites whose osculating orbit is drawn, per the ``orbits`` option."""
         sim, mode = app.sim, app.opts.orbits
         pads = {id(a.sat) for a in sim.ascents if a.phase == "pad"}
         act = [i for i, s in enumerate(sim.sats) if s.status == ACTIVE and id(s) not in pads]
@@ -278,6 +295,7 @@ class SceneRenderer:
         return [i for i in act if i == app.selected]
 
     def _trails(self, sim, app, W):
+        """History trails, fading toward the past (drawn in chunks of rising brightness)."""
         times, data = sim.history.series()
         if len(times) < 2:
             return []
@@ -308,6 +326,7 @@ class SceneRenderer:
         return out
 
     def _selected_extras(self, sim, i, W, world_to_ecef, opts, markers):
+        """Nadir line, apsis/node markers and the coverage footprint of satellite ``i``."""
         out = []
         r, v = sim.y[i, :3], sim.y[i, 3:]
         el = rv2coe(r, v)
@@ -339,7 +358,8 @@ class SceneRenderer:
             lam = coverage_half_angle(alt, math.radians(10.0))
             lat, lon = footprint(lat0, lon0, lam, 120)
             ring = np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)], 1)
-            out.append(Line(ring * R_EARTH * 1.003 @ world_to_ecef, theme.mix(col, (255, 255, 255), 0.3), 2, 0.0))
+            out.append(Line(ring * R_EARTH * 1.003 @ world_to_ecef,
+                            theme.mix(col, (255, 255, 255), 0.3), 2, 0.0))
         return out
 
     def _exhaust(self, surf, sim, cam, W):
@@ -357,13 +377,14 @@ class SceneRenderer:
                 continue
             if np.any(np.abs(sx) > CLIP) or np.any(np.abs(sy) > CLIP):
                 continue
-            head, tail, mid = (int(sx[0]), int(sy[0])), (int(sx[1]), int(sy[1])), (int(sx[2]), int(sy[2]))
+            head, tail, mid = ((int(x), int(y)) for x, y in zip(sx, sy, strict=True))
             flicker = 0.85 + 0.15 * math.sin(pygame.time.get_ticks() * 0.05)
             pygame.draw.line(surf, theme.dim((255, 110, 40), flicker), head, tail, 6)
             pygame.draw.line(surf, (255, 200, 90), head, mid, 3)
             pygame.draw.circle(surf, (255, 245, 210), head, 3)
 
     def _project_markers(self, cam, markers):
+        """Screen x, y and visibility of every marker position."""
         if not markers:
             return (np.zeros(0), np.zeros(0), np.zeros(0, bool))
         pts = np.stack([m[0] for m in markers])
@@ -373,11 +394,13 @@ class SceneRenderer:
         return sx, sy, ok & ~hid
 
     def _draw_markers(self, surf, app, markers, mpos, behind: bool):
+        """Draw hidden or visible markers: dots (radius > 0) with glows for sunlit
+        satellites, squares (radius < 0) and labels."""
         sx, sy, vis = mpos
         fonts = app.fonts
-        start = getattr(self, "_sat_start", len(markers))
+        start = self._sat_start
         glow = len(markers) - start <= 300
-        for k, (p, col, rad, label, selected) in enumerate(markers):
+        for k, (_, col, rad, label, selected) in enumerate(markers):
             if not np.isfinite(sx[k]) or not np.isfinite(sy[k]):
                 continue
             if abs(sx[k]) > CLIP or abs(sy[k]) > CLIP:
@@ -402,7 +425,8 @@ class SceneRenderer:
                            fonts.small)
 
     def _stars(self, surf, cam):
-        sx, sy, z = cam.project_dirs(self.sky_dirs)
+        """Plot the star field directly into the pixel buffer (bright stars as 2x2)."""
+        sx, sy, _ = cam.project_dirs(self.sky_dirs)
         w, h = surf.get_size()
         ok = np.isfinite(sx) & (sx >= 0) & (sx < w - 1) & (sy >= 0) & (sy < h - 1)
         x = sx[ok].astype(np.intp)
@@ -417,7 +441,8 @@ class SceneRenderer:
         del px
 
     def _sun(self, surf, cam, sun_dir, app):
-        sx, sy, z = cam.project_dirs(sun_dir[None, :])
+        """Additive Sun glare sprite and label."""
+        sx, sy, _ = cam.project_dirs(sun_dir[None, :])
         if not np.isfinite(sx[0]):
             return
         x, y = int(sx[0]), int(sy[0])
@@ -440,6 +465,7 @@ def _occluded(cam, pts):
 
 
 def _runs(surf, color, xs, ys, mask, width):
+    """Draw the polyline through the points where ``mask`` holds, broken at gaps."""
     idx = np.flatnonzero(mask)
     if idx.size < 2:
         return
@@ -447,7 +473,7 @@ def _runs(surf, color, xs, ys, mask, width):
     starts = np.r_[0, breaks + 1]
     ends = np.r_[breaks + 1, idx.size]
     pts = np.stack([xs, ys], axis=1)
-    for s, e in zip(starts, ends):
+    for s, e in zip(starts, ends, strict=True):
         if e - s < 2:
             continue
         seg = pts[idx[s:e]].tolist()

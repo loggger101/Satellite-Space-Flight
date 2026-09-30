@@ -257,6 +257,72 @@ def test_orbit_inspector_tabs_scroll_and_geometry_modes(app):
         frame(app)
 
 
+def test_right_panel_scrolls_by_scrollbar_and_keys(app):
+    frame(app, 2)
+    panel = app.info
+    track, thumb = panel.scrollbar()
+    assert thumb is not None and panel.rect.contains(track)
+    end = panel.content_h - panel.body.h
+    # drag the thumb to the bottom of its track: the end of the tab comes into view
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=thumb.center))
+    app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=(thumb.centerx, track.bottom + 50),
+                                  rel=(0, 0), buttons=(1, 0, 0)))
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=thumb.center))
+    frame(app)
+    assert panel.scroll[0] == end
+    assert panel.scrollbar()[1].bottom == track.bottom
+    key(app, pygame.K_HOME)
+    assert panel.scroll[0] == 0
+    key(app, pygame.K_PAGEDOWN)
+    assert 0 < panel.scroll[0] < end
+    key(app, pygame.K_END)
+    frame(app)
+    assert panel.scroll[0] == end
+    # a click on the track above the thumb jumps up there
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(track.centerx, track.y)))
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(track.centerx, track.y)))
+    assert panel.scroll[0] == 0
+
+
+def test_geometry_overlay_names_everything_and_has_a_foldable_key(app):
+    from satflight.ui import orbitviz
+    app.select(app.sim.index_of("Molniya"))
+    frame(app, 2)
+    sel = app.selected
+    ol, om, fills, legend = orbitviz.build(app.orbit_info(), app.sim.y[sel, :3],
+                                           app.sim.y[sel, 3:], app.sim.sats[sel].color,
+                                           np.eye(3), app.camera, "full", app.view_rect())
+    names = [m[3] for m in om]
+    for part in ("perigee", "apogee", "AN ascending node", "DN descending node", "RAAN",
+                 "arg. of perigee", "true anomaly", "inclination", "h orbit normal",
+                 "velocity", "vernal equinox", "equatorial plane"):
+        assert any(part in n for n in names), part
+    keyed = [row[2] for row in legend]
+    for part in ("orbital plane", "line of nodes", "RAAN", "true anomaly", "inclination"):
+        assert any(part in n for n in keyed), part
+    # every angle is shaded as a wedge besides the two planes
+    assert len(fills) >= 2 + 4
+    # the key sits in the view, labels keep clear of it, and a click folds it
+    box = app.renderer.legend_rect
+    assert box is not None and app.view_rect().contains(box)
+    assert all(not box.colliderect(r) for r in app.renderer.label_rects if r is not box)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=box.center))
+    assert app.opts.legend is False
+    frame(app)
+    assert app.renderer.legend_rect.h < box.h
+    key(app, pygame.K_d)                           # basic mode: no key
+    frame(app)
+    assert app.renderer.legend_rect is None
+
+
+def test_window_fits_the_screen():
+    from satflight.__main__ import window_size
+    assert window_size((2560, 1440)) == (1600, 900)
+    w, h = window_size((1536, 960))                 # 1920 x 1200 at 125 % scaling
+    assert w <= 1536 - 16 and h + 34 + 48 <= 960
+    assert window_size((800, 500)) == (900, 600)    # never below the panels' minimum
+
+
 def test_orbit_inspector_draws_every_bundled_orbit(app):
     """Every satellite of every scenario (circular, equatorial, HEO,
     suborbital, hyperbolic, re-entered) in every geometry mode."""

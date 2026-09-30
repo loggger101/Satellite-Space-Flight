@@ -287,7 +287,7 @@ satflight/            physics engine (numpy only)
     widgets.py        buttons, text fields, choices and the form dialog
     theme.py          colours, fonts and drawing helpers
 scenarios/            example scenarios
-tools/                scenario generator, asset downloader
+tools/                scenario and README-picture generators, asset downloader
 tests/                pytest suite
 start.py              launcher: sets up numpy and pygame-ce if needed, then starts
 Start Satellite Space Flight.bat / .command    double-click launchers (Windows / macOS)
@@ -303,7 +303,8 @@ python -m ruff check .       # lint: errors, bugs, import order, 100-column line
 
 The code is formatted by hand in a compact style, so `ruff format` is not
 used. Scenario files are generated: change `tools/make_scenarios.py` and rerun
-it rather than editing the JSON.
+it rather than editing the JSON. The pictures in `docs/images/` are too: after a
+visible UI change, run `python tools/make_screenshots.py`.
 
 ## License
 

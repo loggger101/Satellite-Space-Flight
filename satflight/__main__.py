@@ -12,12 +12,37 @@ import math
 import os
 from pathlib import Path
 
+DEFAULT_SIZE = (1600, 900)
+TASKBAR = 48        # px kept free for the taskbar or dock
+TITLE_BAR = 34      # px of window frame above the drawing area
+
+
+def window_size(desktop, want=DEFAULT_SIZE):
+    """``want`` shrunk so the whole window, frame included, fits a ``desktop`` of
+    (w, h) px, but never below the 900 x 600 minimum the panels need."""
+    dw, dh = desktop
+    return (max(900, min(want[0], dw - 16)), max(600, min(want[1], dh - TASKBAR - TITLE_BAR - 28)))
+
+
+def fit_window():
+    """A window size that fits the main screen, and a position that centres the
+    window above the taskbar (a window larger than the screen hides the
+    panels' right and bottom edges)."""
+    import pygame
+    pygame.display.init()
+    desktop = (pygame.display.get_desktop_sizes() or [DEFAULT_SIZE])[0]
+    w, h = window_size(desktop)
+    y = max(TITLE_BAR, (desktop[1] - TASKBAR - h) // 2 + TITLE_BAR // 2)
+    os.environ.setdefault("SDL_VIDEO_WINDOW_POS", f"{max(0, (desktop[0] - w) // 2)},{y}")
+    return w, h
+
 
 def main(argv=None):
     """Parse the command line, build the :class:`App` and run it."""
     ap = argparse.ArgumentParser(prog="satflight", description="Satellite Space Flight simulator")
     ap.add_argument("scenario", nargs="?", help="scenario JSON (default: scenarios/default.json)")
-    ap.add_argument("--size", default="1600x900", help="window size WxH")
+    ap.add_argument("--size", help="window size WxH (default: 1600x900, or less to fit the "
+                                   "screen)")
     ap.add_argument("--welcome", action=argparse.BooleanOptionalAction,
                     help="show the start screen (default: only when no scenario is given "
                          "and not --headless)")
@@ -45,7 +70,12 @@ def main(argv=None):
     from .batch import parse_duration
     from .ui.app import App
 
-    w, h = (int(x) for x in args.size.lower().split("x"))
+    if args.size:
+        w, h = (int(x) for x in args.size.lower().split("x"))
+    elif args.headless:
+        w, h = DEFAULT_SIZE
+    else:
+        w, h = fit_window()
     welcome = args.welcome
     if welcome is None:
         welcome = not (args.scenario or args.headless)

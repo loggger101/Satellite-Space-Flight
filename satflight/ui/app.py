@@ -12,12 +12,14 @@ import numpy as np
 import pygame
 
 from ..constants import R_EARTH
+from ..orbitinfo import orbit_info
 from ..scenario import Scenario
-from ..simulation import Simulation
+from ..simulation import ACTIVE, Simulation
 from . import dialogs, theme
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .panels import GAP, LEFT_W, LOG_H, RIGHT_W, TOP_H, EventLog, InfoPanel, SatList, TopBar, draw_help
+from .orbitviz import MODES as GEOMETRY_MODES
 from .plots import PlotView
 from .render3d import SceneRenderer
 
@@ -28,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class Options:
     frame: str = "ECI"          # ECI | ECEF
     orbits: str = "auto"        # auto | all | selected | none
+    geometry: str = "full"      # selected orbit's geometry overlay: full | basic | off
     trails: bool = True
     labels: bool = True
     axes: bool = True
@@ -80,6 +83,8 @@ class App:
         self.sim_cost = 0.0
         self._drag = None
         self.scenario_path: Path | None = None
+        self._info_key = None
+        self._info = None
         self.load_scenario(scenario if scenario is not None else self.scenario_dir / "default.json")
 
     # --- scenario management -----------------------------------------------------------
@@ -131,6 +136,26 @@ class App:
         if 0 <= self.selected < self.sim.n:
             self.sim.remove(self.selected)
             self.select(min(self.selected, self.sim.n - 1))
+
+    def orbit_info(self):
+        """Derived orbit properties of the selected satellite, computed once
+        per simulation state (None when nothing active is selected)."""
+        i = self.selected
+        if not 0 <= i < self.sim.n or self.sim.sats[i].status != ACTIVE:
+            return None
+        s = self.sim.sats[i]
+        key = (i, self.sim.t, self.sim.n, self.sim.y[i].tobytes(), id(self.sim),
+               s.mass, s.area, s.cd, s.cr, self.sim.forces.density_scale)
+        if key != self._info_key:
+            self._info = orbit_info(self.sim.y[i, :3], self.sim.y[i, 3:], self.sim.jd(), s,
+                                    self.sim.forces.density_scale)
+            self._info_key = key
+        return self._info
+
+    def cycle_geometry(self):
+        k = GEOMETRY_MODES.index(self.opts.geometry)
+        self.opts.geometry = GEOMETRY_MODES[(k + 1) % len(GEOMETRY_MODES)]
+        self.toast(f"Orbit geometry: {self.opts.geometry}")
 
     def toggle(self, name: str):
         setattr(self.opts, name, not getattr(self.opts, name))
@@ -267,6 +292,8 @@ class App:
             pygame.K_g: lambda: self.toggle("plot"),
             pygame.K_i: lambda: self.toggle("panels"),
             pygame.K_k: lambda: self.toggle("coastlines"),
+            pygame.K_d: self.cycle_geometry,
+            pygame.K_q: self.info.cycle_tab,
             pygame.K_h: lambda: self.toggle("help"),
             pygame.K_F1: lambda: self.toggle("help"),
             pygame.K_a: lambda: self.open("add"),
@@ -309,6 +336,13 @@ class App:
         x0 = 2 * GAP + LEFT_W if self.opts.panels else GAP
         x1 = w - RIGHT_W - 2 * GAP if self.opts.panels else w - GAP
         return x0, x1, h
+
+    def view_rect(self):
+        """The part of the window not covered by panels."""
+        x0, x1, h = self._center_rect()
+        top = TOP_H + GAP if self.opts.panels else GAP
+        bottom = h - LOG_H - 2 * GAP if self.opts.panels else h - GAP
+        return pygame.Rect(x0, top, x1 - x0, bottom - top)
 
     def _map_rect(self):
         x0, x1, h = self._center_rect()

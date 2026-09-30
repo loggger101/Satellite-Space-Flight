@@ -16,6 +16,7 @@ from ..frames import eci_to_ecef, ecef_to_geodetic
 from ..simulation import ACTIVE
 from ..timeutil import format_duration, format_period
 from . import theme
+from .orbitpanel import draw_orbit_tab
 from .widgets import Button
 
 LEFT_W = 262
@@ -187,15 +188,40 @@ class SatList:
 # --- Right: telemetry --------------------------------------------------------------------------
 
 class InfoPanel:
+    TABS = ("Orbit", "Telemetry")
+
     def __init__(self, app):
         self.app = app
         self.rect = pygame.Rect(0, 0, 0, 0)
+        self.tab = 0
+        self.tab_rects: list[pygame.Rect] = []
+        self.scroll = [0, 0]           # per tab, pixels
+        self.content_h = 0
+        self.body = pygame.Rect(0, 0, 0, 0)
 
     def layout(self, w, h):
         self.rect = pygame.Rect(w - RIGHT_W - GAP, TOP_H + GAP, RIGHT_W, h - TOP_H - 2 * GAP)
+        x, y = self.rect.x + 12, self.rect.y + 36
+        self.tab_rects = []
+        for name in self.TABS:
+            tw = self.app.fonts.small.size(name)[0] + 22
+            self.tab_rects.append(pygame.Rect(x, y, tw, 22))
+            x += tw + 4
+        self.body = pygame.Rect(self.rect.x + 4, y + 28, RIGHT_W - 8, self.rect.bottom - y - 28 - 30)
+
+    def cycle_tab(self):
+        self.tab = (self.tab + 1) % len(self.TABS)
 
     def handle(self, ev):
-        return self.rect.collidepoint(getattr(ev, "pos", (-1, -1))) and ev.type == pygame.MOUSEBUTTONDOWN
+        if ev.type == pygame.MOUSEWHEEL and self.rect.collidepoint(pygame.mouse.get_pos()):
+            self.scroll[self.tab] = max(0, self.scroll[self.tab] - ev.y * 48)
+            return True
+        if ev.type != pygame.MOUSEBUTTONDOWN or not self.rect.collidepoint(ev.pos):
+            return False
+        for k, r in enumerate(self.tab_rects):
+            if r.collidepoint(ev.pos) and ev.button == 1:
+                self.tab = k
+        return True
 
     def report(self, i):
         sim = self.app.sim
@@ -291,18 +317,38 @@ class InfoPanel:
         fonts.draw(surf, s.name, (x + 20, y), theme.TEXT, fonts.title)
         status_col = theme.GOOD if s.status == ACTIVE else theme.BAD
         fonts.draw(surf, s.status.upper(), (self.rect.right - 12, y + 4), status_col, fonts.small, "topright")
-        y += 30
+        for k, (name, r) in enumerate(zip(self.TABS, self.tab_rects)):
+            on = k == self.tab
+            pygame.draw.rect(surf, theme.ACCENT_DARK if on else theme.FIELD, r, border_radius=5)
+            if on:
+                pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=5)
+            fonts.draw(surf, name, r.center, theme.TEXT if on else theme.DIM, fonts.small, "center")
+        fonts.draw(surf, "Q", (self.rect.right - 12, self.tab_rects[0].centery), theme.FAINT, fonts.small,
+                   "midright")
+        body = self.body
+        top = self.scroll[self.tab] = max(0, min(self.scroll[self.tab], self.content_h - body.h))
         clip = surf.get_clip()
-        surf.set_clip(self.rect.inflate(-4, -4))
-        for title, rows in self.report(i):
-            fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small)
-            y += 18
-            for label, value in rows:
-                fonts.draw(surf, label, (x + 4, y), theme.DIM, fonts.small)
-                fonts.draw(surf, value, (self.rect.right - 12, y), theme.TEXT, fonts.small, "topright")
-                y += 16
-            y += 6
+        surf.set_clip(body)
+        y0 = body.y + 2 - top
+        if self.tab == 0:
+            y = draw_orbit_tab(surf, x, y0, RIGHT_W - 24, app, i)
+        else:
+            y = y0
+            for title, rows in self.report(i):
+                fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small)
+                y += 18
+                for label, value in rows:
+                    fonts.draw(surf, label, (x + 4, y), theme.DIM, fonts.small)
+                    fonts.draw(surf, value, (self.rect.right - 12, y), theme.TEXT, fonts.small, "topright")
+                    y += 16
+                y += 6
+        self.content_h = y - y0
         surf.set_clip(clip)
+        if self.content_h > body.h:
+            frac = body.h / self.content_h
+            bar_h = max(24, int(body.h * frac))
+            yb = body.y + int((body.h - bar_h) * top / max(1, self.content_h - body.h))
+            pygame.draw.rect(surf, theme.PANEL_EDGE, (self.rect.right - 5, yb, 3, bar_h), border_radius=2)
         self._closest(surf, x, self.rect.bottom - 22)
 
     def _closest(self, surf, x, y):
@@ -359,6 +405,8 @@ HELP = [
     ("O", "orbits: auto / all / selected / none"),
     ("T  L  V  X", "trails, labels, velocity vectors, axes"),
     ("C  R  K", "coverage footprint, GEO ring, coastlines"),
+    ("D", "orbit geometry: full / basic / off"),
+    ("Q", "right panel: orbit / telemetry tab"),
     ("M  G", "ground-track map, telemetry plot"),
     ("A  W  B  N", "add satellite, Walker, manoeuvre, station"),
     ("P", "physics & integrator settings"),

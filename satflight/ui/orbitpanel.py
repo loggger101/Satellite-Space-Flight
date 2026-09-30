@@ -124,10 +124,10 @@ def _arc(surf, color, center, radius, a0, a1, width=1):
 
 DIAGRAM_TIPS = {        # by the first word of the diagram's title
     "ORBITAL": "The orbit seen face-on and to scale, perigee to the right, the satellite "
-               "moving anticlockwise. The line is bright in sunlight and dark in the Earth's "
+               "moving counterclockwise. The line is bright in sunlight and dark in the Earth's "
                "shadow (the dark band); the arrow is the velocity; e is the eccentricity.",
     "INCLINATION": "The orbit seen edge-on, looking along the line of nodes: the dashed line "
-                   "is the equator, the coloured one the orbital plane, the arc between them "
+                   "is the equator, the colored one the orbital plane, the arc between them "
                    "the inclination. h is the orbit normal, N the north pole.",
     "FROM": "The orbit seen from above the north pole. The arc from the vernal equinox "
             "(\N{GREEK SMALL LETTER GAMMA}) to the ascending node (AN) is the RAAN; the "
@@ -219,7 +219,7 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
         pts = [S(*(a * u_hat + b * w_hat)) for a, b in zip(uu, ww, strict=True)]
         _alpha_poly(surf, (0, 0, 12), 150, pts, rect)
 
-    # orbit interior, then the Earth with its lit half towards the Sun
+    # orbit interior, then the Earth with its lit half toward the Sun
     outline = [S(a, b) for a, b in zip(x, y, strict=True)]
     _alpha_poly(surf, color, 38, outline + ([S(0, 0)] if not info.closed else []), rect)
     ecen = S(0, 0)
@@ -235,7 +235,7 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
         pygame.draw.circle(surf, EARTH_DAY, ecen, er)
     pygame.draw.circle(surf, (120, 170, 230), ecen, er, 1)
 
-    # orbit coloured by illumination
+    # orbit colored by illumination
     pos3 = x[:, None] * P + y[:, None] * Q
     lit = shadow_fraction(pos3, r_sun)
     pts = np.stack([cx + scale * x, cy - scale * y], 1)
@@ -271,8 +271,8 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
 
 
 def _plane_apsides_nodes(surf, info: OrbitInfo, S):
-    """Orbit-plane diagram: the line of apsides (with the ellipse centre) and the
-    line of nodes; returns the labels of their end points as (text, pos, colour,
+    """Orbit-plane diagram: the line of apsides (with the ellipse center) and the
+    line of nodes; returns the labels of their end points as (text, pos, color,
     anchor). ``S(x, y)`` maps perifocal km to screen."""
     el = info.el
     e, p = float(el.e), float(el.p)

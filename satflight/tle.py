@@ -1,10 +1,10 @@
 """Two-line element sets.
 
 When the optional ``sgp4`` package (the propagator skyfield uses) is
-installed, TLEs are initialised through SGP4 for the proper mean-to-
+installed, TLEs are initialized through SGP4 for the proper mean-to-
 osculating conversion; the TEME frame it returns is used as ECI (they differ
 by well under a milliradian). Without it the mean elements are applied as
-osculating ones - adequate for visualisation, a few km off in position.
+osculating ones - adequate for visualization, a few km off in position.
 """
 
 from __future__ import annotations

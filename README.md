@@ -1,6 +1,6 @@
 # Satellite Space Flight
 
-An Earth-centred, fully 3-D satellite orbit simulator written entirely in
+An Earth-centered, fully 3-D satellite orbit simulator written entirely in
 Python: a numpy physics engine plus an interactive **pygame** front end.
 Build scenarios with any number of satellites in any orbits, or launch them
 on multi-stage rockets from anywhere on Earth, then calculate and watch them
@@ -58,7 +58,7 @@ python -m satflight scenarios/hohmann_to_geo.json     # straight into a scenario
 The front end uses [pygame-ce](https://pyga.me), the maintained community
 edition of pygame (same `import pygame` API; it also ships wheels for Python
 3.13/3.14, which classic pygame does not yet). The optional
-`pip install sgp4` gives proper SGP4 initialisation of TLEs. The Earth texture
+`pip install sgp4` gives proper SGP4 initialization of TLEs. The Earth texture
 (NASA Blue Marble) and coastlines (Natural Earth) are bundled in `assets/`;
 `python tools/fetch_assets.py` re-downloads them.
 
@@ -92,13 +92,13 @@ steering losses). If the rocket cannot make it, it says why.
 Then the simulation flies it: the vehicle waits on its pad turning with the
 Earth, lifts off, rises vertically, pitches over, flies a gravity turn
 through the atmosphere, drops its first stage and fairing, and steers its
-upper stage with closed-loop guidance to the requested orbit. At cut-off the
+upper stage with closed-loop guidance to the requested orbit. At cutoff the
 payload separates and orbits like any other satellite; the spent stages
 become objects too, so the first stage falls back and re-enters while the
 upper stage stays in orbit next to its payload. While it climbs, the right
 panel shows the ascent: mission clock, stage propellant, altitude against
 downrange (planned and flown), dynamic pressure, g-load, pitch, the orbit
-taking shape and the time to cut-off.
+taking shape and the time to cutoff.
 
 | Launch dialog: a Falcon 9 from a clicked site in central Australia | Launch day: a Falcon 9 in its second-stage burn over Florida |
 |---|---|
@@ -106,7 +106,7 @@ taking shape and the time to cut-off.
 
 ## What it simulates
 
-**Dynamics** (all vectorised over the whole satellite ensemble)
+**Dynamics** (all vectorized over the whole satellite ensemble)
 
 - Two-body gravity plus zonal harmonics **J2, J3, J4**
 - **Atmospheric drag** (piecewise-exponential atmosphere, co-rotating with the Earth, solar-activity scale factor)
@@ -133,25 +133,25 @@ vectors, **launch from the surface** (lat/lon/alt, ground speed, azimuth,
 flight-path angle, including Earth-rotation velocity), geostationary slots,
 TLEs, copies spread along an orbit, and **Walker delta/star constellations**.
 
-**Mission planning** - Hohmann and bi-elliptic transfers, circularisation,
+**Mission planning** - Hohmann and bi-elliptic transfers, circularization,
 plane changes at the nodes, **Lambert rendezvous** (with an automatic search
 for the cheapest time of flight whose arc stays above the atmosphere), and
 arbitrary V/N/B or RSW or ECI impulses, each schedulable now, after a delay, or
 at the next periapsis / apoapsis / ascending / descending node.
 
-**Events** - manoeuvre execution, eclipse entry/exit, ground-station AOS/LOS,
+**Events** - maneuver execution, eclipse entry/exit, ground-station AOS/LOS,
 close approaches between satellites, re-entry, surface impact and escape from
 Earth's sphere of influence.
 
 **Displays**
 
 - 3-D view with a ray-traced, textured Earth lit by the true Sun: soft terminator with twilight band, sun glint on the oceans, atmospheric limb and halo that redden at sunset, exact Earth occlusion of orbits
-- Star field with stellar colours and the Milky Way along the true galactic plane; the Sun
+- Star field with stellar colors and the Milky Way along the true galactic plane; the Sun
 - Satellites glow in sunlight and dim when they pass into Earth's shadow
 - Inertial (ECI) or Earth-fixed (ECEF) frame; follow-camera on any satellite
 - Osculating orbits, perturbed trails, velocity vectors, apsides and node markers, coverage footprint, ground-station links
 - 2-D ground-track map with day/night shading and the sub-solar point
-- **Orbit inspector** for the clicked satellite. In 3-D: its translucent orbital plane slicing the globe, the equatorial plane, line of nodes (AN/DN), line of apsides with perigee and apogee altitudes, every angle (inclination, RAAN from the vernal equinox, argument of perigee, true anomaly, or argument of latitude for near-circular orbits) as a shaded wedge with an arrow showing which way it is measured, the angular-momentum and velocity vectors and a callout card beside the satellite. Every element is labelled by name and joined to what it marks; points behind the Earth keep a dimmed label, and a key in the corner of the view says what each element spans (click it to fold it away). In the *Orbit* tab: the orbital plane face-on to scale with the Earth's shadow cut through it, an edge-on inclination view, a view from the north pole with RAAN, the Sun and the local time of the ascending node, a timeline of the next revolution (sunlight, eclipse, apsis and node passes), altitude and speed gauges, and a property sheet: shape (a, b, e, p, apsides), orientation, timing (period, nodal period, track shift, time to the next perigee/apogee/node), speeds (perigee, apogee, circular, escape, C3), J2 drift, sun-synchronous inclination, beta angle, shadow fraction and the spacecraft's mass, area-to-mass, ballistic coefficient, and drag at perigee
+- **Orbit inspector** for the clicked satellite. In 3-D: its translucent orbital plane slicing the globe, the equatorial plane, line of nodes (AN/DN), line of apsides with perigee and apogee altitudes, every angle (inclination, RAAN from the vernal equinox, argument of perigee, true anomaly, or argument of latitude for near-circular orbits) as a shaded wedge with an arrow showing which way it is measured, the angular-momentum and velocity vectors and a callout card beside the satellite. Every element is labeled by name and joined to what it marks; points behind the Earth keep a dimmed label, and a key in the corner of the view says what each element spans (click it to fold it away). In the *Orbit* tab: the orbital plane face-on to scale with the Earth's shadow cut through it, an edge-on inclination view, a view from the north pole with RAAN, the Sun and the local time of the ascending node, a timeline of the next revolution (sunlight, eclipse, apsis and node passes), altitude and speed gauges, and a property sheet: shape (a, b, e, p, apsides), orientation, timing (period, nodal period, track shift, time to the next perigee/apogee/node), speeds (perigee, apogee, circular, escape, C3), J2 drift, sun-synchronous inclination, beta angle, shadow fraction and the spacecraft's mass, area-to-mass, ballistic coefficient, and drag at perigee
 - Telemetry tab: geodetic position, osculating elements, J2 drift rates, beta angle, illumination, **acceleration budget per force**, energy conservation check, propellant and delta-v, station look angles
 - Time-history plots (altitude, speed, a, e, i, RAAN, argument of perigee, perigee height, energy drift)
 
@@ -173,7 +173,7 @@ what it does, with its keyboard shortcut.
 | `D`, `Q` | selected orbit's geometry (full / basic / off), right panel tab (orbit / telemetry) |
 | `PgUp` `PgDn` `Home` `End` | scroll the right panel (or drag its scrollbar) |
 | `M` `G` `I` | ground-track map, plot, hide panels |
-| `A` `W` `B` `N` `P` | add satellite, Walker constellation, manoeuvre, ground station, physics |
+| `A` `W` `B` `N` `P` | add satellite, Walker constellation, maneuver, ground station, physics |
 | `U` | launch a rocket from anywhere on Earth |
 | `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+R`, `Ctrl+Q` | start screen, scenarios, save snapshot, reset, quit |
 | `Ctrl+E`, `Del`, `F12`, `H` / `F1` | edit / delete satellite, screenshot, help (`Esc` closes it) |
@@ -274,7 +274,7 @@ satflight/            physics engine (numpy only)
   ephemeris.py        Sun position (lighting and eclipses only)
   eclipse.py          umbra / penumbra
   integrators.py      DOPRI5, RK4, leapfrog
-  maneuvers.py        transfers, Lambert, manoeuvre objects
+  maneuvers.py        transfers, Lambert, maneuver objects
   launch.py           launch vehicles, ascent dynamics and guidance, launch windows
   planner.py          turns goals into scheduled burns
   analysis.py         J2 rates, footprints, classification, J2-mean propagator
@@ -293,13 +293,13 @@ satflight/            physics engine (numpy only)
     panels.py         top bar, satellite list, right panel, event log, help
     orbitpanel.py     Orbit tab: diagrams, timeline, gauges and property sheet
     launchui.py       Launch and Vehicle dialogs, ascent view
-    dialogs.py        add satellite, Walker, manoeuvre, station, physics, scenarios
+    dialogs.py        add satellite, Walker, maneuver, station, physics, scenarios
     groundtrack.py    2-D ground-track map
     plots.py          telemetry time-history plot
     widgets.py        buttons, text fields, choices and the form dialog
     tips.py           hover tips: parts register what they are as they draw
     glossary.py       plain-language explanations of every readout
-    theme.py          colours, fonts and drawing helpers
+    theme.py          colors, fonts and drawing helpers
 scenarios/            example scenarios
 tools/                scenario and README-picture generators, asset downloader
 tests/                pytest suite

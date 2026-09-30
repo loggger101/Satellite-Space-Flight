@@ -178,7 +178,7 @@ class App:
             self.select((self.selected + step) % self.sim.n)
 
     def delete_selected(self):
-        """Remove the selected satellite and select its neighbour (key Delete)."""
+        """Remove the selected satellite and select its neighbor (key Delete)."""
         if 0 <= self.selected < self.sim.n:
             self.sim.remove(self.selected)
             self.select(min(self.selected, self.sim.n - 1))

@@ -1,7 +1,7 @@
 """Launch vehicles: a powered ascent from any point on the Earth's surface.
 
 A launch is a multi-stage rocket standing on a pad at geodetic latitude,
-longitude and height. Until lift-off it turns with the Earth. From lift-off it
+longitude and height. Until liftoff it turns with the Earth. From liftoff it
 is integrated on its own (RK4, 1 s steps) under
 
 * gravity: point mass plus the zonal terms the scenario enables,
@@ -24,7 +24,7 @@ Steering, as flown by real launchers:
    50 km, whichever comes first. The radial and out-of-plane accelerations
    are shaped as ``A + B t`` so that the radius reaches the insertion radius
    with zero vertical speed, and the position and velocity out of the target
-   plane both reach zero, at the predicted cut-off. The time to go comes from
+   plane both reach zero, at the predicted cutoff. The time to go comes from
    the rocket equation over the remaining stages. The engines cut off when
    the orbital energy reaches the target orbit's, which puts the payload at
    perigee of the requested orbit.
@@ -36,7 +36,7 @@ flies candidate ascents and keeps the one that reaches the target orbit with
 the most propellant to spare.
 
 The orbit plane comes from the inclination and the launch direction
-(northbound or southbound) at the moment of lift-off, or the launch waits for
+(northbound or southbound) at the moment of liftoff, or the launch waits for
 a *window*: the moment the pad rotates into a plane of given RAAN, or into
 the plane of another satellite (its J2 regression included).
 """
@@ -62,7 +62,7 @@ GUIDANCE_ALT = 50.0       # km: closed-loop guidance starts here or at the first
 H_POWERED = 1.0           # s, integration step of the ascent
 H_COAST = 5.0             # s, step for objects coasting until they join the ensemble
 SAMPLE_DT = 2.0           # s between recorded profile samples
-FREEZE_TGO = 4.0          # s: steering is held constant this close to cut-off
+FREEZE_TGO = 4.0          # s: steering is held constant this close to cutoff
 MIN_PERIGEE = 100.0       # km: lowest target perigee accepted
 MAX_BURN = 3600.0         # s: longest stage burn accepted
 TIMINGS = ("now", "delay", "absolute", "raan", "plane")
@@ -212,7 +212,7 @@ LAUNCH_SITES = {
 
 @dataclass
 class LaunchSpec:
-    """Everything that defines one launch; JSON-serialisable."""
+    """Everything that defines one launch; JSON-serializable."""
     name: str = "Payload"
     vehicle: Vehicle = field(default_factory=lambda: vehicle_preset("Falcon 9 (approx.)"))
     site: str = ""
@@ -221,7 +221,7 @@ class LaunchSpec:
     alt: float = 0.0             # km
     timing: str = "now"          # now | delay | absolute | raan | plane
     delay: float = 0.0           # s, timing == "delay"
-    t0: float | None = None      # lift-off, s since the scenario epoch (timing == "absolute")
+    t0: float | None = None      # liftoff, s since the scenario epoch (timing == "absolute")
     guidance: str = "orbit"      # orbit (closed loop to a target orbit) | open (gravity turn)
     perigee_alt: float = 400.0   # km
     apogee_alt: float = 400.0    # km
@@ -231,11 +231,11 @@ class LaunchSpec:
     target: str = ""             # satellite whose plane to launch into, timing == "plane"
     azimuth: float = 90.0        # deg from north, guidance == "open"
     vertical_time: float = 10.0  # s
-    kick: float | None = None    # deg; None = optimise
+    kick: float | None = None    # deg; None = optimize
     payload_mass: float = 1000.0 # kg
     payload_area: float = 5.0    # m^2 once separated
     payload_cd: float = 2.2
-    circularize: bool = False    # the payload circularises at its first apogee
+    circularize: bool = False    # the payload circularizes at its first apogee
     track_stages: bool = True    # spent stages become objects of their own
     color: list | None = None
 
@@ -271,7 +271,7 @@ def validate(spec: LaunchSpec):
             raise ValueError(f"{s.name}: thrust, Isp and propellant must be positive")
         if s.burn_time > MAX_BURN:
             raise ValueError(f"{s.name} would burn {s.burn_time / 60:.0f} min; the ascent model "
-                             f"allows {MAX_BURN / 60:.0f} (use a finite-burn manoeuvre instead)")
+                             f"allows {MAX_BURN / 60:.0f} (use a finite-burn maneuver instead)")
     if spec.payload_mass < 0 or v.fairing < 0 or v.diameter < 0 or v.cd < 0:
         raise ValueError("masses, diameter and Cd cannot be negative")
     if not -90.0 <= spec.lat <= 90.0:
@@ -489,7 +489,7 @@ def _unreachable(inc_deg: float, lat_deg: float) -> str:
     lo = abs(lat_deg)
     return (f"inclination {inc_deg:.1f} deg cannot be reached directly from latitude "
             f"{lat_deg:+.1f} deg: choose {lo:.1f} to {180 - lo:.1f} deg "
-            "(dog-leg ascents are not modelled)")
+            "(dogleg ascents are not modeled)")
 
 
 def next_window(lat: float, lon: float, alt: float, normal_at, t_start: float, gmst,
@@ -536,7 +536,7 @@ def next_window(lat: float, lon: float, alt: float, normal_at, t_start: float, g
 
 @dataclass
 class Resolved:
-    """A launch spec turned into numbers: lift-off time, plane and targets."""
+    """A launch spec turned into numbers: liftoff time, plane and targets."""
     t0: float
     azimuth: float                  # rad from north, relative to the rotating Earth
     n: tuple | None = None          # target plane normal (orbit guidance)
@@ -547,7 +547,7 @@ class Resolved:
 
 
 def resolve(spec: LaunchSpec, env: AscentEnv, t_now: float, plane_of=None) -> Resolved:
-    """Lift-off time, target plane and launch azimuth. ``plane_of(name)``
+    """Liftoff time, target plane and launch azimuth. ``plane_of(name)``
     returns ``(inclination deg, normal_at(t))`` for another satellite."""
     validate(spec)
     normal_at = None
@@ -643,7 +643,7 @@ class Ascent:
         self.v_start = self.speed
         self.samples: list = []         # (MET, alt, downrange, speed, q kPa, accel g)
         self.track: list = []           # (lat deg, lon deg)
-        self.stage_marks: list = []     # (t since lift-off, alt, downrange, label)
+        self.stage_marks: list = []     # (t since liftoff, alt, downrange, label)
         self._next_sample = -math.inf
         self.insertion = None           # dict of the orbit at release
         self.planned = None             # (samples, stage marks, outcome text) of the plan
@@ -673,7 +673,7 @@ class Ascent:
 
     @property
     def met(self) -> float:
-        """Mission elapsed time: seconds since lift-off (negative before)."""
+        """Mission elapsed time: seconds since liftoff (negative before)."""
         return self.t - self.t0
 
     @property
@@ -709,7 +709,7 @@ class Ascent:
         self.track.append((lat, lon))
 
     def _mark(self, label: str):
-        """Record a labelled milestone (lift-off, staging ...) on the profile."""
+        """Record a labeled milestone (liftoff, staging ...) on the profile."""
         if self.record:
             *_, dr = self.geo(self.t, self.y)
             self.stage_marks.append((self.met, _altitude(*self.y[:3]), dr, label))
@@ -760,9 +760,9 @@ class Ascent:
                                         "below 1, the vehicle cannot lift off", "alert")
             return
         self.burning = True
-        self._event(f"lift-off on {self.veh.name} from {self.spec.site or 'the pad'} "
+        self._event(f"liftoff on {self.veh.name} from {self.spec.site or 'the pad'} "
                     f"(T/W {thrust / weight:.2f})")
-        self._mark("Lift-off")
+        self._mark("Liftoff")
         self._sample(force=True)
 
     def _throttle(self, st: Stage, alt: float) -> float:
@@ -775,7 +775,7 @@ class Ascent:
 
     def _step(self, h: float):
         """One integration step of at most ``h`` s, shortened to land exactly on
-        burnout or on the cut-off energy."""
+        burnout or on the cutoff energy."""
         s0, t, m0 = self.y, self.t, self.mass
         alt = _altitude(*s0[:3])
         if not self.burning and self.k < len(self.veh.stages) and self.coast_until <= t + 1e-9:
@@ -843,7 +843,7 @@ class Ascent:
             self._event(f"max Q {self.max_q[0] / 1000:.1f} kPa at T+{self.max_q[1]:.0f} s", "info")
 
     def _after_step(self, cutoff: bool, burnout: bool):
-        """Fairing jettison, impact, cut-off and staging checks after a step."""
+        """Fairing jettison, impact, cutoff and staging checks after a step."""
         alt = _altitude(*self.y[:3])
         if self.fairing_on and alt >= self.veh.fairing_alt:
             self.fairing_on = False
@@ -883,7 +883,7 @@ class Ascent:
             self.spawns.append((self.t, f"{self.spec.name} {name}", self.y, mass, self.cd_a))
 
     def _insertion(self, outcome: str):
-        """Cut-off (or last burnout): the payload separates from the last stage."""
+        """Cutoff (or last burnout): the payload separates from the last stage."""
         st = self.stage
         el = rv2coe(np.array(self.y[:3]), np.array(self.y[3:]))
         hp = el.rp - R_EARTH
@@ -909,7 +909,7 @@ class Ascent:
         else:
             text = f"burnout at T+{self.met:.0f} s on a sub-orbital path (apogee {ha:,.0f} km)"
             kind = "launch"
-        self._mark("Cut-off" if outcome == "orbit" else "Burnout")
+        self._mark("Cutoff" if outcome == "orbit" else "Burnout")
         self._sample(force=True)
         remaining = self.mass - self.spec.payload_mass
         self._drop(st.name, remaining)
@@ -986,7 +986,7 @@ class Ascent:
 
     def _guided(self, s):
         """Closed-loop thrust direction that nulls the radial and out-of-plane
-        errors at the predicted cut-off (see the module docstring)."""
+        errors at the predicted cutoff (see the module docstring)."""
         r, v = s[:3], s[3:]
         rm = math.sqrt(_dot(r, r))
         up = (r[0] / rm, r[1] / rm, r[2] / rm)

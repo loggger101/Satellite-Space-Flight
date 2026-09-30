@@ -1,6 +1,6 @@
 numpy>=1.24
 pygame-ce>=2.4
-# optional: SGP4 initialisation of TLEs (the propagator skyfield uses)
+# optional: SGP4 initialization of TLEs (the propagator skyfield uses)
 # sgp4>=2.22
 # development
 pytest>=7

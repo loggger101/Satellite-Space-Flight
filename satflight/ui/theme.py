@@ -1,4 +1,4 @@
-"""Colours, fonts, the UI scale and a text-surface cache shared by every UI module.
+"""Colors, fonts, the UI scale and a text-surface cache shared by every UI module.
 
 Sizes in the UI code are written in design pixels, the layout at 100 % display
 scaling. :func:`px` turns them into screen pixels: the window has the screen's
@@ -85,7 +85,7 @@ class Fonts:
         self._cache: dict = {}
 
     def render(self, text: str, color=TEXT, font=None) -> pygame.Surface:
-        """Rendered text surface, cached by (text, colour, font)."""
+        """Rendered text surface, cached by (text, color, font)."""
         font = font or self.ui
         key = (text, color, id(font))
         surf = self._cache.get(key)
@@ -145,5 +145,5 @@ def dim(color, k: float):
 
 
 def mix(a, b, k: float):
-    """Linear blend from colour ``a`` (k = 0) to ``b`` (k = 1)."""
+    """Linear blend from color ``a`` (k = 0) to ``b`` (k = 1)."""
     return tuple(int(a[i] * (1 - k) + b[i] * k) for i in range(3))

@@ -1,5 +1,5 @@
-"""Perspective orbit camera and the projection/occlusion maths used by the
-renderer. World units are kilometres with +Z the Earth's rotation axis."""
+"""Perspective orbit camera and the projection/occlusion math used by the
+renderer. World units are kilometers with +Z the Earth's rotation axis."""
 
 from __future__ import annotations
 

@@ -23,7 +23,7 @@ restored from git history (the last commit that has all of it is `c079ded`).
   value). It is a J2 property of the Earth's field that matches a fixed rate
   of 0.9856 deg/day; it does not use the Sun's position.
 - The escape threshold of 924,000 km (Earth's sphere of influence) stays as
-  a distance limit for an Earth-centred model; nothing is computed about the
+  a distance limit for an Earth-centered model; nothing is computed about the
   Sun there.
 - The star field and Milky Way remain as a decorative backdrop (no physics).
 

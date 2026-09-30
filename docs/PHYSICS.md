@@ -64,7 +64,7 @@ The whole ensemble is one `(N, 6)` state, advanced with one shared step.
   conservative forces over arbitrarily long runs, as in REBOUND's WHFast
   family.
 
-Integration stops exactly at every scheduled manoeuvre and burn boundary, and
+Integration stops exactly at every scheduled maneuver and burn boundary, and
 restarts whenever a satellite leaves the active set (re-entry, impact,
 escape).
 
@@ -96,12 +96,12 @@ circular orbits use argp = 0 (so the true anomaly becomes the argument of
 latitude). With these conventions the two functions round-trip exactly,
 including retrograde-equatorial and hyperbolic orbits.
 
-## Manoeuvre planning
+## Maneuver planning
 
 - **Hohmann**: first burn along V sized by vis-viva from the actual radius at
-  the burn point; the second burn is a *circularize* manoeuvre computed from
+  the burn point; the second burn is a *circularize* maneuver computed from
   the true state on arrival, so perturbations during the coast are absorbed.
-- **Bi-elliptic**: two prograde burns plus a final circularisation.
+- **Bi-elliptic**: two prograde burns plus a final circularization.
 - **Plane change**: velocity rotated about the radius vector; at the
   ascending node a positive angle raises the inclination.
 - **Lambert**: universal-variable zero-revolution solver with bisection
@@ -112,10 +112,10 @@ including retrograde-equatorial and hyperbolic orbits.
 ## Launch and ascent
 
 `satflight/launch.py`. A launch is a stack of stages plus fairing and
-payload on a pad at geodetic latitude, longitude and height. Before lift-off
-its state is the pad's, rotating with the Earth. From lift-off it leaves the
+payload on a pad at geodetic latitude, longitude and height. Before liftoff
+its state is the pad's, rotating with the Earth. From liftoff it leaves the
 ensemble and is integrated on its own with RK4 at 1 s steps (shortened to end
-exactly at burnout, cut-off and ignition), under
+exactly at burnout, cutoff and ignition), under
 
     r'' = -mu r / r^3 + a_J2..J4 + a_drag + (T / m) u
     T   = mdot g0 Isp(h),   mdot = throttle T_vac / (g0 Isp_vac)
@@ -153,9 +153,9 @@ An acceleration limit, if set, throttles between 40 and 100 %.
 Open-loop launches skip step 4 and burn every stage along a fixed azimuth.
 
 **Plane and azimuth.** The orbit plane is the one of the requested
-inclination that contains the pad at lift-off and crosses it northbound or
+inclination that contains the pad at liftoff and crosses it northbound or
 southbound. That is possible only for `|lat| <= i <= 180 - |lat|` (geocentric),
-because dog-leg ascents are not modelled. A **window** launch waits until the
+because dogleg ascents are not modeled. A **window** launch waits until the
 pad rotates into a fixed plane (given RAAN), or into another satellite's
 plane regressing with J2, found by scanning the pad's signed distance from
 the plane and bisecting its zero crossings. The azimuth flown relative to the
@@ -163,14 +163,14 @@ rotating Earth, `atan2(v sin(b) - w R cos(lat), v cos(b))`, turns the inertial
 in-plane azimuth `b` into one that ends in the plane once the orbital speed
 `v` is reached. Guidance removes the remaining out-of-plane error.
 
-**Kick optimisation.** Left on `auto`, the kick is chosen by flying
+**Kick optimization.** Left on `auto`, the kick is chosen by flying
 candidates from 0.05 to 16 deg (grid, then golden-section) and keeping the
 one that reaches the target with the most propellant left. For open-loop
 flights it keeps the highest perigee, or, for sub-orbital ones, the highest
 apogee. One flight takes about 10 ms: the ascent uses plain Python floats,
 not numpy.
 
-**Book-keeping.** Staging drops each stage's dry mass. At cut-off the last
+**Bookkeeping.** Staging drops each stage's dry mass. At cutoff the last
 stage, with its leftover propellant, separates from the payload. Spent stages
 are coasted to the ensemble's time and added as satellites of the same
 launch "family"; close-approach alerts inside a family are suppressed. The
@@ -189,7 +189,7 @@ public numbers: performance is realistic in kind, not for mission design.
 - Re-entry: altitude < 80 km while descending. Impact: altitude <= 0.
   Launches starting low are not flagged while they climb.
 - Escape: distance > 924,000 km (Earth's sphere of influence w.r.t. the Sun).
-  Beyond it an Earth-centred model is no longer appropriate.
+  Beyond it an Earth-centered model is no longer appropriate.
 - Close approaches (below 10 km) are found between steps too: each pair's
   relative motion over a step is the cubic Hermite curve through both ends'
   positions and velocities, and its minimum gives the distance and time of
@@ -213,7 +213,7 @@ public numbers: performance is realistic in kind, not for mission design.
 - Launch vehicles: point mass with instantaneous attitude (no rotational
   dynamics or aerodynamic loads, no winds), serial staging only (no strap-on
   boosters burning alongside a core), no engine-out, a single burn to orbit
-  (no parking-orbit coast and restart; schedule manoeuvres for that), and an
+  (no parking-orbit coast and restart; schedule maneuvers for that), and an
   ambient-pressure model of `exp(-h / 7 km)`.
 - Cannonball drag (no attitude-dependent areas).
 - Without the optional `sgp4` package, TLE mean elements are used as

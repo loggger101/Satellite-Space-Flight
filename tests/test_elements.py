@@ -52,7 +52,7 @@ def test_coe_rv_round_trip(a, e, i, raan, argp, nu):
     assert el.e == pytest.approx(e, abs=1e-12)
 
 
-def test_rv2coe_vectorised_matches_scalar():
+def test_rv2coe_vectorized_matches_scalar():
     rs, vs = coe2rv(np.array([7000, 12000.0]), np.array([0.1, 0.3]), D(np.array([10, 70.0])),
                     D(np.array([5, 50.0])), D(np.array([15, 150.0])), D(np.array([25, 250.0])))
     el = rv2coe(rs, vs)

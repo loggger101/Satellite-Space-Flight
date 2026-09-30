@@ -11,23 +11,22 @@ from __future__ import annotations
 
 import numpy as np
 
-from .constants import AU
+from .constants import AU, DEG
 from .timeutil import centuries_since_j2000
-
-D2R = np.pi / 180.0
 
 
 def obliquity(jd):
+    """Mean obliquity of the ecliptic (rad) at Julian date(s) ``jd``."""
     t = centuries_since_j2000(jd)
-    return (23.439291 - 0.0130042 * t) * D2R
+    return (23.439291 - 0.0130042 * t) * DEG
 
 
 def sun_position(jd) -> np.ndarray:
     """Geocentric Sun vector, km. ``jd`` scalar -> (3,), array -> (N, 3)."""
     t = centuries_since_j2000(jd)
     lam_m = 280.460 + 36000.771 * t
-    m = (357.5291092 + 35999.05034 * t) * D2R
-    lam = (lam_m + 1.914666471 * np.sin(m) + 0.019994643 * np.sin(2 * m)) * D2R
+    m = (357.5291092 + 35999.05034 * t) * DEG
+    lam = (lam_m + 1.914666471 * np.sin(m) + 0.019994643 * np.sin(2 * m)) * DEG
     r = (1.000140612 - 0.016708617 * np.cos(m) - 0.000139589 * np.cos(2 * m)) * AU
     eps = obliquity(jd)
     return np.stack([r * np.cos(lam),

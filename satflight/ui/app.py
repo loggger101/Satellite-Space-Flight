@@ -18,8 +18,19 @@ from ..simulation import ACTIVE, Simulation
 from . import dialogs, launchui, theme
 from .camera import Camera
 from .groundtrack import GroundTrackView
-from .panels import GAP, LEFT_W, LOG_H, RIGHT_W, TOP_H, EventLog, InfoPanel, SatList, TopBar, draw_help
 from .orbitviz import MODES as GEOMETRY_MODES
+from .panels import (
+    GAP,
+    LEFT_W,
+    LOG_H,
+    RIGHT_W,
+    TOP_H,
+    EventLog,
+    InfoPanel,
+    SatList,
+    TopBar,
+    draw_help,
+)
 from .plots import PlotView
 from .render3d import SceneRenderer
 
@@ -28,6 +39,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @dataclass
 class Options:
+    """View toggles; most have a keyboard shortcut (see ``App._key``)."""
+
     frame: str = "ECI"          # ECI | ECEF
     orbits: str = "auto"        # auto | all | selected | none
     geometry: str = "full"      # selected orbit's geometry overlay: full | basic | off
@@ -51,6 +64,10 @@ WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
 
 
 class App:
+    """The window: owns the simulation, camera, panels and dialogs, and runs the
+    event / update / draw loop. ``root`` is the repository folder holding
+    ``scenarios/`` and ``assets/``."""
+
     def __init__(self, scenario=None, size=(1600, 900), root: Path = ROOT):
         pygame.init()
         self.root = Path(root)
@@ -88,10 +105,13 @@ class App:
 
     # --- scenario management -----------------------------------------------------------
     def scenario_files(self):
-        files = sorted(self.scenario_dir.glob("*.json")) + sorted(self.user_scenario_dir.glob("*.json"))
-        return files
+        """Bundled scenarios, then the user's saved ones."""
+        return (sorted(self.scenario_dir.glob("*.json"))
+                + sorted(self.user_scenario_dir.glob("*.json")))
 
     def load_scenario(self, src):
+        """Start a new simulation from a :class:`Scenario` or a JSON path (a missing
+        file gives an empty scenario)."""
         if isinstance(src, Scenario):
             sc, path = src, None
         else:
@@ -109,12 +129,14 @@ class App:
         self.toast(f"Loaded '{sc.name}'")
 
     def reset(self):
+        """Reload the current scenario from its file (or its in-memory original)."""
         if self.scenario_path is not None:
             self.load_scenario(self.scenario_path)
         else:
             self.load_scenario(self.sim.scenario)
 
     def quick_save(self):
+        """Save the current state to ``scenarios/user/snapshot_<time>.json``."""
         name = datetime.now().strftime("snapshot_%Y%m%d_%H%M%S")
         path = self.user_scenario_dir / f"{name}.json"
         self.sim.snapshot_scenario(name).save(path)
@@ -122,6 +144,7 @@ class App:
 
     # --- selection / commands -------------------------------------------------------------
     def select(self, i: int):
+        """Select satellite ``i`` (-1 for none) and ask the simulation for its events."""
         self.selected = i if 0 <= i < self.sim.n else -1
         self.sim.watch = {self.selected} if self.selected >= 0 else set()
         if self.selected >= 0:
@@ -154,6 +177,11 @@ class App:
             self._info_key = key
         return self._info
 
+    def cycle_orbits(self):
+        """Step through which orbits are drawn (``ORBIT_MODES``)."""
+        k = ORBIT_MODES.index(self.opts.orbits)
+        self.opts.orbits = ORBIT_MODES[(k + 1) % len(ORBIT_MODES)]
+
     def cycle_geometry(self):
         k = GEOMETRY_MODES.index(self.opts.geometry)
         self.opts.geometry = GEOMETRY_MODES[(k + 1) % len(GEOMETRY_MODES)]
@@ -166,7 +194,9 @@ class App:
         self.paused = not self.paused
 
     def change_warp(self, step: int):
-        k = min(range(len(WARPS)), key=lambda j: abs(math.log(WARPS[j]) - math.log(max(self.warp, 1))))
+        """Move ``step`` notches along the ``WARPS`` ladder from the nearest one."""
+        now = math.log(max(self.warp, 1))
+        k = min(range(len(WARPS)), key=lambda j: abs(math.log(WARPS[j]) - now))
         self.warp = float(WARPS[max(0, min(len(WARPS) - 1, k + step))])
 
     def real_time(self):
@@ -176,6 +206,7 @@ class App:
         self.opts.frame = "ECEF" if self.opts.frame == "ECI" else "ECI"
 
     def toggle_follow(self):
+        """Toggle the camera following the selected satellite."""
         if not self.follow and not 0 <= self.selected < self.sim.n:
             self.toast("Select a satellite to follow")
             return
@@ -187,6 +218,7 @@ class App:
             self.camera.distance = max(self.camera.distance, 3.2 * R_EARTH)
 
     def open(self, name: str):
+        """Open the dialog called ``name`` (see the factory table)."""
         factory = {"add": dialogs.add_satellite_dialog, "walker": dialogs.walker_dialog,
                    "maneuver": dialogs.maneuver_dialog, "station": dialogs.station_dialog,
                    "physics": dialogs.physics_dialog, "scenario": dialogs.scenario_dialog,
@@ -201,9 +233,11 @@ class App:
             self.dialogs.remove(dlg)
 
     def toast(self, msg: str):
+        """Show ``msg`` briefly at the top of the view."""
         self.toasts.append((time.monotonic() + 3.5, msg))
 
     def screenshot(self, path: Path | None = None):
+        """Save the window to ``path`` (default ``screenshots/shot_<time>.png``)."""
         if path is None:
             path = self.root / "screenshots" / datetime.now().strftime("shot_%Y%m%d_%H%M%S.png")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -213,11 +247,13 @@ class App:
 
     # --- input -------------------------------------------------------------------------------
     def handle(self, ev):
+        """Route an event: dialogs first, then panels, then the 3-D view."""
         if ev.type == pygame.QUIT:
             self.running = False
             return
         if ev.type == pygame.VIDEORESIZE:
-            self.screen = pygame.display.set_mode((max(900, ev.w), max(600, ev.h)), pygame.RESIZABLE)
+            size = (max(900, ev.w), max(600, ev.h))
+            self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
             self.camera.resize(*self.screen.get_size())
             for d in self.dialogs:
                 d.layout()
@@ -228,8 +264,8 @@ class App:
         if self.opts.panels:
             if self.topbar.handle(ev):
                 return
-            if self.opts.map and self._map_rect().collidepoint(getattr(ev, "pos", (-1, -1))) \
-                    and ev.type == pygame.MOUSEBUTTONDOWN:
+            if (self.opts.map and ev.type == pygame.MOUSEBUTTONDOWN
+                    and self._map_rect().collidepoint(ev.pos)):
                 return
             if self.opts.plot and self.plot.handle(ev):
                 return
@@ -256,6 +292,7 @@ class App:
         self.camera.zoom(factor, 5.0 if self.follow else None)
 
     def _pick(self, pos):
+        """Select the satellite drawn nearest the click, if within 14 px."""
         data = self.renderer.sat_screen
         if data is None:
             return
@@ -267,6 +304,7 @@ class App:
             self.select(k)
 
     def _key(self, ev):
+        """Keyboard shortcuts of the main view."""
         k, ctrl, shift = ev.key, ev.mod & pygame.KMOD_CTRL, ev.mod & pygame.KMOD_SHIFT
         if ctrl:
             actions = {pygame.K_o: lambda: self.open("scenario"), pygame.K_s: self.quick_save,
@@ -282,8 +320,7 @@ class App:
             pygame.K_1: self.real_time,
             pygame.K_f: self.toggle_follow,
             pygame.K_e: self.toggle_frame,
-            pygame.K_o: lambda: setattr(self.opts, "orbits",
-                                        ORBIT_MODES[(ORBIT_MODES.index(self.opts.orbits) + 1) % 4]),
+            pygame.K_o: self.cycle_orbits,
             pygame.K_t: lambda: self.toggle("trails"),
             pygame.K_l: lambda: self.toggle("labels"),
             pygame.K_v: lambda: self.toggle("vectors"),
@@ -322,6 +359,7 @@ class App:
 
     # --- frame ---------------------------------------------------------------------------------
     def update(self, dt_real: float):
+        """Advance the simulation by ``warp`` times the real frame time and move the camera."""
         if not self.paused:
             t0 = time.perf_counter()
             self.sim.advance(self.warp * min(dt_real, 0.1))
@@ -334,7 +372,8 @@ class App:
             self.camera.target = np.zeros(3)
         self.camera.update()
 
-    def _center_rect(self):
+    def center_span(self):
+        """(left, right, window height) of the area between the side panels."""
         w, h = self.screen.get_size()
         x0 = 2 * GAP + LEFT_W if self.opts.panels else GAP
         x1 = w - RIGHT_W - 2 * GAP if self.opts.panels else w - GAP
@@ -342,25 +381,27 @@ class App:
 
     def view_rect(self):
         """The part of the window not covered by panels."""
-        x0, x1, h = self._center_rect()
+        x0, x1, _ = self.center_span()
         top = TOP_H + GAP if self.opts.panels else GAP
-        bottom = h - LOG_H - 2 * GAP if self.opts.panels else h - GAP
-        return pygame.Rect(x0, top, x1 - x0, bottom - top)
+        return pygame.Rect(x0, top, x1 - x0, self._bottom() - top)
+
+    def _bottom(self) -> int:
+        """Lowest y of the view: the top of the event log, or the window edge."""
+        h = self.screen.get_height()
+        return h - LOG_H - 2 * GAP if self.opts.panels else h - GAP
 
     def _map_rect(self):
-        x0, x1, h = self._center_rect()
-        wc = x1 - x0
-        mh = int(min(wc / 2 + 26, 330))
-        bottom = h - LOG_H - 2 * GAP if self.opts.panels else h - GAP
-        return pygame.Rect(x0, bottom - mh, wc, mh)
+        x0, x1, _ = self.center_span()
+        mh = int(min((x1 - x0) / 2 + 26, 330))
+        return pygame.Rect(x0, self._bottom() - mh, x1 - x0, mh)
 
     def _plot_rect(self):
-        x0, x1, h = self._center_rect()
-        bottom = (self._map_rect().y - GAP) if self.opts.map else \
-            (h - LOG_H - 2 * GAP if self.opts.panels else h - GAP)
+        x0, x1, _ = self.center_span()
+        bottom = self._map_rect().y - GAP if self.opts.map else self._bottom()
         return pygame.Rect(x0, bottom - 190, x1 - x0, 190)
 
     def draw(self):
+        """Draw one frame: 3-D scene, panels, map/plot, help, dialogs and toasts."""
         s = self.screen
         self.renderer.draw(s, self)
         if self.opts.panels:
@@ -376,17 +417,20 @@ class App:
             draw_help(s, self)
         if self.follow and 0 <= self.selected < self.sim.n:
             self.fonts.draw(s, f"following {self.sim.sats[self.selected].name}  (F to release)",
-                            (s.get_width() // 2, TOP_H + 14), theme.ACCENT, self.fonts.small, "midtop")
+                            (s.get_width() // 2, TOP_H + 14), theme.ACCENT, self.fonts.small,
+                            "midtop")
         for d in self.dialogs:
             d.draw(s)
         now = time.monotonic()
         self.toasts = [(t, m) for t, m in self.toasts if t > now][-4:]
         for k, (_, msg) in enumerate(self.toasts):
-            r = self.fonts.render(msg, theme.TEXT, self.fonts.ui).get_rect(midtop=(s.get_width() // 2, TOP_H + 40 + k * 30))
+            txt = self.fonts.render(msg, theme.TEXT, self.fonts.ui)
+            r = txt.get_rect(midtop=(s.get_width() // 2, TOP_H + 40 + k * 30))
             theme.panel(s, r.inflate(24, 10), (20, 30, 55, 230), theme.ACCENT, 6)
-            s.blit(self.fonts.render(msg, theme.TEXT, self.fonts.ui), r)
+            s.blit(txt, r)
 
     def run(self, max_frames: int | None = None, screenshot: Path | None = None):
+        """Main loop at up to 60 fps; optionally stop after ``max_frames`` and save a screenshot."""
         frames = 0
         while self.running:
             dt = self.clock.tick(60) / 1000.0

@@ -3,20 +3,35 @@ manoeuvres, ground stations, physics settings and scenario files."""
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
 import numpy as np
 
-from ..constants import MU_EARTH, R_EARTH
-from ..elements import rv2coe
+from ..batch import export_history_csv
+from ..constants import R_EARTH
+from ..elements import period_of, rv2coe
 from ..forces import ForceModel
 from ..integrators import METHODS
+from ..launch import G0_M
 from ..maneuvers import Maneuver
-from ..planner import (plan_bielliptic, plan_hohmann, plan_rendezvous, scan_rendezvous,
-                       plane_change_summary)
-from ..scenario import PRESETS, ConstellationSpec, GroundStation, orbit_state, walker_states
-from ..simulation import PROPAGATORS
+from ..planner import (
+    plan_bielliptic,
+    plan_hohmann,
+    plan_rendezvous,
+    plane_change_summary,
+    scan_rendezvous,
+)
+from ..scenario import (
+    PRESETS,
+    ConstellationSpec,
+    GroundStation,
+    orbit_state,
+    palette_color,
+    walker_states,
+)
+from ..simulation import ACTIVE, PROPAGATORS
 from ..timeutil import format_period
 from .widgets import FieldSpec as F
 from .widgets import FormDialog
@@ -29,10 +44,12 @@ _ELEM_MODES = MODES[:3]
 
 
 def _mode(*names):
+    """Visibility predicate: the initial-condition mode is one of ``names``."""
     return lambda raw: raw.get("mode") in names
 
 
 def _orbit_from(v: dict) -> dict:
+    """The scenario orbit spec described by the Add-satellite form."""
     mode = v["mode"]
     if mode in _ELEM_MODES:
         o = {"type": "elements", "i": v["i"], "raan": v["raan"], "argp": v["argp"], "nu": v["nu"]}
@@ -55,6 +72,7 @@ def _orbit_from(v: dict) -> dict:
 
 
 def add_satellite_dialog(app):
+    """Add one satellite (or copies along its orbit) from any initial condition (key A)."""
     sim = app.sim
     specs = [
         F("name", "Name", "text", f"Sat {sim.n + 1}"),
@@ -67,7 +85,8 @@ def add_satellite_dialog(app):
         F("e", "Eccentricity e", "float", "0.1", visible=_mode("Elements (a, e)")),
         F("i", "Inclination (deg or 'sso')", "floatx", "51.6", visible=_mode(*_ELEM_MODES)),
         F("raan", "RAAN (deg)", "float", "0", visible=_mode(*_ELEM_MODES)),
-        F("argp", "Arg. of perigee (deg)", "float", "0", visible=_mode("Perigee / apogee", "Elements (a, e)")),
+        F("argp", "Arg. of perigee (deg)", "float", "0",
+          visible=_mode("Perigee / apogee", "Elements (a, e)")),
         F("nu", "True anomaly (deg)", "float", "0", visible=_mode(*_ELEM_MODES)),
         F("lat", "Latitude (deg)", "float", "28.5", visible=_mode("Surface launch")),
         F("lon", "Longitude (deg E)", "float", "-80.6", visible=_mode("Surface launch")),
@@ -99,7 +118,7 @@ def add_satellite_dialog(app):
     def on_ok(v):
         orbit = _orbit_from(v)
         props = dict(mass=v["mass"], area=v["area"], cd=v["cd"])
-        if min(props.values()) <= 0 or v["mass"] <= 0:
+        if min(props.values()) <= 0:
             return "mass, area and coefficients must be positive"
         added = sim.add_satellites(orbit, v["name"] or "Sat", count=max(1, v["count"]), **props)
         app.select(sim.n - len(added))
@@ -112,6 +131,7 @@ def add_satellite_dialog(app):
 
 
 def _apply_preset(dlg):
+    """Fill the form from the chosen entry of ``PRESETS``."""
     name = dlg.widgets["preset"].value
     if name not in PRESETS:
         return
@@ -147,24 +167,27 @@ def _apply_preset(dlg):
 
 
 def _preview(dlg):
+    """One-line summary of the orbit the form describes (blank while it is invalid)."""
     try:
         v = dlg.values()
         r, vv = orbit_state(_orbit_from(v), dlg.app.sim.clock, dlg.app.sim.t)
         el = rv2coe(r, vv)
         if el.e < 1:
             txt = (f"a {el.a:,.0f} km  e {el.e:.4f}  i {math.degrees(el.i):.2f} deg  "
-                   f"hp {el.rp - R_EARTH:,.0f} / ha {el.ra - R_EARTH:,.0f} km  T {format_period(el.period)}")
+                   f"hp {el.rp - R_EARTH:,.0f} / ha {el.ra - R_EARTH:,.0f} km  "
+                   f"T {format_period(el.period)}")
         else:
             vinf = math.sqrt(max(0.0, 2 * el.energy))
             txt = f"open orbit: e {el.e:.3f}, v_inf {vinf:.2f} km/s, hp {el.rp - R_EARTH:,.0f} km"
         dlg.info["preview"] = txt
-    except Exception:
+    except Exception:           # incomplete or invalid input
         dlg.info["preview"] = ""
 
 
 # --- Walker constellation ------------------------------------------------------------------
 
 def walker_dialog(app):
+    """Create a Walker constellation (key W)."""
     sim = app.sim
     specs = [
         F("name", "Name", "text", "Walker"),
@@ -183,11 +206,11 @@ def walker_dialog(app):
         try:
             v = dlg.values()
             per = v["total"] / max(1, v["planes"])
-            a = R_EARTH + v["altitude"]
-            dlg.info["preview"] = (f"{v['pattern']} {v['inclination']:.1f}: {v['total']}/{v['planes']}/"
-                                   f"{v['phasing']} - {per:g} per plane, T "
-                                   f"{format_period(2 * math.pi * math.sqrt(a ** 3 / MU_EARTH))}")
-        except Exception:
+            period = format_period(float(period_of(R_EARTH + v["altitude"])))
+            dlg.info["preview"] = (f"{v['pattern']} {v['inclination']:.1f}: "
+                                   f"{v['total']}/{v['planes']}/{v['phasing']} - "
+                                   f"{per:g} per plane, T {period}")
+        except Exception:       # incomplete or invalid input
             dlg.info["preview"] = ""
 
     def on_ok(v):
@@ -198,7 +221,6 @@ def walker_dialog(app):
         if c.total <= 0 or c.planes <= 0:
             return "need at least one satellite and one plane"
         states = walker_states(c)
-        from ..scenario import palette_color
         color = palette_color(sim.n)
         props = dict(mass=c.mass, area=c.area, cd=c.cd)
         n0 = sim.n
@@ -226,13 +248,16 @@ DIRECTIONS = {"Prograde": (1, 0, 0), "Retrograde": (-1, 0, 0), "Normal": (0, 1, 
 
 
 def _kind(*names):
+    """Visibility predicate: the manoeuvre kind is one of ``names``."""
     return lambda raw: KINDS.get(raw.get("kind")) in names
 
 
 def maneuver_dialog(app):
+    """Plan and schedule a manoeuvre, previewing its delta-v (key B)."""
     sim = app.sim
     # a payload still riding its rocket cannot manoeuvre until it separates
-    names = [s.name for i, s in enumerate(sim.sats) if s.status == "active" and sim.ascent_of(i) is None]
+    names = [s.name for i, s in enumerate(sim.sats)
+             if s.status == ACTIVE and sim.ascent_of(i) is None]
     if not names:
         app.toast("No active satellites to manoeuvre")
         return None
@@ -247,7 +272,8 @@ def maneuver_dialog(app):
         F("dv_n", "dV normal N (m/s)", "float", "0", visible=_kind("impulse")),
         F("dv_b", "dV binormal B (m/s)", "float", "0", visible=_kind("impulse")),
         F("frame", "Frame", "choice", "VNB", ["VNB", "RSW", "ECI"], visible=_kind("impulse")),
-        F("target_alt", "Target altitude (km)", "float", "35786", visible=_kind("hohmann", "bielliptic")),
+        F("target_alt", "Target altitude (km)", "float", "35786",
+          visible=_kind("hohmann", "bielliptic")),
         F("rb_alt", "Intermediate apoapsis (km)", "float", "100000", visible=_kind("bielliptic")),
         F("delta_i", "Inclination change (deg)", "float", "-10", visible=_kind("plane_change")),
         F("target", "Target satellite", "choice", other, names, visible=_kind("rendezvous")),
@@ -256,7 +282,8 @@ def maneuver_dialog(app):
           visible=lambda r: KINDS.get(r.get("kind")) == "rendezvous" and not r.get("auto_tof")),
         F("thrust", "Thrust (N)", "float", "400", visible=_kind("finite")),
         F("duration", "Burn duration (s)", "float", "300", visible=_kind("finite")),
-        F("direction", "Direction", "choice", "Prograde", list(DIRECTIONS), visible=_kind("finite")),
+        F("direction", "Direction", "choice", "Prograde", list(DIRECTIONS),
+          visible=_kind("finite")),
         F("isp", "Specific impulse Isp (s)", "float", "320"),
         F("preview", "", "info", ""),
     ]
@@ -264,6 +291,7 @@ def maneuver_dialog(app):
     scan_cache: dict = {}
 
     def build(v):
+        """(burns, summary) for the form values; raises ValueError if impossible."""
         kind = KINDS[v["kind"]]
         timing = TIMINGS[v["timing"]]
         delay = v.get("delay", 0.0)
@@ -298,8 +326,8 @@ def maneuver_dialog(app):
             burns = [Maneuver(sat, "finite", thrust=v["thrust"], duration=v["duration"],
                               dv=DIRECTIONS[v["direction"]], frame="VNB", **common)]
             m = sim.sats[sim.index_of(sat)].mass
-            mf = m - v["thrust"] / (v["isp"] * 9.80665) * v["duration"]
-            dvm = v["isp"] * 9.80665 * math.log(m / mf) if mf > 0 else float("inf")
+            mf = m - v["thrust"] / (v["isp"] * G0_M) * v["duration"]
+            dvm = v["isp"] * G0_M * math.log(m / mf) if mf > 0 else float("inf")
             summary = f"dV ~{dvm:.1f} m/s, accel {v['thrust'] / m * 1000:.2f} mm/s^2"
         for b in burns:
             b.isp = v["isp"]
@@ -318,8 +346,10 @@ def maneuver_dialog(app):
             sim.schedule(b)
         return None
 
-    dlg = FormDialog(app, "Plan manoeuvre", specs, on_ok, "Schedule", width=560, on_change=on_change,
-                     subtitle="VNB: V prograde, N orbit normal, B = V x N (radial out on circular orbits)")
+    dlg = FormDialog(app, "Plan manoeuvre", specs, on_ok, "Schedule", width=560,
+                     on_change=on_change,
+                     subtitle="VNB: V prograde, N orbit normal, B = V x N "
+                              "(radial out on circular orbits)")
     on_change(dlg, None)
     return dlg
 
@@ -327,6 +357,7 @@ def maneuver_dialog(app):
 # --- Ground station -------------------------------------------------------------------------
 
 def station_dialog(app):
+    """Add a ground station (key N)."""
     specs = [
         F("name", "Name", "text", f"Station {len(app.sim.stations) + 1}"),
         F("lat", "Latitude (deg)", "float", "51.48"),
@@ -338,7 +369,8 @@ def station_dialog(app):
     def on_ok(v):
         if not -90 <= v["lat"] <= 90:
             return "latitude must be within +/-90 deg"
-        app.sim.add_station(GroundStation(v["name"] or "Station", v["lat"], v["lon"], v["alt"], v["min_el"]))
+        app.sim.add_station(GroundStation(v["name"] or "Station", v["lat"], v["lon"], v["alt"],
+                                          v["min_el"]))
         return None
 
     return FormDialog(app, "Add ground station", specs, on_ok, "Add")
@@ -347,6 +379,7 @@ def station_dialog(app):
 # --- Physics settings -----------------------------------------------------------------------
 
 def physics_dialog(app):
+    """Force model, propagator and integrator settings (key P)."""
     sim = app.sim
     fm = sim.forces
     it = sim.integrator
@@ -383,32 +416,35 @@ def physics_dialog(app):
         return None
 
     return FormDialog(app, "Physics & integrator", specs, on_ok, "Apply", width=520,
-                      subtitle="Cowell integrates every enabled force; kepler / j2mean are analytic")
+                      subtitle="Cowell integrates every enabled force; "
+                               "kepler / j2mean are analytic")
 
 
 # --- Scenario files ---------------------------------------------------------------------------
 
 def scenario_dialog(app):
+    """Load, save, export or reset scenarios (Ctrl+O)."""
+    def label(p: Path) -> str:
+        return str(p.relative_to(app.root)) if p.is_relative_to(app.root) else str(p)
+
     files = app.scenario_files()
-    labels = [str(p.relative_to(app.root)) if p.is_relative_to(app.root) else str(p) for p in files]
+    labels = [label(p) for p in files]
     current = app.scenario_path
-    cur_label = (str(current.relative_to(app.root)) if current and current.is_relative_to(app.root)
-                 else (labels[0] if labels else ""))
+    cur_label = label(current) if current else (labels[0] if labels else "")
     specs = [
         F("file", "Scenario file", "choice", cur_label, labels or ["(none found)"]),
         F("save_name", "Save snapshot as", "text", "my_scenario"),
         F("desc", "", "info", ""),
     ]
-    lookup = dict(zip(labels, files))
+    lookup = dict(zip(labels, files, strict=True))
 
     def describe(dlg, key=None):
         p = lookup.get(dlg.widgets["file"].value)
         if p:
             try:
-                import json
                 d = json.loads(Path(p).read_text(encoding="utf-8"))
                 dlg.info["desc"] = (d.get("description") or d.get("name", ""))[:88]
-            except Exception:
+            except (OSError, ValueError, AttributeError):     # unreadable or not a scenario
                 dlg.info["desc"] = ""
 
     def on_ok(v):
@@ -420,7 +456,8 @@ def scenario_dialog(app):
 
     def save(dlg):
         v = dlg.values()
-        name = "".join(ch for ch in v["save_name"] if ch.isalnum() or ch in "-_ ").strip() or "snapshot"
+        name = "".join(ch for ch in v["save_name"] if ch.isalnum() or ch in "-_ ").strip()
+        name = name or "snapshot"
         path = app.user_scenario_dir / f"{name}.json"
         app.sim.snapshot_scenario(name).save(path)
         app.scenario_path = path
@@ -428,8 +465,8 @@ def scenario_dialog(app):
         dlg.close()
 
     def export(dlg):
-        from ..batch import export_history_csv
-        path = app.user_scenario_dir / "exports" / f"{app.sim.scenario.name.replace(' ', '_')}_history.csv"
+        stem = app.sim.scenario.name.replace(" ", "_")
+        path = app.user_scenario_dir / "exports" / f"{stem}_history.csv"
         n = export_history_csv(app.sim, path)
         app.toast(f"Exported {n} rows to {path}")
         dlg.close()
@@ -441,7 +478,8 @@ def scenario_dialog(app):
     dlg = FormDialog(app, "Scenarios", specs, on_ok, "Load", width=620, on_change=describe,
                      extra_buttons=[("Save snapshot", save), ("Export CSV", export),
                                     ("Reset current", reset)],
-                     subtitle="Load a scenario, save the current state (epoch = now), or export history")
+                     subtitle="Load a scenario, save the current state (epoch = now), "
+                              "or export history")
     describe(dlg)
     return dlg
 
@@ -449,6 +487,7 @@ def scenario_dialog(app):
 # --- Edit satellite -------------------------------------------------------------------------------
 
 def edit_satellite_dialog(app):
+    """Rename the selected satellite or change its drag properties (Ctrl+E)."""
     sim = app.sim
     if not 0 <= app.selected < sim.n:
         app.toast("Select a satellite first")

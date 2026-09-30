@@ -11,9 +11,19 @@ from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.forces import ForceModel
 from satflight.frames import eci_to_ecef
+from satflight.launch import (
+    G0_M,
+    LAUNCH_SITES,
+    AscentEnv,
+    LaunchSpec,
+    Stage,
+    Vehicle,
+    fly,
+    plan_launch,
+    resolve,
+    vehicle_preset,
+)
 from satflight.maneuvers import Maneuver
-from satflight.launch import (G0_M, LAUNCH_SITES, AscentEnv, LaunchSpec, Stage, Vehicle, fly,
-                              plan_launch, resolve, vehicle_preset)
 from satflight.scenario import SatSpec, Scenario
 from satflight.simulation import Simulation
 from satflight.timeutil import UTC, Clock
@@ -64,8 +74,9 @@ def test_every_preset_vehicle_flies_its_kind_of_mission():
                              direction="south" if south else "north"), ENV, 0.0)
         assert p.ok, (name, p.flight.outcome)
         assert p.flight.insertion["hp"] == pytest.approx(hp, abs=5.0), name
-    hop = plan_launch(spec(vehicle=vehicle_preset("Sounding rocket"), payload_mass=150, guidance="open",
-                           site_xyz=LAUNCH_SITES["Andoya (Norway)"], kick=1.0), ENV, 0.0)
+    hop = plan_launch(spec(vehicle=vehicle_preset("Sounding rocket"), payload_mass=150,
+                           guidance="open", site_xyz=LAUNCH_SITES["Andoya (Norway)"], kick=1.0),
+                      ENV, 0.0)
     assert hop.flight.outcome == "suborbital" and 200 < hop.flight.insertion["ha"] < 500
 
 
@@ -102,8 +113,8 @@ def test_invalid_specs_are_rejected(bad, match):
 
 
 def test_failures_are_outcomes_not_exceptions():
-    heavy = plan_launch(spec(payload_mass=40000.0, perigee_alt=300, apogee_alt=300, inclination=28.6),
-                        ENV, 0.0)
+    heavy = plan_launch(spec(payload_mass=40000.0, perigee_alt=300, apogee_alt=300,
+                             inclination=28.6), ENV, 0.0)
     assert heavy.flight.outcome == "short" and not heavy.ok
     assert heavy.flight.insertion["hp"] < 0                    # it falls back
     grounded = fly(spec(payload_mass=900000.0, kick=1.0), resolve(spec(), ENV, 0.0), ENV, 1.0)
@@ -161,7 +172,8 @@ def test_launch_window_puts_the_orbit_on_the_requested_node():
 
 def _scenario(propagator="cowell", launches=(), sats=()):
     return Scenario(name="launch test", epoch=EPOCH, propagator=propagator,
-                    forces=ForceModel(j2=True, drag=True), satellites=list(sats), launches=list(launches))
+                    forces=ForceModel(j2=True, drag=True), satellites=list(sats),
+                    launches=list(launches))
 
 
 def test_vehicle_waits_on_the_pad_turning_with_the_earth_then_flies():
@@ -192,9 +204,9 @@ def test_vehicle_waits_on_the_pad_turning_with_the_earth_then_flies():
 @pytest.mark.parametrize("propagator", ["cowell", "j2mean", "kepler"])
 def test_launch_into_another_satellites_plane(propagator):
     iss = SatSpec("ISS", {"type": "elements", "altitude": 420, "i": 51.64, "raan": 30})
-    sim = Simulation(_scenario(propagator, [spec(name="Dragon", timing="plane", target="ISS",
-                                                 perigee_alt=300, apogee_alt=300, payload_mass=12000)],
-                               [iss]))
+    dragon = spec(name="Dragon", timing="plane", target="ISS", perigee_alt=300, apogee_alt=300,
+                  payload_mass=12000)
+    sim = Simulation(_scenario(propagator, [dragon], [iss]))
     asc = sim.ascents[0]
     sim.advance(asc.t0 + 1200.0)
     a, b = sim.index_of("ISS"), sim.index_of("Dragon")
@@ -207,8 +219,9 @@ def test_launch_into_another_satellites_plane(propagator):
 
 
 def test_stage_one_falls_back_and_the_payload_can_circularise():
-    sim = Simulation(_scenario(launches=[spec(name="GTO sat", perigee_alt=250, apogee_alt=35786,
-                                              inclination=28.6, circularize=True, payload_mass=4000)]))
+    gto = spec(name="GTO sat", perigee_alt=250, apogee_alt=35786, inclination=28.6,
+               circularize=True, payload_mass=4000)
+    sim = Simulation(_scenario(launches=[gto]))
     sim.advance(1200.0)
     assert sim.sats[sim.index_of("GTO sat Stage 1")].status in ("re-entered", "impacted")
     assert any(m.sat == "GTO sat" and m.kind == "circularize" for m in sim.maneuvers)
@@ -227,7 +240,7 @@ def test_scenario_round_trip_and_snapshot_keep_pending_launches(tmp_path):
     sim = Simulation(loaded)
     sim.advance(600.0)
     snap = sim.snapshot_scenario("snap")
-    assert [s.name for s in snap.satellites] == []            # the pad vehicle is a launch, not a sat
+    assert [s.name for s in snap.satellites] == []     # the pad vehicle is a launch, not a sat
     assert snap.launches[0].timing == "absolute" and snap.launches[0].t0 == pytest.approx(3000.0)
     again = Simulation(Scenario.from_dict(snap.to_dict()))
     assert again.ascents[0].t0 == pytest.approx(3000.0) and again.ascents[0].kick_deg == 2.5

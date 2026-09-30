@@ -3,8 +3,10 @@ choice cyclers, checkboxes and a declarative modal form dialog."""
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import pygame
 
@@ -12,20 +14,28 @@ from . import theme
 
 
 class Widget:
+    """Base class: the owner sets ``rect``, forwards events to :meth:`handle` and
+    calls :meth:`draw` every frame."""
+
     def __init__(self):
         self.rect = pygame.Rect(0, 0, 0, 0)
         self.hover = False
 
     def handle(self, ev) -> bool:
+        """React to a pygame event; True if it was consumed."""
         return False
 
     def draw(self, surf, fonts):
-        pass
+        """Draw the widget into ``surf`` at ``rect``."""
 
 
 class Button(Widget):
-    def __init__(self, text: str, callback: Callable[[], Any], active: Callable[[], bool] | None = None,
-                 tooltip: str = "", accent: bool = False):
+    """Push button. ``active()`` highlights it as a toggle that is on; ``tooltip``
+    records the matching keyboard shortcut; ``accent`` marks the primary action."""
+
+    def __init__(self, text: str, callback: Callable[[], Any],
+                 active: Callable[[], bool] | None = None, tooltip: str = "",
+                 accent: bool = False):
         super().__init__()
         self.text = text
         self.callback = callback
@@ -36,7 +46,8 @@ class Button(Widget):
     def handle(self, ev):
         if ev.type == pygame.MOUSEMOTION:
             self.hover = self.rect.collidepoint(ev.pos)
-        elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and self.rect.collidepoint(ev.pos):
+        elif (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
+              and self.rect.collidepoint(ev.pos)):
             self.callback()
             return True
         return False
@@ -47,12 +58,16 @@ class Button(Widget):
         if self.hover:
             bg = theme.mix(bg, theme.ACCENT, 0.35)
         pygame.draw.rect(surf, bg, self.rect, border_radius=5)
-        pygame.draw.rect(surf, theme.ACCENT if on else theme.PANEL_EDGE, self.rect, 1, border_radius=5)
+        edge = theme.ACCENT if on else theme.PANEL_EDGE
+        pygame.draw.rect(surf, edge, self.rect, 1, border_radius=5)
         fonts.draw(surf, self.text, self.rect.center, theme.TEXT, fonts.ui, "center")
 
 
 class TextField(Widget):
-    def __init__(self, value: str = "", kind: str = "float", width_chars: int = 12):
+    """Single-line text entry; ``kind`` (float, floatx, int, text) sets how
+    :meth:`parsed` reads the value. Ctrl+Backspace clears, Ctrl+V pastes."""
+
+    def __init__(self, value: str = "", kind: str = "float"):
         super().__init__()
         self.value = str(value)
         self.kind = kind
@@ -73,23 +88,18 @@ class TextField(Widget):
             return True
         if ev.type == pygame.KEYDOWN:
             if ev.key == pygame.K_BACKSPACE:
-                if ev.mod & pygame.KMOD_CTRL:
-                    self.value = ""
-                else:
-                    self.value = self.value[:-1]
+                self.value = "" if ev.mod & pygame.KMOD_CTRL else self.value[:-1]
                 return True
             if ev.key == pygame.K_v and ev.mod & pygame.KMOD_CTRL:
-                try:
+                with contextlib.suppress(Exception):     # no clipboard on this platform
                     pygame.scrap.init()
                     txt = pygame.scrap.get_text() if hasattr(pygame.scrap, "get_text") else ""
-                    if txt:
-                        self.value += txt.strip()
-                except Exception:
-                    pass
+                    self.value += (txt or "").strip()
                 return True
         return False
 
     def parsed(self):
+        """The value converted per ``kind``; raises ValueError if it does not parse."""
         s = self.value.strip()
         if self.kind == "text":
             return s
@@ -131,13 +141,16 @@ class Choice(Widget):
 
     @property
     def value(self):
+        """The selected option (empty string if there are none)."""
         return self.options[self.index] if self.options else ""
 
     def set(self, value):
+        """Select ``value`` if it is one of the options."""
         if value in self.options:
             self.index = self.options.index(value)
 
     def _step(self, d):
+        """Move ``d`` options along (wrapping) and notify ``on_change``."""
         if not self.options:
             return
         self.index = (self.index + d) % len(self.options)
@@ -166,19 +179,24 @@ class Choice(Widget):
         clip = surf.get_clip()
         # clip on the right only (for the arrows): a symmetric inset cut the first letter
         surf.set_clip(pygame.Rect(self.rect.x + 2, self.rect.y, self.rect.w - 26, self.rect.h))
-        fonts.draw(surf, self.value, (self.rect.x + 8, self.rect.centery), theme.TEXT, fonts.ui, "midleft")
+        fonts.draw(surf, self.value, (self.rect.x + 8, self.rect.centery), theme.TEXT, fonts.ui,
+                   "midleft")
         surf.set_clip(clip)
-        fonts.draw(surf, "<>", (self.rect.right - 8, self.rect.centery), theme.DIM, fonts.small, "midright")
+        fonts.draw(surf, "<>", (self.rect.right - 8, self.rect.centery), theme.DIM, fonts.small,
+                   "midright")
 
 
 class Checkbox(Widget):
+    """A tick box; ``on_change(value)`` fires on every click."""
+
     def __init__(self, value: bool = False, on_change=None):
         super().__init__()
         self.value = bool(value)
         self.on_change = on_change
 
     def handle(self, ev):
-        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and self.rect.collidepoint(ev.pos):
+        if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
+                and self.rect.collidepoint(ev.pos)):
             self.value = not self.value
             if self.on_change:
                 self.on_change(self.value)
@@ -188,16 +206,20 @@ class Checkbox(Widget):
     def draw(self, surf, fonts):
         box = pygame.Rect(self.rect.x, self.rect.centery - 9, 18, 18)
         pygame.draw.rect(surf, theme.FIELD, box, border_radius=3)
-        pygame.draw.rect(surf, theme.ACCENT if self.value else theme.PANEL_EDGE, box, 1, border_radius=3)
+        edge = theme.ACCENT if self.value else theme.PANEL_EDGE
+        pygame.draw.rect(surf, edge, box, 1, border_radius=3)
         if self.value:
-            pygame.draw.lines(surf, theme.ACCENT, False,
-                              [(box.x + 4, box.centery), (box.x + 8, box.bottom - 4), (box.right - 4, box.y + 4)], 2)
+            x, y = box.topleft
+            tick = [(x + 4, box.centery), (x + 8, box.bottom - 4), (box.right - 4, y + 4)]
+            pygame.draw.lines(surf, theme.ACCENT, False, tick, 2)
 
 
 # --- Form dialog ------------------------------------------------------------------------------
 
 @dataclass
 class FieldSpec:
+    """One row of a :class:`FormDialog`; ``visible(raw_values)`` hides it conditionally."""
+
     key: str
     label: str
     kind: str = "float"            # float | floatx | int | text | choice | bool | info
@@ -212,6 +234,7 @@ class FormDialog:
     fields: any object with ``width``, ``min_height``, ``draw(surf, rect,
     dialog)`` and ``handle(ev, dialog) -> bool``. It is left out when the
     window is too narrow for it."""
+
     ROW = 32
     MIN_ROW = 22
 
@@ -235,9 +258,11 @@ class FormDialog:
             if s.kind == "choice":
                 opts = list(s.options)
                 idx = opts.index(s.default) if s.default in opts else 0
-                self.widgets[s.key] = Choice(opts, idx, on_change=lambda v, k=s.key: self._changed(k))
+                self.widgets[s.key] = Choice(opts, idx,
+                                             on_change=lambda v, k=s.key: self.changed(k))
             elif s.kind == "bool":
-                self.widgets[s.key] = Checkbox(bool(s.default), on_change=lambda v, k=s.key: self._changed(k))
+                self.widgets[s.key] = Checkbox(bool(s.default),
+                                               on_change=lambda v, k=s.key: self.changed(k))
             elif s.kind == "info":
                 self.info[s.key] = str(s.default)
             else:
@@ -250,15 +275,11 @@ class FormDialog:
 
     # --- values -----------------------------------------------------------------------
     def raw(self) -> dict:
-        out = {}
-        for k, w in self.widgets.items():
-            if isinstance(w, TextField):
-                out[k] = w.value
-            else:
-                out[k] = w.value
-        return out
+        """Unparsed widget values by key (text as typed)."""
+        return {k: w.value for k, w in self.widgets.items()}
 
     def set(self, key, value):
+        """Set a field's value, whatever kind of widget it is."""
         w = self.widgets.get(key)
         if isinstance(w, TextField):
             w.value = str(value)
@@ -283,7 +304,7 @@ class FormDialog:
                     w.error = False
                 except ValueError:
                     w.error = True
-                    raise ValueError(f"'{s.label}' needs a number")
+                    raise ValueError(f"'{s.label}' needs a number") from None
             else:
                 out[s.key] = w.value
         return out
@@ -291,7 +312,8 @@ class FormDialog:
     def _visible(self, s: FieldSpec, raw) -> bool:
         return s.visible is None or bool(s.visible(raw))
 
-    def _changed(self, key):
+    def changed(self, key):
+        """A field changed: tell ``on_change`` and re-layout (visibility may change)."""
         if self.on_change:
             try:
                 self.on_change(self, key)
@@ -300,6 +322,7 @@ class FormDialog:
         self.layout()
 
     def _extra(self, cb):
+        """Run an extra button's callback; its return value (or error) is shown."""
         try:
             msg = cb(self)
             self.error = msg or ""
@@ -308,6 +331,7 @@ class FormDialog:
 
     # --- layout -----------------------------------------------------------------------
     def layout(self):
+        """Size and centre the dialog and place every visible row and button."""
         raw = self.raw()
         rows = [s for s in self.specs if self._visible(s, raw)]
         sw, sh = self.app.screen.get_size()
@@ -357,6 +381,7 @@ class FormDialog:
 
     # --- events -----------------------------------------------------------------------
     def submit(self):
+        """Parse and pass the values to ``on_ok``; close unless it returns a message."""
         try:
             vals = self.values()
             msg = self.on_ok(vals)
@@ -374,9 +399,11 @@ class FormDialog:
 
     def _text_fields(self):
         return [self.widgets[s.key] for s in self.specs
-                if s.key in self._visible_keys and isinstance(self.widgets.get(s.key), TextField)]
+                if s.key in self._visible_keys
+                and isinstance(self.widgets.get(s.key), TextField)]
 
     def handle(self, ev) -> bool:
+        """Keyboard shortcuts (Esc, Enter, Tab), then buttons, side panel and fields."""
         if ev.type == pygame.KEYDOWN:
             if ev.key == pygame.K_ESCAPE:
                 self.close()
@@ -408,7 +435,7 @@ class FormDialog:
             w = self.widgets[s.key]
             if w.handle(ev):
                 if isinstance(w, TextField):
-                    self._changed(s.key)
+                    self.changed(s.key)
                 return True
         return True    # modal: swallow everything
 
@@ -420,12 +447,15 @@ class FormDialog:
         theme.panel(surf, self.rect, (14, 20, 36, 245), theme.ACCENT)
         fonts.draw(surf, self.title, (self.rect.x + 18, self.rect.y + 14), theme.TEXT, fonts.title)
         if self.subtitle:
-            fonts.draw(surf, self.subtitle, (self.rect.x + 18, self.rect.y + 42), theme.DIM, fonts.small)
+            fonts.draw(surf, self.subtitle, (self.rect.x + 18, self.rect.y + 42), theme.DIM,
+                       fonts.small)
         for s, r in self._rows:
             if s.kind == "info":
-                fonts.draw(surf, self.info.get(s.key, ""), (r.x, r.centery), theme.ACCENT, fonts.small, "midleft")
+                fonts.draw(surf, self.info.get(s.key, ""), (r.x, r.centery), theme.ACCENT,
+                           fonts.small, "midleft")
                 continue
-            fonts.draw(surf, s.label, (self.rect.x + 18, r.centery), theme.DIM, fonts.ui, "midleft")
+            fonts.draw(surf, s.label, (self.rect.x + 18, r.centery), theme.DIM, fonts.ui,
+                       "midleft")
             self.widgets[s.key].draw(surf, fonts)
         if self.side_rect is not None:
             self.side.draw(surf, self.side_rect, self)

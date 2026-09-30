@@ -42,6 +42,7 @@ class Fonts:
         self._cache: dict = {}
 
     def render(self, text: str, color=TEXT, font=None) -> pygame.Surface:
+        """Rendered text surface, cached by (text, colour, font)."""
         font = font or self.ui
         key = (text, color, id(font))
         surf = self._cache.get(key)
@@ -53,6 +54,7 @@ class Fonts:
         return surf
 
     def draw(self, target, text, pos, color=TEXT, font=None, anchor="topleft"):
+        """Blit ``text`` with its ``anchor`` point at ``pos``; returns the rect used."""
         surf = self.render(text, color, font)
         rect = surf.get_rect(**{anchor: pos})
         target.blit(surf, rect)
@@ -69,9 +71,20 @@ def panel(surface: pygame.Surface, rect: pygame.Rect, alpha_color=PANEL, edge=PA
         pygame.draw.rect(surface, edge, rect, 1, border_radius=radius)
 
 
+def scrollbar(surface: pygame.Surface, x: int, area: pygame.Rect, first: float, visible: float,
+              total: float, min_len: int = 20):
+    """Thin scroll indicator at ``x`` beside ``area``: ``visible`` of ``total`` units
+    shown, starting at ``first``."""
+    bar_h = max(min_len, int(area.h * visible / total))
+    y = area.y + int((area.h - bar_h) * first / max(1, total - visible))
+    pygame.draw.rect(surface, PANEL_EDGE, (x, y, 3, bar_h), border_radius=2)
+
+
 def dim(color, k: float):
+    """``color`` scaled by ``k`` (clamped to 0-255), alpha dropped."""
     return tuple(max(0, min(255, int(c * k))) for c in color[:3])
 
 
 def mix(a, b, k: float):
+    """Linear blend from colour ``a`` (k = 0) to ``b`` (k = 1)."""
     return tuple(int(a[i] * (1 - k) + b[i] * k) for i in range(3))

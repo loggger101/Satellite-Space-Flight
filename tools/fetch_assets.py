@@ -27,18 +27,21 @@ COAST_URL = ("https://raw.githubusercontent.com/nvkelso/natural-earth-vector/mas
 
 
 def _get(url: str) -> bytes:
+    """Download ``url`` (60 s timeout)."""
     req = urllib.request.Request(url, headers={"User-Agent": "satflight-asset-fetch"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         return resp.read()
 
 
 def fetch_texture():
+    """Save the Blue Marble texture as ``assets/earth.jpg``."""
     data = _get(TEXTURE_URL)
     (ASSETS / "earth.jpg").write_bytes(data)
     print(f"earth.jpg        {len(data) / 1e6:.1f} MB")
 
 
 def fetch_coastlines():
+    """Convert the Natural Earth GeoJSON to ``assets/coastlines.json`` polylines."""
     gj = json.loads(_get(COAST_URL))
     lines = []
     for feat in gj["features"]:
@@ -46,7 +49,8 @@ def fetch_coastlines():
         parts = [geom["coordinates"]] if geom["type"] == "LineString" else geom["coordinates"]
         for part in parts:
             lines.append([[round(x, 3), round(y, 3)] for x, y in part])
-    (ASSETS / "coastlines.json").write_text(json.dumps(lines, separators=(",", ":")), encoding="utf-8")
+    text = json.dumps(lines, separators=(",", ":"))
+    (ASSETS / "coastlines.json").write_text(text, encoding="utf-8")
     print(f"coastlines.json  {len(lines)} polylines, {sum(len(p) for p in lines)} points")
 
 

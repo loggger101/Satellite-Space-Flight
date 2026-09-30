@@ -10,7 +10,7 @@ from pathlib import Path
 import pygame
 
 from ..scenario import Scenario
-from . import theme
+from . import theme, tips
 from .theme import px
 from .widgets import Button
 
@@ -51,6 +51,15 @@ def scenario_card(path: Path) -> tuple[str, str, str] | None:
     return d.get("name", path.stem), blurb, tag
 
 
+def describe(path: Path) -> str:
+    """The scenario file's own description ('' if it has none or cannot be read)."""
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        return str(d.get("description", ""))
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 def wrap(text: str, font, width: int, max_lines: int) -> list[str]:
     """Break ``text`` into at most ``max_lines`` lines of ``width`` px; the last one
     ends in '...' when text was cut."""
@@ -88,17 +97,19 @@ class StartScreen:
         extra = sorted(p for p in a.scenario_dir.glob("*.json") if p.stem not in BLURBS)
         self.cards = [(p, *info) for p in known + extra
                       if p.exists() and (info := scenario_card(p)) is not None]
+        self.descriptions = {p: describe(p) for p, *_ in self.cards}    # the fuller hover text
         cur = a.scenario_path
         self.focus = next((k for k, c in enumerate(self.cards)
                            if cur is not None and c[0] == cur), 0)
         self.buttons = [
             Button("Launch a rocket", lambda: self._then(lambda: a.open("launch")), accent=True,
-                   tooltip="U"),
-            Button("Build your own", self.build_your_own, tooltip="A"),
+                   tooltip="U", hint="Fly a rocket from any point on Earth into orbit"),
+            Button("Build your own", self.build_your_own, tooltip="A",
+                   hint="Start from an empty Earth and add satellites yourself"),
             Button("Saved scenarios", lambda: self._then(lambda: a.open("scenario")),
-                   tooltip="Ctrl+O"),
+                   tooltip="Ctrl+O", hint="Open a scenario you saved, or any scenario file"),
             Button("Controls", lambda: self._then(lambda: setattr(a.opts, "help", True)),
-                   tooltip="H"),
+                   tooltip="H", hint="Every mouse and keyboard control"),
         ]
         self.rect = pygame.Rect(0, 0, 0, 0)
         self.card_rects: list[pygame.Rect] = []
@@ -193,6 +204,7 @@ class StartScreen:
         shade = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 90))
         surf.blit(shade, (0, 0))
+        tips.block(surf.get_rect())
         r = self.rect
         theme.panel(surf, r, (14, 20, 36, 240), theme.ACCENT, 10)
         fonts.draw(surf, "Satellite Space Flight", (r.x + px(18), r.y + px(14)), theme.TEXT,
@@ -223,8 +235,10 @@ class StartScreen:
 
     def _draw_card(self, surf, k):
         fonts = self.app.fonts
-        _, title, _, tag = self.cards[k]
+        path, title, blurb, tag = self.cards[k]
         rect, focused = self.card_rects[k], k == self.focus
+        tips.add(rect, f"{title}: {self.descriptions.get(path) or blurb}\nClick (or Enter) to "
+                       "start it.")
         bg = theme.mix(theme.FIELD, theme.ACCENT, 0.28) if focused else theme.FIELD
         pygame.draw.rect(surf, bg, rect, border_radius=px(7))
         pygame.draw.rect(surf, theme.ACCENT if focused else theme.PANEL_EDGE, rect, 1,

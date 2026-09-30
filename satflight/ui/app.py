@@ -15,7 +15,7 @@ from ..constants import R_EARTH
 from ..orbitinfo import orbit_info
 from ..scenario import Scenario
 from ..simulation import ACTIVE, Simulation
-from . import dialogs, launchui, theme, welcome, widgets
+from . import dialogs, launchui, theme, tips, welcome
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .orbitviz import MODES as GEOMETRY_MODES
@@ -63,7 +63,6 @@ class Options:
 
 ORBIT_MODES = ("auto", "all", "selected", "none")
 WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
-TOOLTIP_DELAY = 0.4        # s the mouse rests on a button before its hint shows
 # Real seconds a single frame may count for. The physics takes the same steps
 # whatever the frame rate; this only stops a stall (a dragged window, a slow
 # dialog) from turning into one huge jump. Below 1 / MAX_FRAME_DT fps the
@@ -114,7 +113,9 @@ class App:
         self.scenario_path: Path | None = None
         self._info_key = None
         self._info = None
-        self._hover = (None, 0.0)    # (button under the mouse, since when)
+        self.mouse = None            # where the mouse is (None: outside the window)
+        self._tip_hidden = False     # a click hides the tip until the mouse moves on
+        self.tip_rect = None         # where this frame's hover tip went (tests read it)
         self.fullscreen = False
         self._windowed = (size, None)   # window size and position to return to from fullscreen
         self.load_scenario(scenario if scenario is not None else self.scenario_dir / "default.json")
@@ -309,7 +310,12 @@ class App:
             return
         if ev.type == pygame.WINDOWLEAVE:
             self._clear_hover()
+            self.mouse = None
             return
+        if ev.type == pygame.MOUSEMOTION:
+            self.mouse, self._tip_hidden = ev.pos, any(ev.buttons)
+        elif ev.type == pygame.MOUSEBUTTONDOWN:
+            self.mouse, self._tip_hidden = ev.pos, True
         if ev.type == pygame.VIDEORESIZE:
             if self.fullscreen:                 # the screen's size, not the user's: keep it
                 self._resized()
@@ -360,16 +366,45 @@ class App:
         """Forget which button the mouse is over (it moved away without a motion event)."""
         for b in self._buttons():
             b.hover = False
+        tips.reset()
 
-    def _tooltip(self, surf):
-        """The hint and shortcut of the button under the mouse, once it has rested
-        there; returns the tooltip's rect, or None."""
-        b = next((b for b in self._buttons() if b.hover), None)
-        if b is not self._hover[0]:
-            self._hover = (b, time.monotonic())
-        if b is not None and time.monotonic() - self._hover[1] >= TOOLTIP_DELAY:
-            return widgets.draw_tooltip(surf, self.fonts, b)
-        return None
+    def _scene_tips(self):
+        """Hover tips for the 3-D view: the satellite nearest the mouse, else the
+        Earth under it (with the latitude and longitude there)."""
+        m, view = self.mouse, self.view_rect()
+        if m is None or not view.collidepoint(m) or tips.at(m) is not None:
+            return                                  # over the key, the callout or the Sun
+        k, d = -1, np.zeros(0)
+        if self.renderer.sat_screen is not None:
+            sx, sy, vis = self.renderer.sat_screen
+            d = np.hypot(sx - m[0], sy - m[1])
+            d = np.where(np.isfinite(d) & vis, d, np.inf)
+            k = int(np.argmin(d)) if d.size else -1
+        if k >= 0 and d[k] < px(10):
+            s = self.sim.sats[k]
+            rect = pygame.Rect(0, 0, px(20), px(20))
+            rect.center = (int(sx[k]), int(sy[k]))
+            if s.status == ACTIVE:
+                alt = float(np.linalg.norm(self.sim.y[k, :3])) - R_EARTH
+                state = f"{alt:,.0f} km up, {'in sunlight' if s.shadow > 0.5 else 'in shadow'}"
+            else:
+                state = s.status
+            what = "Selected - F makes the camera follow it." if k == self.selected else \
+                "Click to select it."
+            tips.add(rect, f"{s.name}: {state}.\n{what}")
+            return
+        ground = self.renderer.ground_at(self.camera, m)
+        if ground is not None:
+            lat, lon = ground
+            r = self.camera.screen_radius(np.zeros(3), R_EARTH)
+            cx, cy, _ = self.camera.project(np.zeros((1, 3)))
+            disc = pygame.Rect(0, 0, int(2 * r), int(2 * r))
+            disc.center = (int(cx[0]), int(cy[0]))
+            ns, ew = "N" if lat >= 0 else "S", "E" if lon >= 0 else "W"
+            tips.add(pygame.Rect(m[0] - px(3), m[1] - px(3), px(6), px(6)).clip(disc),
+                     f"The Earth here: {abs(lat):.1f}\N{DEGREE SIGN} {ns}, "
+                     f"{abs(lon):.1f}\N{DEGREE SIGN} {ew}. The night side is dark.\n"
+                     "Drag to turn the view, scroll to zoom, click a satellite to select it.")
 
     def _zoom(self, factor):
         self.camera.zoom(factor, 5.0 if self.follow else None)
@@ -502,7 +537,9 @@ class App:
     def draw(self):
         """Draw one frame: 3-D scene, panels, map/plot, help, dialogs and toasts."""
         s = self.screen
+        tips.begin()
         self.renderer.draw(s, self)
+        self._scene_tips()
         if self.opts.panels:
             self.topbar.draw(s)
             self.satlist.draw(s)
@@ -514,12 +551,11 @@ class App:
             self.plot.draw(s, self._plot_rect(), self)
         if self.opts.help:
             draw_help(s, self)
-        if self.opts.panels and not self.dialogs:
-            self._tooltip(s)
         if self.follow and 0 <= self.selected < self.sim.n:
-            self.fonts.draw(s, f"following {self.sim.sats[self.selected].name}  (F to release)",
-                            (s.get_width() // 2, px(TOP_H) + px(14)), theme.ACCENT,
-                            self.fonts.small, "midtop")
+            r = self.fonts.draw(s, f"following {self.sim.sats[self.selected].name}  "
+                                   "(F to release)", (s.get_width() // 2, px(TOP_H) + px(14)),
+                                theme.ACCENT, self.fonts.small, "midtop")
+            tips.add(r, "The camera moves with the selected satellite.", "F")
         for d in self.dialogs:
             d.draw(s)
         now = time.monotonic()
@@ -529,6 +565,8 @@ class App:
             r = txt.get_rect(midtop=(s.get_width() // 2, px(TOP_H) + px(40) + k * px(30)))
             theme.panel(s, r.inflate(px(24), px(10)), (20, 30, 55, 230), theme.ACCENT, 6)
             s.blit(txt, r)
+        busy = self._tip_hidden or self._drag is not None
+        self.tip_rect = None if busy else tips.draw(s, self.fonts, self.mouse)
 
     def run(self, max_frames: int | None = None, screenshot: Path | None = None):
         """Main loop at up to 60 fps; optionally stop after ``max_frames`` and save a screenshot."""

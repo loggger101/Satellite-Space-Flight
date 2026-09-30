@@ -56,7 +56,8 @@ class GroundTrackView:
         for cl in self.earth.coastlines:
             lat = np.degrees(np.arcsin(np.clip(cl[:, 2], -1, 1)))
             lon = np.degrees(np.arctan2(cl[:, 1], cl[:, 0]))
-            self._polyline(bg, (160, 210, 160), lat, lon, (0, 0, w, h))
+            coast = (95, 125, 100) if self.earth.has_image else (160, 210, 160)
+            self._polyline(bg, coast, lat, lon, (0, 0, w, h))
         self._bg_key, self._bg = size, bg
         return bg
 

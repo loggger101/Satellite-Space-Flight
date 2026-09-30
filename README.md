@@ -13,6 +13,8 @@ perturbing forces.
 | ![Hohmann](docs/images/hohmann.png) | ![Starlink-like shell](docs/images/starlink.png) |
 | **Molniya / Tundra in the Earth-fixed frame** | **J2 precession study with telemetry plot** |
 | ![Molniya](docs/images/molniya_ecef_map.png) | ![J2](docs/images/j2_plot.png) |
+| **Following the ISS over Canada** | |
+| ![Follow camera](docs/images/follow_iss.png) | |
 
 ## Quick start
 
@@ -27,12 +29,14 @@ Python 3.10+ is required. The front end uses
 (same `import pygame` API; it also ships wheels for Python 3.13/3.14, which
 classic pygame does not yet).
 
-Optional extras:
+Optional extra:
 
 ```bash
 pip install sgp4                 # proper SGP4 initialisation of TLEs
-python tools/fetch_assets.py     # NASA Blue Marble texture + Natural Earth coastlines
 ```
+
+The Earth texture (NASA Blue Marble) and coastlines (Natural Earth) are
+bundled in `assets/`; `python tools/fetch_assets.py` re-downloads them.
 
 ## What it simulates
 
@@ -70,7 +74,9 @@ Earth's sphere of influence.
 
 **Displays**
 
-- 3-D view with ray-traced Earth (true Sun lighting, terminator, atmosphere), stars, Sun and Moon, exact Earth occlusion of orbits
+- 3-D view with a ray-traced, textured Earth lit by the true Sun: soft terminator with twilight band, sun glint on the oceans, atmospheric limb and halo that redden at sunset, exact Earth occlusion of orbits
+- Star field with stellar colours and the Milky Way along the true galactic plane; Sun and phased Moon
+- Satellites glow in sunlight and dim when they pass into Earth's shadow
 - Inertial (ECI) or Earth-fixed (ECEF) frame; follow-camera on any satellite
 - Osculating orbits, perturbed trails, velocity vectors, apsides and node markers, coverage footprint, ground-station links
 - 2-D ground-track map with day/night shading, sub-solar and sub-lunar points
@@ -85,7 +91,7 @@ Earth's sphere of influence.
 | `Space`, `,` `.`, `1` | pause, slower/faster time warp, real time |
 | `Tab`, `F` | next satellite, follow it |
 | `E` | ECI / ECEF frame |
-| `O` `T` `L` `V` `X` `C` `R` | orbits mode, trails, labels, vectors, axes, footprint, GEO ring |
+| `O` `T` `L` `V` `X` `C` `R` `K` | orbits mode, trails, labels, vectors, axes, footprint, GEO ring, coastlines |
 | `M` `G` `I` | ground-track map, plot, hide panels |
 | `A` `W` `B` `N` `P` | add satellite, Walker constellation, manoeuvre, ground station, physics |
 | `Ctrl+O`, `Ctrl+S`, `Ctrl+R` | scenarios, save snapshot, reset |
@@ -139,7 +145,7 @@ sim.advance(86400)
 
 ## Accuracy and validation
 
-The physics is checked by 73 tests (`pytest`), including textbook reference
+The physics is checked by 75 tests (`pytest`), including textbook reference
 cases from Vallado's *Fundamentals of Astrodynamics and Applications*
 (RV to elements, 40-minute Kepler propagation, GMST, Hohmann transfer), the
 numerical integrator against the analytic solution (under 1 m after a day),
@@ -189,4 +195,8 @@ tests/                pytest suite
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+Code: MIT - see [LICENSE](LICENSE).
+
+Bundled data (both public domain): Earth texture from NASA Visible Earth
+"Blue Marble" (NASA Goddard Space Flight Center); coastlines from
+[Natural Earth](https://www.naturalearthdata.com) 1:110m.

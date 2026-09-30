@@ -186,3 +186,39 @@ def test_every_bundled_scenario_draws(app):
         app.load_scenario(p)
         app.opts.map = app.opts.plot = True
         frame(app, 2, dt=0.1)
+
+
+def test_separable_ray_geometry_matches_brute_force(app):
+    """The optimised Earth tracer must hit exactly the pixels a direct
+    per-pixel ray-sphere intersection hits, with the same normals."""
+    from satflight.constants import R_EARTH
+    cam = app.camera
+    cam.distance, cam.yaw, cam.pitch = 15000.0, 0.7, 0.4
+    cam.update()
+    e = app.renderer.earth
+    bbox = e._bbox(cam)
+    geo = e._geometry(cam, bbox, 20000)
+    nw, nh = geo["size"]
+    x0, y0, bw, bh = bbox
+    gx, gy = np.meshgrid(x0 + (np.arange(nw) + 0.5) * (bw / nw),
+                         y0 + (np.arange(nh) + 0.5) * (bh / nh), indexing="ij")
+    d = cam.ray_dirs(gx, gy)
+    c = cam.position
+    b = d @ c
+    disc = b * b - (c @ c - R_EARTH ** 2)
+    t = -b - np.sqrt(np.maximum(disc, 0))
+    hit = (disc > 0) & (t > 0)
+    assert np.array_equal(np.flatnonzero(hit), geo["hit_idx"])
+    n_ref = (c + t.ravel()[geo["hit_idx"]][:, None] * d.reshape(-1, 3)[geo["hit_idx"]]) / R_EARTH
+    assert np.allclose(geo["n"], n_ref, atol=1e-5)
+
+
+def test_ocean_detection_on_synthetic_texture():
+    from satflight.ui.earth import EarthRenderer
+    tex = np.zeros((128, 64, 3), np.uint8)
+    tex[...] = (11, 10, 50)                       # Blue Marble ocean navy
+    tex[40:80, 20:44] = (70, 100, 30)             # a green continent
+    out, water = EarthRenderer._prepare(tex)
+    assert water[5, 5] > 0.99 and water[60, 32] < 0.01
+    assert out[60, 32, 1] > out[60, 32, 2]        # land stays green
+    assert out[5, 5, 2] > out[5, 5, 0]            # sea stays blue

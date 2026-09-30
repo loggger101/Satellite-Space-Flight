@@ -358,7 +358,7 @@ HELP = [
     ("E", "ECI (inertial) / ECEF (Earth-fixed) view"),
     ("O", "orbits: auto / all / selected / none"),
     ("T  L  V  X", "trails, labels, velocity vectors, axes"),
-    ("C  R", "coverage footprint, GEO ring"),
+    ("C  R  K", "coverage footprint, GEO ring, coastlines"),
     ("M  G", "ground-track map, telemetry plot"),
     ("A  W  B  N", "add satellite, Walker, manoeuvre, station"),
     ("P", "physics & integrator settings"),
@@ -384,6 +384,6 @@ def draw_help(surf, app):
         if not desc:
             fonts.draw(surf, key.upper(), (rect.x + 18, y + 2), theme.ACCENT, fonts.small)
         else:
-            fonts.draw(surf, key, (rect.x + 30, y), theme.TEXT, fonts.mono)
-            fonts.draw(surf, desc, (rect.x + 200, y), theme.DIM, fonts.ui)
+            fonts.draw(surf, key, (rect.x + 30, y + 10), theme.TEXT, fonts.mono, "midleft")
+            fonts.draw(surf, desc, (rect.x + 200, y + 10), theme.DIM, fonts.ui, "midleft")
         y += 20

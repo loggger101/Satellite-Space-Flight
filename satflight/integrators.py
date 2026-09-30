@@ -79,7 +79,13 @@ def _error_norm(err, y0, y1, rtol, atol):
 class Propagator:
     """Advances ``y`` from ``t0`` to ``t1`` with the configured method,
     calling ``callback(t, y)`` after every accepted step. A callback that
-    returns True stops the integration early at that step."""
+    returns True stops the integration early at that step.
+
+    With ``t_stop`` < ``t1`` the integration heads for ``t1`` but ends before
+    the first step that would pass ``t_stop``. Steps are never shortened to
+    land on ``t_stop``, so reaching ``t1`` through any sequence of stops takes
+    exactly the steps a single call would: the step grid belongs to the
+    physics, not to whoever asks for the time."""
 
     def __init__(self, method: str = "dopri5", rtol: float = 1e-9, atol: float = 1e-6,
                  h_max: float = 60.0, h_fixed: float = 10.0):
@@ -94,17 +100,21 @@ class Propagator:
         self.stats = StepStats()
 
     def integrate(self, f: Deriv, t0: float, y0: np.ndarray, t1: float,
-                  callback: Callable[[float, np.ndarray], bool | None] | None = None):
+                  callback: Callable[[float, np.ndarray], bool | None] | None = None,
+                  t_stop: float | None = None):
         """Returns ``(t_reached, y)``; ``t_reached < t1`` only if stopped."""
+        stop = t1 if t_stop is None else min(t1, t_stop)
         if t1 <= t0 or y0.size == 0:
-            return max(t0, t1), y0
+            return max(t0, stop), y0
         if self.method == "dopri5":
-            return self._dopri5(f, t0, y0, t1, callback)
+            return self._dopri5(f, t0, y0, t1, callback, stop)
         step = rk4_step if self.method == "rk4" else leapfrog_step
         evals = 4 if self.method == "rk4" else 2
         t, y = t0, y0
         while t < t1:
             h = min(self.h_fixed, t1 - t)
+            if stop < t1 and t + h > stop:
+                break
             y = step(f, t, y, h)
             t = t1 if t1 - (t + h) < 1e-9 else t + h
             self.stats.accepted += 1
@@ -114,7 +124,7 @@ class Propagator:
                 break
         return t, y
 
-    def _dopri5(self, f, t0, y0, t1, callback):
+    def _dopri5(self, f, t0, y0, t1, callback, t_stop):
         """Adaptive Dormand-Prince; the step size carries over between calls."""
         t, y = t0, y0
         k = [None] * 7
@@ -124,6 +134,8 @@ class Propagator:
         while t1 - t > 1e-9 * max(1.0, abs(t)):
             last = h >= t1 - t
             h_try = t1 - t if last else h
+            if t_stop < t1 and t + h_try > t_stop:
+                break
             for s in range(1, 7):
                 acc = y.copy()
                 for j, aij in enumerate(_A[s]):

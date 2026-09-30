@@ -24,6 +24,7 @@ from ..elements import perifocal_axes
 from ..ephemeris import sun_position
 from ..orbitinfo import OrbitInfo
 from . import theme
+from .theme import px
 
 SUNLIT = (255, 214, 120)
 SHADOW = (40, 48, 92)
@@ -84,7 +85,9 @@ def _alpha_poly(surf, color, alpha, pts, clip: pygame.Rect):
 
 
 def _dashed(surf, color, a, b, dash=5, gap=4, width=1):
-    """Dashed screen-space line from ``a`` to ``b``."""
+    """Dashed screen-space line from ``a`` to ``b`` (``dash``, ``gap``, ``width`` in
+    design px)."""
+    dash, gap, width = px(dash), px(gap), px(width)
     ax, ay = a
     bx, by = b
     length = math.hypot(bx - ax, by - ay)
@@ -100,7 +103,8 @@ def _dashed(surf, color, a, b, dash=5, gap=4, width=1):
 
 
 def _arrow(surf, color, a, b, head=6, width=1):
-    """Screen-space arrow from ``a`` to ``b``."""
+    """Screen-space arrow from ``a`` to ``b`` (``head`` and ``width`` in design px)."""
+    head, width = px(head), px(width)
     pygame.draw.line(surf, color, a, b, width)
     ang = math.atan2(b[1] - a[1], b[0] - a[0])
     for s in (-1, 1):
@@ -109,7 +113,9 @@ def _arrow(surf, color, a, b, head=6, width=1):
 
 
 def _arc(surf, color, center, radius, a0, a1, width=1):
-    """Arc from angle a0 to a1 (rad, counter-clockwise on screen, y up)."""
+    """Arc from angle a0 to a1 (rad, counter-clockwise on screen, y up); ``radius``
+    in screen px, ``width`` in design px."""
+    width = px(width)
     n = max(4, int(abs(a1 - a0) / 0.06))
     t = np.linspace(a0, a1, n)
     pts = np.stack([center[0] + radius * np.cos(t), center[1] - radius * np.sin(t)], 1)
@@ -119,9 +125,10 @@ def _arc(surf, color, center, radius, a0, a1, width=1):
 def _box(surf, rect, fonts, title, right=None):
     """Diagram frame with a title (and optional right-aligned note)."""
     theme.panel(surf, rect, BOX, theme.PANEL_EDGE, 6)
-    fonts.draw(surf, title, (rect.x + 8, rect.y + 5), theme.ACCENT, fonts.small)
+    fonts.draw(surf, title, (rect.x + px(8), rect.y + px(5)), theme.ACCENT, fonts.small)
     if right:
-        fonts.draw(surf, right, (rect.right - 8, rect.y + 5), theme.DIM, fonts.small, "topright")
+        fonts.draw(surf, right, (rect.right - px(8), rect.y + px(5)), theme.DIM, fonts.small,
+                   "topright")
 
 
 def _label(surf, fonts, text, pos, color, anchor="center", bounds=None, placed=None):
@@ -133,16 +140,16 @@ def _label(surf, fonts, text, pos, color, anchor="center", bounds=None, placed=N
     if bounds is not None:
         r.clamp_ip(bounds)
     if placed is not None:
-        step = r.h + 2
+        step = r.h + px(2)
         for dy in (0, -step, step, -2 * step, 2 * step):
             cand = r.move(0, dy)
             if bounds is not None:
                 cand.clamp_ip(bounds)
-            if cand.inflate(6, 0).collidelist(placed) < 0:
+            if cand.inflate(px(6), 0).collidelist(placed) < 0:
                 r = cand
                 break
         placed.append(r)
-    theme.panel(surf, r.inflate(6, 0), LABEL_BACK, None, 3)
+    theme.panel(surf, r.inflate(px(6), 0), LABEL_BACK, None, 3)
     surf.blit(txt, r)
     return r
 
@@ -165,18 +172,18 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     rr = p / (1.0 + e * np.cos(nu))
     x, y = rr * np.cos(nu), rr * np.sin(nu)
 
-    area = pygame.Rect(rect.x + 10, rect.y + 24, rect.w - 20, rect.h - 34)
+    area = pygame.Rect(rect.x + px(10), rect.y + px(24), rect.w - px(20), rect.h - px(34))
     xmin, xmax = min(x.min(), -R_EARTH), max(x.max(), R_EARTH)
     ymin, ymax = min(y.min(), -R_EARTH), max(y.max(), R_EARTH)
     scale = min(area.w / (xmax - xmin), area.h / (ymax - ymin)) * 0.9
     cx = area.centerx - scale * (xmin + xmax) / 2
     cy = area.centery + scale * (ymin + ymax) / 2
 
-    def S(px, py):
-        return (cx + scale * px, cy - scale * py)
+    def S(u, v):
+        return (cx + scale * u, cy - scale * v)
 
     clip = surf.get_clip()
-    surf.set_clip(rect.inflate(-2, -2).clip(clip))
+    surf.set_clip(rect.inflate(-px(2), -px(2)).clip(clip))
     s_hat = np.asarray(r_sun) / np.linalg.norm(r_sun)
     sp = np.array([s_hat @ P, s_hat @ Q])
     sin_b = float(s_hat @ Wn)
@@ -198,7 +205,7 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     outline = [S(a, b) for a, b in zip(x, y, strict=True)]
     _alpha_poly(surf, color, 38, outline + ([S(0, 0)] if not info.closed else []), rect)
     ecen = S(0, 0)
-    er = max(3, int(R_EARTH * scale))
+    er = max(px(3), int(R_EARTH * scale))
     pygame.draw.circle(surf, EARTH_NIGHT, ecen, er)
     if spn > 0.02:
         t = np.linspace(-np.pi / 2, np.pi / 2, 40)
@@ -217,7 +224,7 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     dark = theme.dim(color, 0.35)
     for k in range(len(pts) - 1):
         c = color if lit[k] > 0.5 else dark
-        pygame.draw.line(surf, c, pts[k], pts[k + 1], 2)
+        pygame.draw.line(surf, c, pts[k], pts[k + 1], px(2))
 
     labels = _plane_apsides_nodes(surf, info, S)
 
@@ -225,21 +232,22 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     if spn > 0.1:
         far = np.array(ecen) + np.array([u_hat[0], -u_hat[1]]) * 1e4
         edge = _ray_to_rect(ecen, far, area)
-        pygame.draw.circle(surf, SUNLIT, edge, 5)
-        labels.insert(0, ("Sun", (edge[0], edge[1] - 12), SUNLIT, "center"))
+        pygame.draw.circle(surf, SUNLIT, edge, px(5))
+        labels.insert(0, ("Sun", (edge[0], edge[1] - px(12)), SUNLIT, "center"))
     nu0 = float(el.nu)
     r0 = p / (1.0 + e * math.cos(nu0))
     sat = S(r0 * math.cos(nu0), r0 * math.sin(nu0))
     pygame.draw.line(surf, theme.dim(color, 0.7), ecen, sat)
     vx, vy = -math.sin(nu0), e + math.cos(nu0)
     vn = math.hypot(vx, vy) or 1.0
-    _arrow(surf, (255, 255, 255), sat, (sat[0] + 26 * vx / vn, sat[1] - 26 * vy / vn), 6, 2)
-    pygame.draw.circle(surf, color, sat, 5)
-    pygame.draw.circle(surf, (255, 255, 255), sat, 8, 1)
+    arm = px(26)
+    _arrow(surf, (255, 255, 255), sat, (sat[0] + arm * vx / vn, sat[1] - arm * vy / vn), 6, 2)
+    pygame.draw.circle(surf, color, sat, px(5))
+    pygame.draw.circle(surf, (255, 255, 255), sat, px(8), 1)
     # labels last, so no line crosses them, and never over the satellite
-    placed = [pygame.Rect(0, 0, 18, 18).move(sat[0] - 9, sat[1] - 9)]
+    placed = [pygame.Rect(0, 0, px(18), px(18)).move(sat[0] - px(9), sat[1] - px(9))]
     for text, pos, col, anchor in labels:
-        _label(surf, fonts, text, pos, col, anchor, rect.inflate(-6, -6), placed)
+        _label(surf, fonts, text, pos, col, anchor, rect.inflate(-px(6), -px(6)), placed)
     surf.set_clip(clip)
     _legend(surf, fonts, rect, color, dark)
 
@@ -255,17 +263,19 @@ def _plane_apsides_nodes(surf, info: OrbitInfo, S):
     if info.closed:
         _dashed(surf, theme.dim(APSIS, 0.6), ap, pe)
         c0 = S(-info.c, 0)
-        pygame.draw.line(surf, APSIS, (c0[0] - 3, c0[1]), (c0[0] + 3, c0[1]))
-        pygame.draw.line(surf, APSIS, (c0[0], c0[1] - 3), (c0[0], c0[1] + 3))
+        k = px(3)
+        pygame.draw.line(surf, APSIS, (c0[0] - k, c0[1]), (c0[0] + k, c0[1]))
+        pygame.draw.line(surf, APSIS, (c0[0], c0[1] - k), (c0[0], c0[1] + k))
     else:
         _dashed(surf, theme.dim(APSIS, 0.6), ecen, pe)
     labels = []
     if not info.circular:
-        pygame.draw.circle(surf, APSIS, pe, 3)
-        labels.append((f"Pe {num(info.rp_alt, 'km', 0)}", (pe[0], pe[1] + 7), APSIS, "midtop"))
+        pygame.draw.circle(surf, APSIS, pe, px(3))
+        labels.append((f"Pe {num(info.rp_alt, 'km', 0)}", (pe[0], pe[1] + px(7)), APSIS,
+                       "midtop"))
         if ap is not None:
-            pygame.draw.circle(surf, APSIS, ap, 3)
-            labels.append((f"Ap {num(info.ra_alt, 'km', 0)}", (ap[0], ap[1] + 7), APSIS,
+            pygame.draw.circle(surf, APSIS, ap, px(3))
+            labels.append((f"Ap {num(info.ra_alt, 'km', 0)}", (ap[0], ap[1] + px(7)), APSIS,
                            "midtop"))
     if not info.equatorial:
         ends = []
@@ -278,25 +288,26 @@ def _plane_apsides_nodes(surf, info: OrbitInfo, S):
         d_s = S(*dn) if dn else ecen
         _dashed(surf, theme.dim(NODE, 0.8), a_s, d_s)
         if an:
-            pygame.draw.circle(surf, NODE, a_s, 4)
-            labels.append(("AN", (a_s[0], a_s[1] - 7), NODE, "midbottom"))
+            pygame.draw.circle(surf, NODE, a_s, px(4))
+            labels.append(("AN", (a_s[0], a_s[1] - px(7)), NODE, "midbottom"))
         if dn:
-            pygame.draw.circle(surf, NODE, d_s, 4, 1)
-            labels.append(("DN", (d_s[0], d_s[1] - 7), NODE, "midbottom"))
+            pygame.draw.circle(surf, NODE, d_s, px(4), 1)
+            labels.append(("DN", (d_s[0], d_s[1] - px(7)), NODE, "midbottom"))
     return labels
 
 
 def _legend(surf, fonts, rect, color, dark):
     """Key to the orbit-plane diagram's line styles."""
-    y = rect.bottom - 13
-    x = rect.x + 8
+    y = rect.bottom - px(13)
+    x = rect.x + px(8)
+    ly, sw = y + px(6), px(14)                  # the sample line's height and length
     for c, text, dashed in ((color, "sunlit", False), (dark, "shadow", False),
                             (APSIS, "apsides", True), (NODE, "nodes", True)):
         if dashed:
-            _dashed(surf, c, (x, y + 6), (x + 14, y + 6), 3, 2)
+            _dashed(surf, c, (x, ly), (x + sw, ly), 3, 2)
         else:
-            pygame.draw.line(surf, c, (x, y + 6), (x + 14, y + 6), 2)
-        x = fonts.draw(surf, text, (x + 18, y), theme.FAINT, fonts.small).right + 10
+            pygame.draw.line(surf, c, (x, ly), (x + sw, ly), px(2))
+        x = fonts.draw(surf, text, (x + px(18), y), theme.FAINT, fonts.small).right + px(10)
 
 
 def _ray_to_rect(a, b, rect: pygame.Rect):
@@ -305,9 +316,9 @@ def _ray_to_rect(a, b, rect: pygame.Rect):
     dx, dy = b[0] - ax, b[1] - ay
     ts = []
     if dx:
-        ts += [(rect.left + 6 - ax) / dx, (rect.right - 6 - ax) / dx]
+        ts += [(rect.left + px(6) - ax) / dx, (rect.right - px(6) - ax) / dx]
     if dy:
-        ts += [(rect.top + 14 - ay) / dy, (rect.bottom - 18 - ay) / dy]
+        ts += [(rect.top + px(14) - ay) / dy, (rect.bottom - px(18) - ay) / dy]
     t = min(t for t in ts if t > 0) if any(t > 0 for t in ts) else 0.0
     return (ax + dx * t, ay + dy * t)
 
@@ -318,32 +329,33 @@ def draw_inclination(surf, rect, info: OrbitInfo, color, fonts):
     _box(surf, rect, fonts, "INCLINATION")
     c = (rect.centerx, rect.centery)
     L = rect.w * 0.42
-    er = 15
+    er = px(15)
     pygame.draw.circle(surf, EARTH_NIGHT, c, er)
     pygame.draw.circle(surf, (120, 170, 230), c, er, 1)
     _dashed(surf, EQUATOR, (c[0] - L, c[1]), (c[0] + L, c[1]))
-    _arrow(surf, theme.DIM, (c[0], c[1] - er), (c[0], c[1] - er - 16), 4)
+    _arrow(surf, theme.DIM, (c[0], c[1] - er), (c[0], c[1] - er - px(16)), 4)
     i = float(el.i)
     d = (math.cos(i), math.sin(i))
     pygame.draw.line(surf, color, (c[0] - L * d[0], c[1] + L * d[1]),
-                     (c[0] + L * d[0], c[1] - L * d[1]), 2)
+                     (c[0] + L * d[0], c[1] - L * d[1]), px(2))
     hx, hy = -d[1], d[0]
-    _arrow(surf, H_VEC, (c[0] + er * hx, c[1] - er * hy), (c[0] + 40 * hx, c[1] - 40 * hy), 5, 2)
+    hl = px(40)
+    _arrow(surf, H_VEC, (c[0] + er * hx, c[1] - er * hy), (c[0] + hl * hx, c[1] - hl * hy), 5, 2)
     kind = ("equatorial" if info.equatorial else "polar" if abs(math.degrees(i) - 90) < 2
             else "retrograde" if info.retrograde else "prograde")
     labels = []
     if i > 1e-3:
-        _arc(surf, NODE, c, 30, 0.0, i, 2)
-        mid = i / 2
-        labels.append((deg(i), (c[0] + 36 * math.cos(mid), c[1] - 36 * math.sin(mid)), NODE,
+        _arc(surf, NODE, c, px(30), 0.0, i, 2)
+        mid, lr = i / 2, px(36)
+        labels.append((deg(i), (c[0] + lr * math.cos(mid), c[1] - lr * math.sin(mid)), NODE,
                        "midleft" if math.cos(mid) >= 0 else "midright"))
-    labels += [("h", (c[0] + 50 * hx, c[1] - 50 * hy), H_VEC, "center"),
-               ("N", (c[0] + 5, c[1] - er - 13), theme.DIM, "midleft"),
-               ("equator", (c[0] + L, c[1] + 4), EQUATOR, "topright"),
-               (kind, (rect.centerx, rect.bottom - 5), theme.DIM, "midbottom")]
-    placed = [pygame.Rect(rect.x, rect.y, rect.w, 22)]         # the title
+    labels += [("h", (c[0] + px(50) * hx, c[1] - px(50) * hy), H_VEC, "center"),
+               ("N", (c[0] + px(5), c[1] - er - px(13)), theme.DIM, "midleft"),
+               ("equator", (c[0] + L, c[1] + px(4)), EQUATOR, "topright"),
+               (kind, (rect.centerx, rect.bottom - px(5)), theme.DIM, "midbottom")]
+    placed = [pygame.Rect(rect.x, rect.y, rect.w, px(22))]         # the title
     for text, pos, col, anchor in labels:
-        _label(surf, fonts, text, pos, col, anchor, rect.inflate(-6, -6), placed)
+        _label(surf, fonts, text, pos, col, anchor, rect.inflate(-px(6), -px(6)), placed)
 
 
 def draw_north_view(surf, rect, info: OrbitInfo, color, r_sun, fonts):
@@ -351,7 +363,7 @@ def draw_north_view(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     el = info.el
     _box(surf, rect, fonts, "FROM NORTH")
     c = (rect.centerx, rect.centery)
-    half = min(rect.w, rect.h - 44) * 0.5 - 6
+    half = min(rect.w, rect.h - px(44)) * 0.5 - px(6)
     P, Q = perifocal_axes(el.i, el.raan, el.argp)
     e, p = float(el.e), float(el.p)
     if info.closed:
@@ -365,9 +377,9 @@ def draw_north_view(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     if not info.closed:
         ext = min(ext, 3 * info.radius)
     k = half / ext
-    er = max(4, int(R_EARTH * k))
+    er = max(px(4), int(R_EARTH * k))
     clip = surf.get_clip()
-    surf.set_clip(rect.inflate(-2, -2).clip(clip))
+    surf.set_clip(rect.inflate(-px(2), -px(2)).clip(clip))
     s = np.asarray(r_sun) / np.linalg.norm(r_sun)
     sa = math.atan2(s[1], s[0])
     pygame.draw.circle(surf, EARTH_NIGHT, c, er)
@@ -376,12 +388,12 @@ def draw_north_view(surf, rect, info: OrbitInfo, color, r_sun, fonts):
                         [(c[0] + er * math.cos(a), c[1] - er * math.sin(a)) for a in tt])
     pygame.draw.circle(surf, (120, 170, 230), c, er, 1)
     scr = np.stack([c[0] + k * pts[:, 0], c[1] - k * pts[:, 1]], 1)
-    pygame.draw.lines(surf, color, False, scr.tolist(), 2)
+    pygame.draw.lines(surf, color, False, scr.tolist(), px(2))
     # vernal equinox and Sun directions, line of nodes and RAAN
     _arrow(surf, theme.AXIS_X, c, (c[0] + half, c[1]), 5)
     sun_end = (c[0] + half * math.cos(sa), c[1] - half * math.sin(sa))
     _dashed(surf, SUNLIT, (c[0] + er * math.cos(sa), c[1] - er * math.sin(sa)), sun_end, 4, 3)
-    labels = [("Sun", (sun_end[0], sun_end[1] - 7), SUNLIT, "midbottom")]
+    labels = [("Sun", (sun_end[0], sun_end[1] - px(7)), SUNLIT, "midbottom")]
     if not info.equatorial:
         n = (math.cos(el.raan), math.sin(el.raan))
         a_s = (c[0] + half * 0.92 * n[0], c[1] - half * 0.92 * n[1])
@@ -389,22 +401,23 @@ def draw_north_view(surf, rect, info: OrbitInfo, color, r_sun, fonts):
         _dashed(surf, NODE, d_s, a_s)
         if el.raan > 1e-3:
             _arc(surf, NODE, c, half * 0.45, 0.0, float(el.raan), 2)
-        pygame.draw.circle(surf, NODE, a_s, 4)
-        pygame.draw.circle(surf, NODE, d_s, 4, 1)
-        labels.append(("AN", (a_s[0], a_s[1] - 7), NODE, "midbottom"))
-    labels.append(("\N{GREEK SMALL LETTER GAMMA}", (c[0] + half, c[1] + 5), theme.AXIS_X,
+        pygame.draw.circle(surf, NODE, a_s, px(4))
+        pygame.draw.circle(surf, NODE, d_s, px(4), 1)
+        labels.append(("AN", (a_s[0], a_s[1] - px(7)), NODE, "midbottom"))
+    labels.append(("\N{GREEK SMALL LETTER GAMMA}", (c[0] + half, c[1] + px(5)), theme.AXIS_X,
                    "topright"))
     r0 = p / (1.0 + e * math.cos(el.nu))
     now = r0 * (math.cos(el.nu) * P + math.sin(el.nu) * Q)
     sat = (c[0] + k * now[0], c[1] - k * now[1])
-    pygame.draw.circle(surf, color, sat, 4)
-    pygame.draw.circle(surf, (255, 255, 255), sat, 7, 1)
-    placed = [pygame.Rect(rect.x, rect.y, rect.w, 22), pygame.Rect(sat[0] - 8, sat[1] - 8, 16, 16)]
+    pygame.draw.circle(surf, color, sat, px(4))
+    pygame.draw.circle(surf, (255, 255, 255), sat, px(7), 1)
+    placed = [pygame.Rect(rect.x, rect.y, rect.w, px(22)),
+              pygame.Rect(sat[0] - px(8), sat[1] - px(8), px(16), px(16))]
     for text, pos, col, anchor in labels:
-        _label(surf, fonts, text, pos, col, anchor, rect.inflate(-6, -26), placed)
+        _label(surf, fonts, text, pos, col, anchor, rect.inflate(-px(6), -px(26)), placed)
     surf.set_clip(clip)
     _label(surf, fonts, f"\N{GREEK CAPITAL LETTER OMEGA} {deg(el.raan, 1)}   "
-           f"LTAN {hours_clock(info.ltan)}", (rect.centerx, rect.bottom - 5), theme.DIM,
+           f"LTAN {hours_clock(info.ltan)}", (rect.centerx, rect.bottom - px(5)), theme.DIM,
            "midbottom")
 
 
@@ -412,14 +425,14 @@ def draw_timeline(surf, rect, info: OrbitInfo, fonts):
     """Sunlight and events over the next revolution, now at the left."""
     if not info.closed:
         _box(surf, rect, fonts, "NEXT REVOLUTION")
-        fonts.draw(surf, "open trajectory - no further revolutions", (rect.x + 8, rect.y + 26),
-                   theme.FAINT, fonts.small)
+        fonts.draw(surf, "open trajectory - no further revolutions",
+                   (rect.x + px(8), rect.y + px(26)), theme.FAINT, fonts.small)
         return
     ecl = info.eclipse_fraction
     right = ("no eclipse" if ecl < 1e-4
              else f"shadow {ecl * 100:.0f}% = {countdown(info.eclipse_duration)}")
     _box(surf, rect, fonts, f"NEXT {countdown(info.period)}", right)
-    bar = pygame.Rect(rect.x + 10, rect.y + 24, rect.w - 20, 12)
+    bar = pygame.Rect(rect.x + px(10), rect.y + px(24), rect.w - px(20), px(12))
     lit = np.interp(np.linspace(0, 1, bar.w), info.timeline_t / info.period, info.timeline_lit)
     cols = np.asarray(SHADOW, float) * (1 - lit[:, None]) + np.asarray(SUNLIT, float) * lit[:, None]
     strip = pygame.Surface((bar.w, 1))
@@ -431,21 +444,21 @@ def draw_timeline(surf, rect, info: OrbitInfo, fonts):
     events = sorted((t, n, c) for t, n, c in events if math.isfinite(t) and t <= info.period)
     xs = [bar.x + int(t / info.period * (bar.w - 1)) for t, _, _ in events]
     for x, (_, _, col) in zip(xs, events, strict=True):
-        pygame.draw.line(surf, col, (x, bar.y - 3), (x, bar.bottom + 2), 2)
+        pygame.draw.line(surf, col, (x, bar.y - px(3)), (x, bar.bottom + px(2)), px(2))
     # each label takes the first of three rows under the bar where it fits
     placed = []
-    area = rect.inflate(-6, -4)
+    area = rect.inflate(-px(6), -px(4))
     for x, (t, name, col) in zip(xs, events, strict=True):
         text = f"{name} {countdown(t)}"
         w = fonts.small.size(text)[0]
         for row in range(3):
             r = pygame.Rect(0, 0, w, fonts.small.get_height())
-            r.midtop = (x, bar.bottom + 4 + (r.h + 1) * row)
+            r.midtop = (x, bar.bottom + px(4) + (r.h + 1) * row)
             r.clamp_ip(area)
-            if row == 2 or r.inflate(8, 0).collidelist(placed) < 0:
+            if row == 2 or r.inflate(px(8), 0).collidelist(placed) < 0:
                 break
         placed.append(r)
-        theme.panel(surf, r.inflate(6, 0), LABEL_BACK, None, 3)
+        theme.panel(surf, r.inflate(px(6), 0), LABEL_BACK, None, 3)
         fonts.draw(surf, text, r.topleft, col, fonts.small)
 
 
@@ -454,8 +467,8 @@ def draw_gauge(surf, rect, fonts, label, lo, hi, val, unit, prec, color):
     fonts.draw(surf, label, (rect.x, rect.y), theme.DIM, fonts.small)
     fonts.draw(surf, f"{val:,.{prec}f} {unit}", (rect.right, rect.y), theme.TEXT, fonts.small,
                "topright")
-    bar = pygame.Rect(rect.x, rect.y + 17, rect.w, 6)
-    pygame.draw.rect(surf, (30, 40, 64), bar, border_radius=3)
+    bar = pygame.Rect(rect.x, rect.y + px(17), rect.w, px(6))
+    pygame.draw.rect(surf, (30, 40, 64), bar, border_radius=px(3))
     if not (math.isfinite(lo) and math.isfinite(hi)) or hi - lo < 1e-9 * max(1.0, abs(hi)):
         f = 0.5
         fonts.draw(surf, "constant", (bar.centerx, bar.bottom + 1), theme.FAINT, fonts.small,
@@ -466,11 +479,11 @@ def draw_gauge(surf, rect, fonts, label, lo, hi, val, unit, prec, color):
         fonts.draw(surf, f"{hi:,.{prec}f}", (bar.right, bar.bottom + 1), theme.FAINT, fonts.small,
                    "topright")
     fill = bar.copy()
-    fill.w = max(6, int(bar.w * f))
-    pygame.draw.rect(surf, theme.dim(color, 0.6), fill, border_radius=3)
+    fill.w = max(px(6), int(bar.w * f))
+    pygame.draw.rect(surf, theme.dim(color, 0.6), fill, border_radius=px(3))
     x = bar.x + int(bar.w * f)
-    pygame.draw.circle(surf, (255, 255, 255), (x, bar.centery), 5)
-    pygame.draw.circle(surf, color, (x, bar.centery), 3)
+    pygame.draw.circle(surf, (255, 255, 255), (x, bar.centery), px(5))
+    pygame.draw.circle(surf, color, (x, bar.centery), px(3))
 
 
 # --- property sheet ----------------------------------------------------------------------------
@@ -479,12 +492,12 @@ def draw_section(surf, fonts, x, y, w, title, rows) -> int:
     """A titled block of (label, value) rows, values right-aligned at ``x + w``;
     returns the y just below it."""
     fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small)
-    y += 18
+    y += px(18)
     for label, value in rows:
-        fonts.draw(surf, label, (x + 4, y), theme.DIM, fonts.small)
+        fonts.draw(surf, label, (x + px(4), y), theme.DIM, fonts.small)
         fonts.draw(surf, value, (x + w, y), theme.TEXT, fonts.small, "topright")
-        y += 16
-    return y + 6
+        y += px(16)
+    return y + px(6)
 
 
 def property_sections(info: OrbitInfo, dv_used: float):
@@ -566,24 +579,26 @@ def draw_orbit_tab(surf, x, y, w, app, i) -> int:
     s = sim.sats[i]
     if info is None:
         fonts.draw(surf, f"{s.name} is {s.status}", (x, y), theme.FAINT, fonts.ui)
-        return y + 24
+        return y + px(24)
     r_sun = sun_position(sim.jd())
-    draw_orbit_plane(surf, pygame.Rect(x, y, w, 236), info, s.color, r_sun, fonts)
-    y += 242
-    half = (w - 6) // 2
-    draw_inclination(surf, pygame.Rect(x, y, half, 172), info, s.color, fonts)
-    draw_north_view(surf, pygame.Rect(x + half + 6, y, w - half - 6, 172), info, s.color, r_sun,
-                    fonts)
-    y += 178
-    draw_timeline(surf, pygame.Rect(x, y, w, 96), info, fonts)
-    y += 104
+    gap = px(6)
+    draw_orbit_plane(surf, pygame.Rect(x, y, w, px(236)), info, s.color, r_sun, fonts)
+    y += px(242)
+    half = (w - gap) // 2
+    draw_inclination(surf, pygame.Rect(x, y, half, px(172)), info, s.color, fonts)
+    draw_north_view(surf, pygame.Rect(x + half + gap, y, w - half - gap, px(172)), info, s.color,
+                    r_sun, fonts)
+    y += px(178)
+    draw_timeline(surf, pygame.Rect(x, y, w, px(96)), info, fonts)
+    y += px(104)
     if info.closed and not info.circular:
-        draw_gauge(surf, pygame.Rect(x + 4, y, w - 8, 36), fonts, "Altitude (perigee -> apogee)",
+        gauge = pygame.Rect(x + px(4), y, w - px(8), px(36))
+        draw_gauge(surf, gauge, fonts, "Altitude (perigee -> apogee)",
                    info.rp_alt, info.ra_alt, info.radius - R_EARTH, "km", 0, s.color)
-        y += 46
-        draw_gauge(surf, pygame.Rect(x + 4, y, w - 8, 36), fonts, "Speed (apogee -> perigee)",
+        y += px(46)
+        draw_gauge(surf, gauge.move(0, px(46)), fonts, "Speed (apogee -> perigee)",
                    info.v_apo, info.v_peri, info.speed, "km/s", 3, s.color)
-        y += 50
+        y += px(50)
     for title, rows in property_sections(info, s.dv_used):
         y = draw_section(surf, fonts, x, y, w, title, rows)
     return y

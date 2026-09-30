@@ -62,6 +62,11 @@ class Options:
 ORBIT_MODES = ("auto", "all", "selected", "none")
 WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
 TOOLTIP_DELAY = 0.4        # s the mouse rests on a button before its hint shows
+# Real seconds a single frame may count for. The physics takes the same steps
+# whatever the frame rate; this only stops a stall (a dragged window, a slow
+# dialog) from turning into one huge jump. Below 1 / MAX_FRAME_DT fps the
+# simulation runs slower than the chosen warp.
+MAX_FRAME_DT = 0.25
 
 
 class App:
@@ -400,10 +405,11 @@ class App:
 
     # --- frame ---------------------------------------------------------------------------------
     def update(self, dt_real: float):
-        """Advance the simulation by ``warp`` times the real frame time and move the camera."""
+        """Advance the simulation by ``warp`` times the real frame time and move the camera.
+        The frame only sets how far; the physics keeps its own time steps."""
         if not self.paused:
             t0 = time.perf_counter()
-            self.sim.advance(self.warp * min(dt_real, 0.1))
+            self.sim.advance(self.warp * min(dt_real, MAX_FRAME_DT))
             self.sim_cost = time.perf_counter() - t0
         if self.follow and 0 <= self.selected < self.sim.n:
             W = self.renderer.world_rotation(self.sim, self.opts.frame)

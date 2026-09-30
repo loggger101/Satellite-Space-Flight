@@ -39,7 +39,6 @@ class Options:
     geo_ring: bool = False
     equator: bool = False
     footprint: bool = True
-    moon: bool = True
     coastlines: bool = True
     map: bool = False
     plot: bool = False
@@ -145,7 +144,7 @@ class App:
             return None
         s = self.sim.sats[i]
         key = (i, self.sim.t, self.sim.n, self.sim.y[i].tobytes(), id(self.sim),
-               s.mass, s.area, s.cd, s.cr, self.sim.forces.density_scale)
+               s.mass, s.area, s.cd, self.sim.forces.density_scale)
         if key != self._info_key:
             self._info = orbit_info(self.sim.y[i, :3], self.sim.y[i, 3:], self.sim.jd(), s,
                                     self.sim.forces.density_scale)

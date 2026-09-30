@@ -60,9 +60,8 @@ class SatSpec:
     orbit: dict
     color: list | None = None
     mass: float = 500.0      # kg
-    area: float = 5.0        # m^2 (drag and SRP cross-section)
+    area: float = 5.0        # m^2 (drag cross-section)
     cd: float = 2.2
-    cr: float = 1.5
     count: int = 1
 
     def to_dict(self):
@@ -86,7 +85,6 @@ class ConstellationSpec:
     mass: float = 260.0
     area: float = 4.0
     cd: float = 2.2
-    cr: float = 1.3
     raan0: float = 0.0
 
     def to_dict(self):
@@ -135,6 +133,8 @@ class Scenario:
     integrator: IntegratorSettings = field(default_factory=IntegratorSettings)
     record_dt: float = 20.0              # s between trail / telemetry samples
     warp: float = 60.0                   # initial time acceleration
+    # out-of-scope forces the source file asked for (not saved back)
+    out_of_scope: list = field(default_factory=list, repr=False)
 
     # --- serialisation ---
     def to_dict(self):
@@ -168,6 +168,7 @@ class Scenario:
             constellations=[_from_dict(ConstellationSpec, c) for c in d.get("constellations", [])],
             stations=[_from_dict(GroundStation, g) for g in d.get("stations", [])],
             maneuvers=[Maneuver.from_dict(m) for m in d.get("maneuvers", [])],
+            out_of_scope=ForceModel.ignored_terms(d.get("forces", {})),
         )
 
     @classmethod
@@ -288,12 +289,12 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
         for k, (rr, vv) in enumerate(states):
             name = spec.name if len(states) == 1 else f"{spec.name}-{k + 1}"
             color = tuple(spec.color) if spec.color else palette_color(idx)
-            props = dict(mass=spec.mass, area=spec.area, cd=spec.cd, cr=spec.cr)
+            props = dict(mass=spec.mass, area=spec.area, cd=spec.cd)
             out.append((name, color, props, rr, vv))
             idx += 1
     for c in scenario.constellations:
         color = tuple(c.color) if c.color else palette_color(idx)
-        props = dict(mass=c.mass, area=c.area, cd=c.cd, cr=c.cr)
+        props = dict(mass=c.mass, area=c.area, cd=c.cd)
         for name, rr, vv in walker_states(c):
             out.append((name, color, props, rr, vv))
         idx += 1
@@ -305,20 +306,20 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
 PRESETS = {
     "ISS (LEO 420 km, 51.6 deg)": dict(orbit={"type": "elements", "altitude": 420, "i": 51.64,
                                              "raan": 30, "argp": 0, "nu": 0},
-                                      mass=420000, area=1600, cd=2.2, cr=1.3),
+                                      mass=420000, area=1600, cd=2.2),
     "Hubble (540 km, 28.5 deg)": dict(orbit={"type": "elements", "altitude": 540, "i": 28.47,
                                             "raan": 120, "nu": 90},
-                                     mass=11110, area=40, cd=2.2, cr=1.3),
+                                     mass=11110, area=40, cd=2.2),
     "Sun-synchronous 700 km": dict(orbit={"type": "elements", "altitude": 700, "i": "sso",
                                           "raan": 90, "nu": 0},
-                                   mass=1000, area=6, cd=2.2, cr=1.4),
+                                   mass=1000, area=6, cd=2.2),
     "Polar LEO 800 km": dict(orbit={"type": "elements", "altitude": 800, "i": 90,
                                     "raan": 0, "nu": 45}, mass=800, area=5),
     "VLEO 250 km (decays)": dict(orbit={"type": "elements", "altitude": 250, "i": 45,
                                         "raan": 200, "nu": 0}, mass=150, area=3),
     "GPS MEO (20200 km, 55 deg)": dict(orbit={"type": "elements", "altitude": 20180, "i": 55,
                                               "raan": 60, "nu": 0}, mass=2000, area=20),
-    "Geostationary (GEO)": dict(orbit={"type": "geo", "lon": -75}, mass=3500, area=30, cr=1.3),
+    "Geostationary (GEO)": dict(orbit={"type": "geo", "lon": -75}, mass=3500, area=30),
     "GTO (200 x 35786 km, 27 deg)": dict(orbit={"type": "elements", "perigee_alt": 200,
                                                 "apogee_alt": 35786, "i": 27, "raan": 0,
                                                 "argp": 178, "nu": 0}, mass=4000, area=15),
@@ -328,9 +329,6 @@ PRESETS = {
     "Tundra (24 h, 63.4 deg)": dict(orbit={"type": "elements", "a": 42164, "e": 0.25,
                                            "i": 63.4, "raan": 120, "argp": 270, "nu": 0},
                                     mass=2000, area=15),
-    "Lunar transfer (TLI)": dict(orbit={"type": "elements", "perigee_alt": 200,
-                                        "apogee_alt": 384000, "i": 28.5, "raan": 0,
-                                        "argp": 0, "nu": 0}, mass=5000, area=20),
     "Escape (hyperbolic, e=1.2)": dict(orbit={"type": "elements", "a": -35000, "e": 1.2,
                                               "i": 10, "raan": 0, "argp": 0, "nu": 0},
                                        mass=1000, area=5),

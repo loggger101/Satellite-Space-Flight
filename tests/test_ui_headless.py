@@ -137,10 +137,10 @@ def test_physics_dialog_switches_models(app):
     app.open("physics")
     dlg = app.dialogs[-1]
     dlg.set("drag", True)
-    dlg.set("moon", True)
+    dlg.set("j3", True)
     dlg.set("propagator", "kepler")
     dlg.submit()
-    assert app.sim.forces.drag and app.sim.forces.moon and app.sim.propagator == "kepler"
+    assert app.sim.forces.drag and app.sim.forces.j3 and app.sim.propagator == "kepler"
     frame(app, 3)
 
 

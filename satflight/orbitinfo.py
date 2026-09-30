@@ -1,7 +1,7 @@
 """Derived orbital and physical properties of a single satellite, gathered
 for the orbit inspector: orbit shape, apsis speeds, timing of the next apsis
 and node passes, the sunlight profile of the coming revolution, local time of
-the ascending node, J2 drift and the craft's drag and SRP characteristics.
+the ascending node, J2 drift and the craft's drag characteristics.
 
 Everything is two-body plus J2 secular theory evaluated from the osculating
 state, so the numbers describe the orbit *now*; the numerical propagator
@@ -17,7 +17,7 @@ import numpy as np
 
 from .analysis import beta_angle, classify, coverage_half_angle, j2_secular_rates
 from .atmosphere import density
-from .constants import MU_EARTH, OMEGA_EARTH, P_SRP, R_EARTH
+from .constants import MU_EARTH, OMEGA_EARTH, R_EARTH
 from .eclipse import shadow_fraction
 from .elements import Elements, coe2rv, mean_to_true, rv2coe, time_to_true_anomaly
 from .ephemeris import sun_position
@@ -78,12 +78,10 @@ class OrbitInfo:
     mass: float              # kg
     area: float              # m^2
     cd: float
-    cr: float
     area_to_mass: float      # m^2/kg
     ballistic: float         # m / (Cd A), kg/m^2
     rho_perigee: float       # kg/m^3 at perigee altitude
     drag_perigee: float      # m/s^2 drag deceleration at perigee
-    srp_accel: float         # m/s^2 SRP acceleration at 1 AU in sunlight
 
     @property
     def eclipse_duration(self) -> float:
@@ -126,7 +124,7 @@ def local_time_of_node(raan: float, r_sun) -> float:
 
 def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitInfo:
     """Everything the orbit inspector shows for one ECI state at ``jd``.
-    ``sat`` supplies the physical properties (mass, area, cd, cr)."""
+    ``sat`` supplies the physical properties (mass, area, cd)."""
     r = np.asarray(r, dtype=float)
     v = np.asarray(v, dtype=float)
     el = rv2coe(r, v)
@@ -164,7 +162,6 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
     mass = getattr(sat, "mass", nan)
     area = getattr(sat, "area", nan)
     cd = getattr(sat, "cd", nan)
-    cr = getattr(sat, "cr", nan)
     am = area / mass if mass else nan
     rp_alt = el.rp - R_EARTH
     v_peri = el.h / el.rp
@@ -187,11 +184,10 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         timeline_t=t_line, timeline_lit=lit, eclipse_fraction=eclipse,
         horizon_km=math.sqrt(max(rm * rm - R_EARTH * R_EARTH, 0.0)),
         footprint_km=coverage_half_angle(alt, math.radians(10.0)) * R_EARTH,
-        mass=mass, area=area, cd=cd, cr=cr, area_to_mass=am,
+        mass=mass, area=area, cd=cd, area_to_mass=am,
         ballistic=mass / (cd * area) if cd and area else nan,
         rho_perigee=rho_p,
         drag_perigee=0.5 * rho_p * (v_peri * 1e3) ** 2 * cd * am,
-        srp_accel=P_SRP * cr * am,
     )
 
 

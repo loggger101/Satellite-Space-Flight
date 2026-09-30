@@ -5,12 +5,14 @@ All accelerations are in km/s^2 and vectorised over ``(N, 3)`` arrays.
 * central body   -mu r / r^3
 * zonal harmonics J2, J3, J4 (Earth oblateness and pear shape)
 * atmospheric drag with an atmosphere co-rotating with the Earth
-* third-body Sun and Moon (direct minus indirect term)
-* solar radiation pressure (cannonball model) with conical Earth shadow
+
+Only the Earth acts on the satellites. Third-body Sun and Moon gravity and
+solar radiation pressure are out of the present scope (docs/SCOPE.md);
+scenario files that still ask for them load with those terms ignored.
 
 The equations are the standard ones found in Vallado ch. 8 and Montenbruck
-& Gill ch. 3 - and in REBOUNDx's ``gravitational_harmonics`` /
-``gas_drag`` / ``radiation_forces`` effects, which play the same role there.
+& Gill ch. 3 - and in REBOUNDx's ``gravitational_harmonics`` / ``gas_drag``
+effects, which play the same role there.
 """
 
 from __future__ import annotations
@@ -20,10 +22,7 @@ from dataclasses import asdict, dataclass, fields
 import numpy as np
 
 from . import atmosphere
-from .constants import (AU, F_EARTH, J2, J3, J4, MU_EARTH, MU_MOON, MU_SUN,
-                        OMEGA_EARTH, P_SRP, R_EARTH)
-from .eclipse import shadow_fraction
-from .ephemeris import moon_position, sun_position
+from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH
 
 OMEGA_VEC = np.array([0.0, 0.0, OMEGA_EARTH])
 
@@ -99,23 +98,6 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0):
     return k[..., None] * v_rel
 
 
-def accel_third_body(r, r_body, mu_body):
-    d = r_body - r
-    dm = np.linalg.norm(d, axis=-1, keepdims=True)
-    bm = np.linalg.norm(r_body)
-    return mu_body * (d / dm ** 3 - r_body / bm ** 3)
-
-
-def accel_srp(r, r_sun, cr_a_over_m, shadow: bool = True):
-    """Cannonball SRP. ``cr_a_over_m`` is Cr*A/m in m^2/kg."""
-    d = r - r_sun                      # Sun -> satellite
-    dm = np.linalg.norm(d, axis=-1, keepdims=True)
-    nu = shadow_fraction(r, r_sun) if shadow else 1.0
-    # P [N/m^2] * CrA/m [m^2/kg] = m/s^2 ; /1e3 -> km/s^2
-    mag = P_SRP * cr_a_over_m * (AU / dm[..., 0]) ** 2 * 1e-3 * nu
-    return mag[..., None] * d / dm
-
-
 # --- The configurable model ------------------------------------------------------------
 
 @dataclass
@@ -124,12 +106,11 @@ class ForceModel:
     j3: bool = False
     j4: bool = False
     drag: bool = False
-    sun: bool = False
-    moon: bool = False
-    srp: bool = False
     density_scale: float = 1.0
 
-    TERMS = ("j2", "j3", "j4", "drag", "sun", "moon", "srp")
+    TERMS = ("j2", "j3", "j4", "drag")
+    OUT_OF_SCOPE = {"sun": "Sun third-body gravity", "moon": "Moon third-body gravity",
+                    "srp": "solar radiation pressure"}
 
     def to_dict(self):
         return asdict(self)
@@ -139,11 +120,16 @@ class ForceModel:
         names = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in (d or {}).items() if k in names})
 
+    @classmethod
+    def ignored_terms(cls, d) -> list[str]:
+        """Out-of-scope forces that a scenario dict switches on."""
+        return [label for k, label in cls.OUT_OF_SCOPE.items() if (d or {}).get(k)]
+
     def label(self) -> str:
         on = [t.upper() for t in self.TERMS if getattr(self, t)]
         return "two-body" if not on else "2B+" + "+".join(on)
 
-    def acceleration(self, jd: float, r, v, cd_a_over_m, cr_a_over_m):
+    def acceleration(self, r, v, cd_a_over_m):
         a = accel_point_mass(r)
         if self.j2:
             a += accel_j2(r)
@@ -153,33 +139,20 @@ class ForceModel:
             a += accel_j4(r)
         if self.drag:
             a += accel_drag(r, v, cd_a_over_m, self.density_scale)
-        if self.sun or self.srp:
-            rs = sun_position(jd)
-            if self.sun:
-                a += accel_third_body(r, rs, MU_SUN)
-            if self.srp:
-                a += accel_srp(r, rs, cr_a_over_m)
-        if self.moon:
-            a += accel_third_body(r, moon_position(jd), MU_MOON)
         return a
 
-    def breakdown(self, jd: float, r, v, cd_a_over_m, cr_a_over_m):
+    def breakdown(self, r, v, cd_a_over_m):
         """Magnitude (km/s^2) of every term for display, enabled or not."""
         r = np.atleast_2d(r)
         v = np.atleast_2d(v)
-        rs = sun_position(jd)
         terms = {
             "gravity": accel_point_mass(r),
             "J2": accel_j2(r),
             "J3": accel_j3(r),
             "J4": accel_j4(r),
             "drag": accel_drag(r, v, np.atleast_1d(cd_a_over_m), self.density_scale),
-            "sun": accel_third_body(r, rs, MU_SUN),
-            "moon": accel_third_body(r, moon_position(jd), MU_MOON),
-            "srp": accel_srp(r, rs, np.atleast_1d(cr_a_over_m)),
         }
-        enabled = {"gravity": True, "J2": self.j2, "J3": self.j3, "J4": self.j4,
-                   "drag": self.drag, "sun": self.sun, "moon": self.moon, "srp": self.srp}
+        enabled = {"gravity": True, "J2": self.j2, "J3": self.j3, "J4": self.j4, "drag": self.drag}
         return {k: (float(np.linalg.norm(val[0])), enabled[k]) for k, val in terms.items()}
 
 

@@ -21,13 +21,10 @@ J2 = 1.08262668355e-3
 J3 = -2.53265648533e-6
 J4 = -1.61962159137e-6
 
-# --- Sun and Moon -------------------------------------------------------
-MU_SUN = 1.32712440018e11         # km^3/s^2
-MU_MOON = 4902.800066             # km^3/s^2
+# --- Sun (position only: lighting, eclipses, beta angle) -------------------
+# The Sun and Moon exert no force in this simulator; see docs/SCOPE.md.
 R_SUN = 696000.0                  # km
-R_MOON = 1737.4                   # km
 AU = 149597870.7                  # km
-P_SRP = 4.56e-6                   # N/m^2, solar radiation pressure at 1 AU
 SOI_EARTH = 924000.0              # km, Earth's sphere of influence w.r.t. the Sun
 
 # --- Time ---------------------------------------------------------------

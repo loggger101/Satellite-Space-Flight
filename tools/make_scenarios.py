@@ -86,8 +86,8 @@ def starlink():
 def gps():
     return Scenario(
         name="GPS-like constellation",
-        description="Walker delta 55 deg: 24/6/1 at 20180 km, Cowell propagation with J2, Sun and Moon.",
-        epoch=EPOCH, forces=ForceModel(j2=True, sun=True, moon=True), warp=600,
+        description="Walker delta 55 deg: 24/6/1 at 20180 km, Cowell propagation with J2.",
+        epoch=EPOCH, forces=ForceModel(j2=True), warp=600,
         constellations=[ConstellationSpec("GPS", 20180, 55.0, 24, 6, 1, "delta", [255, 196, 64], mass=2000,
                                           area=20)],
         stations=list(DEFAULT_STATIONS))
@@ -131,7 +131,7 @@ def heo():
         name="Molniya and Tundra",
         description="Three Molniya and three Tundra satellites sharing ground tracks - best viewed "
                     "in the Earth-fixed frame (E) with the map (M).",
-        epoch=EPOCH, forces=ForceModel(j2=True, j3=True, j4=True, sun=True, moon=True), warp=1200,
+        epoch=EPOCH, forces=ForceModel(j2=True, j3=True, j4=True), warp=1200,
         satellites=[SatSpec("Molniya", el(a=26554, e=0.72, i=63.4, raan=250, argp=270, nu=0),
                             count=3, mass=1600, area=10),
                     SatSpec("Tundra", el(a=42164, e=0.25, i=63.4, raan=120, argp=270, nu=0),
@@ -157,22 +157,10 @@ def launches():
         stations=[DEFAULT_STATIONS[0], DEFAULT_STATIONS[4]])
 
 
-def lunar():
-    return Scenario(
-        name="Third-body perturbations",
-        description="A lunar transfer orbit, a GEO satellite and a high-inclination HEO with the Sun, "
-                    "Moon and solar radiation pressure switched on.",
-        epoch=EPOCH, forces=ForceModel(j2=True, sun=True, moon=True, srp=True), warp=21600,
-        satellites=[preset_spec("Lunar transfer (TLI)", "Lunar transfer"),
-                    preset_spec("Geostationary (GEO)", "GEO"),
-                    SatSpec("HEO", el(perigee_alt=1000, apogee_alt=120000, i=60, raan=40, argp=90, nu=0),
-                            mass=800, area=12, cr=1.8)])
-
-
 ALL = {"default": default, "hohmann_to_geo": hohmann, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
-       "launches_and_arcs": launches, "third_body": lunar}
+       "launches_and_arcs": launches}
 
 
 if __name__ == "__main__":

@@ -68,6 +68,7 @@ class TopBar:
 
     def __init__(self, app):
         self.app = app
+        self.clock_rect = None         # where the UTC clock went (None: no room for it)
         a = app
         self.buttons = [
             Button("Play", a.toggle_pause, active=lambda: not a.paused, tooltip="Space",
@@ -113,17 +114,22 @@ class TopBar:
         self.buttons[4].text = app.opts.frame
         top_h, room = px(TOP_H), self.left_of_buttons - px(8)
         theme.panel(surf, pygame.Rect(0, 0, w, top_h), (8, 12, 22, 235), None, 0)
-        tips.block(pygame.Rect(0, 0, w, top_h))
+        tips.add(pygame.Rect(0, 0, w, top_h), "The status bar: simulation time, time warp, "
+                 "physics and counts on the left (a narrow window shows fewer of them), view "
+                 "buttons on the right. Rest on an item to see what it is.")
         pygame.draw.line(surf, theme.PANEL_EDGE, (0, top_h), (w, top_h))
-        title = fonts.draw(surf, "SATELLITE SPACE FLIGHT", (px(12), top_h // 2), theme.ACCENT,
-                           fonts.bold, "midleft")
-        tips.add(title, "An Earth-orbit simulator. Rest the mouse on any part of the window "
-                        "to see what it is; H lists every control.", "H")
-        x = title.right + px(18)
         dt = sim.datetime()
+        short = dt.strftime("%H:%M:%S UTC")
+        name = "SATELLITE SPACE FLIGHT"
+        x = px(12)
+        if x + fonts.bold.size(name)[0] + px(18) + fonts.mono.size(short)[0] <= room:
+            title = fonts.draw(surf, name, (x, top_h // 2), theme.ACCENT, fonts.bold, "midleft")
+            tips.add(title, "An Earth-orbit simulator. Rest the mouse on any part of the "
+                            "window to see what it is; H lists every control.", "H")
+            x = title.right + px(18)
         stamp = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         if x + fonts.mono.size(stamp)[0] > room:
-            stamp = dt.strftime("%H:%M:%S UTC")         # narrow window: the time matters most
+            stamp = short                               # narrow window: the time matters most
         cowell = sim.propagator == "cowell"
         parts = [
             (stamp, theme.TEXT, f"Simulation date and time (UTC): "
@@ -149,10 +155,12 @@ class TopBar:
              "Frames drawn per second. The physics keeps the same steps however slow the "
              "drawing is.", ""),
         ]
+        self.clock_rect = None
         for text, col, tip, keys in parts:
             if x + fonts.mono.size(text)[0] > room:
                 break                   # only whole items, never one cut by the buttons
             r = fonts.draw(surf, text, (x, top_h // 2), col, fonts.mono, "midleft")
+            self.clock_rect = self.clock_rect or r
             tips.add(r.inflate(px(8), px(12)), tip, keys)
             x = r.right + px(16)
         for b in self.buttons:
@@ -612,13 +620,23 @@ HELP = [
 ]   # draw_help needs 54 + 20 px per row: keep it within the 600 px minimum window height
 
 
+def help_layout(fonts, w, h):
+    """The help overlay's rect and the x offsets of its key and description
+    columns, sized to the text (fonts differ between systems)."""
+    keys = max(fonts.mono.size(k)[0] for k, d in HELP if d)
+    descs = max(fonts.ui.size(d)[0] for k, d in HELP if d)
+    key_x, desc_x = px(30), px(30) + max(keys + px(24), px(170))
+    width = min(max(px(520), desc_x + descs + px(18)), w - px(16))
+    rect = pygame.Rect(0, 0, width, px(34) + px(20) * len(HELP) + px(20))
+    rect.center = (w // 2, h // 2)
+    return rect, key_x, desc_x
+
+
 def draw_help(surf, app):
     """The controls overlay (key H), centred; returns its rect."""
     fonts = app.fonts
-    w, h = surf.get_size()
     line = px(20)
-    rect = pygame.Rect(0, 0, px(520), px(34) + line * len(HELP) + px(20))
-    rect.center = (w // 2, h // 2)
+    rect, key_x, desc_x = help_layout(fonts, *surf.get_size())
     theme.panel(surf, rect, (14, 20, 36, 245), theme.ACCENT)
     tips.block(rect)                     # it explains itself; a tip would hide the text
     y = rect.y + px(14)
@@ -628,9 +646,9 @@ def draw_help(surf, app):
         if not desc:
             fonts.draw(surf, key.upper(), (rect.x + px(18), y + px(2)), theme.ACCENT, fonts.small)
         else:
-            fonts.draw(surf, key, (rect.x + px(30), y + line // 2), theme.TEXT, fonts.mono,
+            fonts.draw(surf, key, (rect.x + key_x, y + line // 2), theme.TEXT, fonts.mono,
                        "midleft")
-            fonts.draw(surf, desc, (rect.x + px(200), y + line // 2), theme.DIM, fonts.ui,
+            fonts.draw(surf, desc, (rect.x + desc_x, y + line // 2), theme.DIM, fonts.ui,
                        "midleft")
         y += line
     return rect

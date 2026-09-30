@@ -221,24 +221,39 @@ class StartScreen:
                          "Ctrl+N brings it back", (r.x + px(20), r.bottom - px(10)), theme.FAINT,
                    fonts.small, "bottomleft")
 
-    def blurb_lines(self, k: int) -> list[str]:
-        """Card ``k``'s blurb wrapped to fit above its size tag. Rather than cut it,
-        the text may take 4 px of the right margin: glyph widths are whole pixels,
-        so a scaled font runs a little wider than the scaled card."""
+    def tag_place(self, k: int) -> str:
+        """Where card ``k``'s size tag goes: "bottom"; or, when the blurb needs the
+        bottom line, "title" (beside the title) if both fit there, else "" (left
+        to the card's hover tip)."""
+        fonts, rect = self.app.fonts, self.card_rects[k]
+        _, title, _, tag = self.cards[k]
+        if not tag or not self._blurb(k, 0)[-1].endswith("..."):
+            return "bottom" if tag else ""
+        fits = fonts.bold.size(title)[0] + fonts.small.size(tag)[0] + px(34) <= rect.w
+        return "title" if fits else ""
+
+    def _blurb(self, k: int, extra: int) -> list[str]:
+        """Card ``k``'s blurb wrapped into the lines above the tag, plus ``extra``.
+        Rather than cut it, the text may take 4 px of the right margin: glyph widths
+        are whole pixels, so a scaled font runs a little wider than the scaled card."""
         font, rect = self.app.fonts.small, self.card_rects[k]
         line_h = font.get_linesize() + 1
-        rows = max(1, (rect.h - px(34) - line_h) // line_h)
+        rows = max(1, (rect.h - px(34) - line_h) // line_h + extra)
         lines = wrap(self.cards[k][2], font, rect.w - px(24), rows)
         if lines[-1].endswith("..."):
             lines = wrap(self.cards[k][2], font, rect.w - px(20), rows)
         return lines
 
+    def blurb_lines(self, k: int) -> list[str]:
+        """Card ``k``'s blurb as drawn (one line more when the tag sits up top)."""
+        return self._blurb(k, 0 if self.tag_place(k) == "bottom" else 1)
+
     def _draw_card(self, surf, k):
         fonts = self.app.fonts
         path, title, blurb, tag = self.cards[k]
         rect, focused = self.card_rects[k], k == self.focus
-        tips.add(rect, f"{title}: {self.descriptions.get(path) or blurb}\nClick (or Enter) to "
-                       "start it.")
+        tips.add(rect, f"{title}{f' ({tag})' if tag else ''}: "
+                       f"{self.descriptions.get(path) or blurb}\nClick (or Enter) to start it.")
         bg = theme.mix(theme.FIELD, theme.ACCENT, 0.28) if focused else theme.FIELD
         pygame.draw.rect(surf, bg, rect, border_radius=px(7))
         pygame.draw.rect(surf, theme.ACCENT if focused else theme.PANEL_EDGE, rect, 1,
@@ -250,7 +265,11 @@ class StartScreen:
         for line in self.blurb_lines(k):
             fonts.draw(surf, line, (rect.x + px(12), y), theme.DIM, fonts.small)
             y += fonts.small.get_linesize() + 1
-        if tag:
+        place = self.tag_place(k)
+        if place == "title":
+            fonts.draw(surf, tag, (rect.right - px(10), rect.y + px(9) + fonts.bold.get_ascent()),
+                       theme.ACCENT, fonts.small, "bottomright")
+        elif place == "bottom":
             fonts.draw(surf, tag, (rect.right - px(10), rect.bottom - px(6)), theme.ACCENT,
                        fonts.small, "bottomright")
         surf.set_clip(clip)

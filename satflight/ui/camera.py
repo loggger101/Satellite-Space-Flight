@@ -11,8 +11,12 @@ from ..constants import R_EARTH
 
 
 class Camera:
+    """Orbits ``target`` at ``distance`` km from direction (``yaw``, ``pitch``);
+    call :meth:`update` after changing them to rebuild the view basis."""
+
     MIN_DIST = R_EARTH * 1.02
     MAX_DIST = 2.5e6
+    FLOOR = R_EARTH * 1.002      # the camera never goes below ~13 km
 
     def __init__(self, width: int, height: int, fov_deg: float = 45.0):
         self.yaw = math.radians(-60.0)
@@ -25,27 +29,30 @@ class Camera:
         self.update()
 
     def resize(self, width: int, height: int):
+        """Adapt the projection to a new window size."""
         self.width, self.height = width, height
         self.cx, self.cy = width / 2.0, height / 2.0
         self.focal = (height / 2.0) / math.tan(self.fov / 2.0)
 
     # --- controls ---------------------------------------------------------------
     def rotate(self, dyaw: float, dpitch: float):
+        """Turn the view (radians); pitch stops short of the poles."""
         self.yaw = (self.yaw + dyaw) % (2 * math.pi)
         self.pitch = max(-1.55, min(1.55, self.pitch + dpitch))
 
     def zoom(self, factor: float, min_dist: float | None = None):
+        """Scale the distance, clamped to [``min_dist`` or ``MIN_DIST``, ``MAX_DIST``]."""
         lo = min_dist if min_dist is not None else self.MIN_DIST
         self.distance = max(lo, min(self.MAX_DIST, self.distance * factor))
 
     def state_key(self):
+        """Hashable summary of the view, for render caches."""
         return (round(self.yaw, 6), round(self.pitch, 6), round(self.distance, 3),
                 tuple(np.round(self.target, 3)), self.width, self.height)
 
     # --- basis ----------------------------------------------------------------------
-    FLOOR = R_EARTH * 1.002      # the camera never goes below ~13 km
-
     def update(self):
+        """Recompute position and the right/up/forward basis from the controls."""
         cp, sp = math.cos(self.pitch), math.sin(self.pitch)
         cy, sy = math.cos(self.yaw), math.sin(self.yaw)
         offset = self._above_ground(np.array([cp * cy, cp * sy, sp])) * self.distance
@@ -106,6 +113,7 @@ class Camera:
 
     # --- projection -----------------------------------------------------------------
     def to_camera(self, pts: np.ndarray) -> np.ndarray:
+        """World points -> camera coordinates (x right, y up, z depth)."""
         return (np.asarray(pts, dtype=float) - self.position) @ self.basis.T
 
     def project(self, pts: np.ndarray):
@@ -152,6 +160,7 @@ class Camera:
         return (disc > 0) & (t1 > 0) & (t1 < 1.0)
 
     def screen_radius(self, center: np.ndarray, radius_km: float) -> float:
+        """Apparent radius (px) of a sphere at ``center``; 0 if behind the camera."""
         depth = float(self.to_camera(center)[2])
         if depth <= self.near:
             return 0.0

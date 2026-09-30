@@ -74,12 +74,15 @@ _H0, _RHO0, _SH = H0.tolist(), RHO0.tolist(), SCALE_H.tolist()
 # --- Vehicle description ---------------------------------------------------------
 
 def _from_dict(cls, d):
+    """Build dataclass ``cls`` from ``d``, ignoring keys it has no field for."""
     names = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in names})
 
 
 @dataclass
 class Stage:
+    """One rocket stage: engines, propellant load and dry mass."""
+
     name: str = "Stage"
     thrust: float = 1000.0      # kN, in vacuum
     isp_vac: float = 320.0      # s
@@ -94,9 +97,11 @@ class Stage:
 
     @property
     def burn_time(self) -> float:
+        """Seconds to empty the tanks at full throttle."""
         return self.propellant / self.mdot
 
     def isp(self, p_ratio: float) -> float:
+        """Specific impulse (s) at ambient pressure ``p_ratio`` = p / p_sea-level."""
         sl = self.isp_sl or self.isp_vac
         return self.isp_vac - (self.isp_vac - sl) * p_ratio
 
@@ -106,6 +111,8 @@ class Stage:
 
 @dataclass
 class Vehicle:
+    """A launcher: its stages (first to burn first), fairing and aerodynamics."""
+
     name: str = "Custom"
     stages: list = field(default_factory=list)   # list[Stage], first to burn first
     fairing: float = 0.0        # kg, jettisoned at fairing_alt
@@ -117,9 +124,11 @@ class Vehicle:
 
     @property
     def area(self) -> float:
+        """Drag reference area (m^2)."""
         return math.pi * self.diameter ** 2 / 4.0
 
     def liftoff_mass(self, payload: float) -> float:
+        """Total mass (kg) on the pad with ``payload`` kg aboard."""
         return payload + self.fairing + sum(s.propellant + s.dry for s in self.stages)
 
     def stage_summary(self, payload: float):
@@ -173,6 +182,7 @@ VEHICLES = {
 
 
 def vehicle_preset(name: str) -> Vehicle:
+    """An independent copy of ``VEHICLES[name]``."""
     return VEHICLES[name].copy()
 
 
@@ -275,6 +285,8 @@ def validate(spec: LaunchSpec):
 
 @dataclass
 class AscentEnv:
+    """The Earth an ascent flies in: enabled zonals, air density and Earth rotation."""
+
     j2: bool = True
     j3: bool = False
     j4: bool = False
@@ -288,6 +300,7 @@ class AscentEnv:
 
 
 def _density(h: float) -> float:
+    """Float-only :func:`satflight.atmosphere.density` (kg/m^3) at ``h`` km, unscaled."""
     if h > TOP_KM:
         return 0.0
     hc = h if h > 0.0 else 0.0
@@ -296,12 +309,14 @@ def _density(h: float) -> float:
 
 
 def _altitude(x, y, z) -> float:
+    """Float-only :func:`satflight.forces.approx_altitude`."""
     rm = math.sqrt(x * x + y * y + z * z)
     s = z / rm
     return rm - R_EARTH * (1.0 - F_EARTH * s * s)
 
 
 def _gravity(x, y, z, env: AscentEnv):
+    """Point-mass plus enabled zonal gravity (km/s^2), float-only."""
     r2 = x * x + y * y + z * z
     r = math.sqrt(r2)
     k = -MU_EARTH / (r2 * r)
@@ -360,15 +375,16 @@ def _deriv(s, tau, m0, mdot, stage, mode, fixed, cd_a, env):
 
 
 def _rk4(s, h, m0, mdot, stage, mode, fixed, cd_a, env):
+    """One RK4 step of length ``h`` from state ``s`` (see :func:`_deriv`)."""
     k1 = _deriv(s, 0.0, m0, mdot, stage, mode, fixed, cd_a, env)
-    s2 = tuple(a + 0.5 * h * b for a, b in zip(s, k1))
+    s2 = tuple(a + 0.5 * h * b for a, b in zip(s, k1, strict=True))
     k2 = _deriv(s2, 0.5 * h, m0, mdot, stage, mode, fixed, cd_a, env)
-    s3 = tuple(a + 0.5 * h * b for a, b in zip(s, k2))
+    s3 = tuple(a + 0.5 * h * b for a, b in zip(s, k2, strict=True))
     k3 = _deriv(s3, 0.5 * h, m0, mdot, stage, mode, fixed, cd_a, env)
-    s4 = tuple(a + h * b for a, b in zip(s, k3))
+    s4 = tuple(a + h * b for a, b in zip(s, k3, strict=True))
     k4 = _deriv(s4, h, m0, mdot, stage, mode, fixed, cd_a, env)
     return tuple(a + h / 6.0 * (b + 2.0 * c + 2.0 * d + e)
-                 for a, b, c, d, e in zip(s, k1, k2, k3, k4))
+                 for a, b, c, d, e in zip(s, k1, k2, k3, k4, strict=True))
 
 
 def coast(state, t0: float, t1: float, mass: float, cd_a: float, env: AscentEnv):
@@ -384,6 +400,7 @@ def coast(state, t0: float, t1: float, mass: float, cd_a: float, env: AscentEnv)
 
 
 def _energy(s) -> float:
+    """Two-body specific orbital energy (km^2/s^2) of state ``s``."""
     x, y, z, vx, vy, vz = s
     return 0.5 * (vx * vx + vy * vy + vz * vz) - MU_EARTH / math.sqrt(x * x + y * y + z * z)
 
@@ -460,6 +477,7 @@ def _plane_through(r_hat, inc: float, direction: str):
 
 
 def _unreachable(inc_deg: float, lat_deg: float) -> str:
+    """Error message for an inclination the pad's latitude cannot reach."""
     lo = abs(lat_deg)
     return (f"inclination {inc_deg:.1f} deg cannot be reached directly from latitude "
             f"{lat_deg:+.1f} deg: choose {lo:.1f} to {180 - lo:.1f} deg "
@@ -467,7 +485,8 @@ def _unreachable(inc_deg: float, lat_deg: float) -> str:
 
 
 def next_window(lat: float, lon: float, alt: float, normal_at, t_start: float, gmst,
-                direction: str = "north", span: float = 2 * 86400.0, step: float = 120.0) -> float:
+                direction: str = "north", span: float = 2 * 86400.0,
+                step: float = 120.0) -> float:
     """First time >= t_start at which the pad lies in the plane ``normal_at(t)``
     and the plane crosses it in ``direction``."""
     r_ecef = geodetic_to_ecef(math.radians(lat), math.radians(lon), alt)
@@ -576,8 +595,8 @@ class Ascent:
     stages accumulate in ``events`` / ``spawns`` for the owner to collect.
     After ``released`` the object is the bare payload in free flight."""
 
-    def __init__(self, spec: LaunchSpec, res: Resolved, env: AscentEnv, kick: float | None = None,
-                 record: bool = True):
+    def __init__(self, spec: LaunchSpec, res: Resolved, env: AscentEnv,
+                 kick: float | None = None, record: bool = True):
         self.spec = spec
         self.veh = spec.vehicle
         self.res = res
@@ -612,8 +631,8 @@ class Ascent:
         self.accel = 0.0
         self.dv_ideal = 0.0
         self.losses = {"gravity": 0.0, "drag": 0.0, "steering": 0.0}
-        self.v_start = math.sqrt(sum(v * v for v in self.y[3:]))
-        self.samples: list = []         # (t since lift-off, alt, downrange, speed, q kPa, accel g)
+        self.v_start = self.speed
+        self.samples: list = []         # (MET, alt, downrange, speed, q kPa, accel g)
         self.track: list = []           # (lat deg, lon deg)
         self.stage_marks: list = []     # (t since lift-off, alt, downrange, label)
         self._next_sample = -math.inf
@@ -624,19 +643,23 @@ class Ascent:
 
     # --- helpers ----------------------------------------------------------------------
     def pad_state(self, t: float):
+        """State (6-tuple) of the pad at time ``t``."""
         r, v = pad_state(self.spec.lat, self.spec.lon, self.spec.alt, self.env.gmst(t))
         return r + v
 
     @property
     def stage(self) -> Stage:
+        """The current (or last) stage."""
         return self.veh.stages[min(self.k, len(self.veh.stages) - 1)]
 
     @property
     def cd_a(self) -> float:
+        """Cd times reference area (m^2) of the stack."""
         return self.veh.cd * self.veh.area
 
     @property
     def flying(self) -> bool:
+        """Off the pad and not yet separated."""
         return self.phase != "pad" and not self.released
 
     @property
@@ -644,7 +667,13 @@ class Ascent:
         """Mission elapsed time: seconds since lift-off (negative before)."""
         return self.t - self.t0
 
+    @property
+    def speed(self) -> float:
+        """Inertial speed (km/s)."""
+        return math.sqrt(sum(v * v for v in self.y[3:]))
+
     def state(self) -> np.ndarray:
+        """Current ECI state as a numpy (6,) array."""
         return np.array(self.y, dtype=float)
 
     def _event(self, text: str, kind: str = "launch"):
@@ -661,18 +690,19 @@ class Ascent:
         return math.degrees(math.asin(u[2])), math.degrees(math.atan2(u[1], u[0])), ang * R_EARTH
 
     def _sample(self, force: bool = False):
+        """Record a telemetry sample every ``SAMPLE_DT`` s (always when ``force``)."""
         if not self.record or (not force and self.t < self._next_sample):
             return
         self._next_sample = self.t + SAMPLE_DT
         lat, lon, dr = self._geo(self.t, self.y)
         alt = _altitude(*self.y[:3])
-        speed = math.sqrt(sum(v * v for v in self.y[3:]))
-        self.samples.append((self.met, alt, dr, speed, self.q / 1000.0, self.accel / G0_M))
+        self.samples.append((self.met, alt, dr, self.speed, self.q / 1000.0, self.accel / G0_M))
         self.track.append((lat, lon))
 
     def _mark(self, label: str):
+        """Record a labelled milestone (lift-off, staging ...) on the profile."""
         if self.record:
-            lat, lon, dr = self._geo(self.t, self.y)
+            *_, dr = self._geo(self.t, self.y)
             self.stage_marks.append((self.met, _altitude(*self.y[:3]), dr, label))
 
     # --- flight -------------------------------------------------------------------------
@@ -691,11 +721,12 @@ class Ascent:
             guard += 1
             self._step(min(H_POWERED, t_end - self.t))
         if self.released and math.isfinite(t_end) and self.t < t_end - 1e-9:
-            self.y = coast(self.y, self.t, t_end, self.mass, self.spec.payload_cd * self.spec.payload_area,
-                           self.env)
+            cd_a = self.spec.payload_cd * self.spec.payload_area
+            self.y = coast(self.y, self.t, t_end, self.mass, cd_a, self.env)
             self.t = t_end
 
     def _liftoff(self):
+        """Ignite the first stage, or scrub if it cannot lift the vehicle."""
         st = self.veh.stages[0]
         p = math.exp(-max(self.spec.alt, 0.0) / P_SCALE_H)
         thrust = st.mdot * G0_M * st.isp(p)
@@ -703,8 +734,8 @@ class Ascent:
         weight = self.mass * MU_EARTH / (r * r) * 1e3
         self.phase = "vertical"
         if thrust <= weight:
-            self._release("no_liftoff", f"scrubbed - thrust/weight {thrust / weight:.2f} is below 1, "
-                                        "the vehicle cannot lift off", "alert")
+            self._release("no_liftoff", f"scrubbed - thrust/weight {thrust / weight:.2f} is "
+                                        "below 1, the vehicle cannot lift off", "alert")
             return
         self.burning = True
         self._event(f"lift-off on {self.veh.name} from {self.spec.site or 'the pad'} "
@@ -713,6 +744,7 @@ class Ascent:
         self._sample(force=True)
 
     def _throttle(self, st: Stage, alt: float) -> float:
+        """Throttle setting (0.4-1) that respects the vehicle's acceleration limit."""
         if self.veh.max_g <= 0:
             return 1.0
         p = math.exp(-max(alt, 0.0) / P_SCALE_H)
@@ -720,6 +752,8 @@ class Ascent:
         return max(0.4, min(1.0, self.veh.max_g * G0_M / a))
 
     def _step(self, h: float):
+        """One integration step of at most ``h`` s, shortened to land exactly on
+        burnout or on the cut-off energy."""
         s0, t, m0 = self.y, self.t, self.mass
         alt = _altitude(*s0[:3])
         if not self.burning and self.k < len(self.veh.stages) and self.coast_until <= t + 1e-9:
@@ -786,6 +820,7 @@ class Ascent:
             self._event(f"max Q {self.max_q[0] / 1000:.1f} kPa at T+{self.max_q[1]:.0f} s", "info")
 
     def _after_step(self, cutoff: bool, burnout: bool):
+        """Fairing jettison, impact, cut-off and staging checks after a step."""
         alt = _altitude(*self.y[:3])
         if self.fairing_on and alt >= self.veh.fairing_alt:
             self.fairing_on = False
@@ -803,19 +838,15 @@ class Ascent:
         self._sample()
 
     def _burnout(self):
+        """A stage has run dry: separate it, or end the ascent if it was the last."""
         st = self.stage
-        last = self.k == len(self.veh.stages) - 1
         alt = _altitude(*self.y[:3])
         self.burning = False
-        if last:
-            if self.spec.guidance == "orbit":
-                self._insertion("short")
-            else:
-                self._insertion("orbit")
+        if self.k == len(self.veh.stages) - 1:
+            self._insertion("short" if self.spec.guidance == "orbit" else "orbit")
             return
         label = "MECO" if self.k == 0 else f"{st.name} burnout"
-        self._event(f"{label} at {alt:.0f} km, {math.sqrt(sum(v * v for v in self.y[3:])):.2f} km/s; "
-                    f"{st.name} separation", "launch")
+        self._event(f"{label} at {alt:.0f} km, {self.speed:.2f} km/s; {st.name} separation")
         self._mark(f"{st.name} sep.")
         self._drop(st.name, st.dry)
         self.k += 1
@@ -823,6 +854,7 @@ class Ascent:
         self.coast_until = self.t + self.veh.stage_coast
 
     def _drop(self, name: str, mass: float):
+        """Shed ``mass`` kg; a tracked stage becomes a spawn for the owner."""
         self.mass -= mass
         if self.spec.track_stages and mass > 0:
             self.spawns.append((self.t, f"{self.spec.name} {name}", self.y, mass, self.cd_a))
@@ -833,8 +865,9 @@ class Ascent:
         el = rv2coe(np.array(self.y[:3]), np.array(self.y[3:]))
         hp = el.rp - R_EARTH
         ha = el.ra - R_EARTH if el.e < 1 else math.inf
-        self.insertion = dict(t=self.met, hp=hp, ha=ha, i=math.degrees(el.i), raan=math.degrees(el.raan),
-                              e=el.e, a=el.a, prop_left=self.prop, alt=_altitude(*self.y[:3]))
+        self.insertion = dict(t=self.met, hp=hp, ha=ha, i=math.degrees(el.i),
+                              raan=math.degrees(el.raan), e=el.e, a=el.a, prop_left=self.prop,
+                              alt=_altitude(*self.y[:3]))
         closed = el.e < 1 and hp > MIN_PERIGEE
         if outcome == "orbit" and not closed:
             outcome = "escape" if el.e >= 1 else "suborbital"
@@ -843,7 +876,7 @@ class Ascent:
         if outcome == "orbit" and self.spec.guidance == "orbit":
             text = f"SECO at T+{self.met:.0f} s - orbit {orbit}; payload separation"
             kind = "launch"
-        elif outcome == "orbit" or outcome == "escape":
+        elif outcome in ("orbit", "escape"):
             text = f"final burnout at T+{self.met:.0f} s - {orbit}; payload separation"
             kind = "launch"
         elif outcome == "short":
@@ -861,6 +894,7 @@ class Ascent:
         self._release(outcome, text, kind)
 
     def _release(self, outcome: str, text: str, kind: str):
+        """End the ascent with ``outcome`` and log ``text``."""
         self.released = True
         self.burning = False
         self.outcome = outcome
@@ -869,6 +903,7 @@ class Ascent:
 
     # --- steering ----------------------------------------------------------------------------
     def _steer(self, s, alt):
+        """Advance the steering phase and return the thrust mode and direction."""
         r = s[:3]
         up = _plumb_up(r, self.env)
         if self.phase == "vertical":
@@ -890,9 +925,11 @@ class Ascent:
             else:
                 east, north = _east_north(r)
                 az = self.res.azimuth
-                hz = tuple(math.sin(az) * e + math.cos(az) * n for e, n in zip(east, north))
+                hz = tuple(math.sin(az) * e + math.cos(az) * n
+                           for e, n in zip(east, north, strict=True))
                 ck, sk = math.cos(self.kick), math.sin(self.kick)
-                return "fixed", _unit(tuple(ck * u + sk * q for u, q in zip(up, hz)))
+                return "fixed", _unit(tuple(ck * u + sk * q
+                                             for u, q in zip(up, hz, strict=True)))
         if self.phase == "turn":
             if self.spec.guidance == "orbit" and (self.k >= 1 or alt >= GUIDANCE_ALT):
                 self.phase = "guided"
@@ -925,6 +962,8 @@ class Ascent:
         return t
 
     def _guided(self, s):
+        """Closed-loop thrust direction that nulls the radial and out-of-plane
+        errors at the predicted cut-off (see the module docstring)."""
         r, v = s[:3], s[3:]
         rm = math.sqrt(_dot(r, r))
         up = (r[0] / rm, r[1] / rm, r[2] / rm)
@@ -957,7 +996,8 @@ class Ascent:
                 s_n = math.copysign(math.sqrt(max(0.0, 0.995 - s_r * s_r)), s_n)
             self.hold = (s_r, s_n)
         s_h = math.sqrt(max(0.0, 1.0 - s_r * s_r - s_n * s_n))
-        return _unit(tuple(s_r * u + s_n * q + s_h * e for u, q, e in zip(up, n, eh)))
+        return _unit(tuple(s_r * u + s_n * q + s_h * e
+                           for u, q, e in zip(up, n, eh, strict=True)))
 
     # --- reporting --------------------------------------------------------------------------
     def summary(self) -> dict:
@@ -972,6 +1012,8 @@ class Ascent:
 
 @dataclass
 class LaunchPlan:
+    """The outcome of :func:`plan_launch`: chosen kick and the flight it gives."""
+
     res: Resolved
     kick: float                      # deg
     flight: Ascent                   # the simulated flight with that kick
@@ -979,10 +1021,12 @@ class LaunchPlan:
 
     @property
     def ok(self) -> bool:
+        """True when the planned flight reaches orbit."""
         return self.flight.outcome == "orbit"
 
 
-def fly(spec: LaunchSpec, res: Resolved, env: AscentEnv, kick: float, record: bool = True) -> Ascent:
+def fly(spec: LaunchSpec, res: Resolved, env: AscentEnv, kick: float,
+        record: bool = True) -> Ascent:
     """Simulate a whole ascent to payload separation (no side effects)."""
     a = Ascent(spec, res, env, kick, record=record)
     a.advance_to(math.inf)
@@ -990,6 +1034,7 @@ def fly(spec: LaunchSpec, res: Resolved, env: AscentEnv, kick: float, record: bo
 
 
 def _score(a: Ascent, spec: LaunchSpec) -> float:
+    """Planner objective: reaching orbit dominates, then accuracy and propellant."""
     ins = a.insertion
     if ins is None:
         return -1e12
@@ -999,8 +1044,8 @@ def _score(a: Ascent, spec: LaunchSpec) -> float:
             return 1e7 + ins["hp"]
         return ins["ha"] if math.isfinite(ins["ha"]) else 1e7
     if a.outcome == "orbit":
-        miss = abs(ins["hp"] - min(spec.perigee_alt, spec.apogee_alt)) + \
-            abs(ins["ha"] - max(spec.perigee_alt, spec.apogee_alt))
+        miss = (abs(ins["hp"] - min(spec.perigee_alt, spec.apogee_alt))
+                + abs(ins["ha"] - max(spec.perigee_alt, spec.apogee_alt)))
         return 1e7 + ins["prop_left"] - 20.0 * miss
     # short of orbit: rank by the energy reached
     e = -MU_EARTH / (2.0 * ins["a"]) if ins["e"] < 1 else 0.0
@@ -1028,7 +1073,7 @@ def plan_launch(spec: LaunchSpec, env: AscentEnv, t_now: float, plane_of=None,
     best = max(grid, key=score)
     j = grid.index(best)
     lo, hi = grid[max(0, j - 1)], grid[min(len(grid) - 1, j + 1)]
-    g = (math.sqrt(5.0) - 1.0) / 2.0
+    g = (math.sqrt(5.0) - 1.0) / 2.0      # golden-section refinement around the best
     a_, b_ = hi - g * (hi - lo), lo + g * (hi - lo)
     for _ in range(7):
         if score(a_) >= score(b_):

@@ -36,6 +36,7 @@ from ..simulation import ACTIVE
 from . import theme
 from .groundtrack import GroundTrackView
 from .orbitpanel import countdown, draw_section, num
+from .theme import px
 from .widgets import FieldSpec as F
 from .widgets import FormDialog
 
@@ -82,7 +83,7 @@ class LaunchPreview:
     """Right-hand panel of the Launch dialog: the pad map, the planned altitude
     profile and a text summary, re-planned shortly after the form stops changing."""
 
-    width = 470
+    width = 470                   # design px
     min_height = 600
     DEBOUNCE = 0.25
 
@@ -140,27 +141,27 @@ class LaunchPreview:
         if self.dirty_at is not None and time.monotonic() - self.dirty_at > self.DEBOUNCE:
             self.refresh(dlg)
         fonts = self.app.fonts
-        x, y, w = rect.x + 6, rect.y, rect.w - 18
+        x, y, w = rect.x + px(6), rect.y, rect.w - px(18)
         fonts.draw(surf, "LAUNCH SITE - click the map to launch from anywhere", (x, y), theme.FAINT,
                    fonts.small)
-        y += 18
-        mh = min(w // 2, max(120, rect.h - 330))
+        y += px(18)
+        mh = min(w // 2, max(px(120), rect.h - px(330)))
         mw = mh * 2
         self.map_rect = pygame.Rect(x, y, mw, mh)
         self._draw_map(surf, self.map_rect, dlg)
-        y += mh + 8
-        ph = max(90, min(150, rect.bottom - y - 130))
+        y += mh + px(8)
+        ph = max(px(90), min(px(150), rect.bottom - y - px(130)))
         prof = pygame.Rect(x, y, w, ph)
         flight = self.plan.flight if self.plan else None
         draw_profile(surf, prof, fonts, flight.samples if flight else [],
                      flight.stage_marks if flight else [], None, None, TRACK)
-        y += ph + 8
+        y += ph + px(8)
         for text, col in self._lines():
             for line in _wrap(fonts.small, text, w):
-                if y > rect.bottom - 14:
+                if y > rect.bottom - px(14):
                     return
                 fonts.draw(surf, line, (x, y), col, fonts.small)
-                y += 16
+                y += px(16)
 
     def _draw_map(self, surf, r, dlg):
         """Launch sites, the pad, the planned ascent track and the first orbit."""
@@ -170,7 +171,7 @@ class LaunchPreview:
         surf.set_clip(r)
         for lat, lon, _ in LAUNCH_SITES.values():
             sx, sy = self.map.xy(lat, lon, box)
-            pygame.draw.circle(surf, (150, 160, 190), (int(sx), int(sy)), 2)
+            pygame.draw.circle(surf, (150, 160, 190), (int(sx), int(sy)), px(2))
         if self.plan is not None:
             f = self.plan.flight
             track = self._orbit()
@@ -178,15 +179,17 @@ class LaunchPreview:
                 self.map.polyline(surf, ORBIT, track[0], track[1], box)
             if len(f.track) > 1:
                 lat, lon = np.array(f.track).T
-                self.map.polyline(surf, TRACK, lat, lon, box, 2)
+                self.map.polyline(surf, TRACK, lat, lon, box, px(2))
         try:
             v = dlg.values()
             sx, sy = self.map.xy(v["lat"], v["lon"], box)
             sx, sy = int(sx), int(sy)
             pygame.draw.polygon(surf, (255, 255, 255),
-                                [(sx, sy - 7), (sx - 5, sy + 4), (sx + 5, sy + 4)])
+                                [(sx, sy - px(7)), (sx - px(5), sy + px(4)),
+                                 (sx + px(5), sy + px(4))])
             pygame.draw.polygon(surf, (255, 90, 60),
-                                [(sx, sy - 5), (sx - 3, sy + 3), (sx + 3, sy + 3)])
+                                [(sx, sy - px(5)), (sx - px(3), sy + px(3)),
+                                 (sx + px(3), sy + px(3))])
         except (ValueError, KeyError):
             pass                # the pad coordinates do not parse yet
         surf.set_clip(clip)
@@ -271,9 +274,10 @@ def draw_profile(surf, rect, fonts, samples, marks, planned, now, color):
     """Altitude against downrange distance: ``samples`` rows are (t, alt,
     downrange, ...); ``planned`` is drawn dashed underneath; ``now`` is the
     (downrange, alt) of the vehicle."""
-    pygame.draw.rect(surf, (8, 12, 24), rect, border_radius=6)
-    pygame.draw.rect(surf, theme.PANEL_EDGE, rect, 1, border_radius=6)
-    fonts.draw(surf, "ALTITUDE vs DOWNRANGE", (rect.x + 8, rect.y + 4), theme.FAINT, fonts.small)
+    pygame.draw.rect(surf, (8, 12, 24), rect, border_radius=px(6))
+    pygame.draw.rect(surf, theme.PANEL_EDGE, rect, 1, border_radius=px(6))
+    fonts.draw(surf, "ALTITUDE vs DOWNRANGE", (rect.x + px(8), rect.y + px(4)), theme.FAINT,
+               fonts.small)
     rows = [*(planned or []), *samples]
     if now is not None:
         rows.append((0.0, now[1], now[0]))
@@ -282,40 +286,41 @@ def draw_profile(surf, rect, fonts, samples, marks, planned, now, color):
         return
     xmax = max(10.0, max(s[2] for s in rows)) * 1.05
     ymax = max(10.0, max(s[1] for s in rows)) * 1.12
-    plot = pygame.Rect(rect.x + 44, rect.y + 20, rect.w - 54, rect.h - 38)
+    plot = pygame.Rect(rect.x + px(44), rect.y + px(20), rect.w - px(54), rect.h - px(38))
 
     def P(dr, alt):
         return (plot.x + dr / xmax * plot.w, plot.bottom - max(0.0, alt) / ymax * plot.h)
 
     pygame.draw.line(surf, theme.PANEL_EDGE, plot.bottomleft, plot.bottomright)
     pygame.draw.line(surf, theme.PANEL_EDGE, plot.bottomleft, plot.topleft)
-    fonts.draw(surf, f"{ymax / 1.12:,.0f} km", (plot.x - 4, P(0, ymax / 1.12)[1]), theme.FAINT,
-               fonts.small, "midright")
-    fonts.draw(surf, "0", (plot.x - 4, plot.bottom), theme.FAINT, fonts.small, "midright")
-    fonts.draw(surf, f"{xmax / 1.05:,.0f} km downrange", (plot.right, plot.bottom + 2), theme.FAINT,
-               fonts.small, "topright")
+    fonts.draw(surf, f"{ymax / 1.12:,.0f} km", (plot.x - px(4), P(0, ymax / 1.12)[1]),
+               theme.FAINT, fonts.small, "midright")
+    fonts.draw(surf, "0", (plot.x - px(4), plot.bottom), theme.FAINT, fonts.small, "midright")
+    fonts.draw(surf, f"{xmax / 1.05:,.0f} km downrange", (plot.right, plot.bottom + px(2)),
+               theme.FAINT, fonts.small, "topright")
     if planned and len(planned) > 1:
         pts = [P(s[2], s[1]) for s in planned]
         for a, b in zip(pts[::2], pts[1::2], strict=False):     # dashes: every other segment
             pygame.draw.line(surf, PLANNED, a, b)
     if len(samples) > 1:
-        pygame.draw.lines(surf, color, False, [P(s[2], s[1]) for s in samples], 2)
+        pygame.draw.lines(surf, color, False, [P(s[2], s[1]) for s in samples], px(2))
     taken: list[pygame.Rect] = []
     for _, alt, dr, label in marks:
-        px, py = P(dr, alt)
-        pygame.draw.circle(surf, (255, 255, 255), (int(px), int(py)), 3)
+        mx, my = P(dr, alt)
+        pygame.draw.circle(surf, (255, 255, 255), (int(mx), int(my)), px(3))
         tw, th = fonts.small.size(label)
         # label left-above the event, else right-below; skip it if both collide
-        for lx, ly in ((px - tw - 4, py - th - 2), (px + 5, py + 2), (px + 5, py - th - 2)):
+        for lx, ly in ((mx - tw - px(4), my - th - px(2)), (mx + px(5), my + px(2)),
+                       (mx + px(5), my - th - px(2))):
             box = pygame.Rect(int(lx), int(ly), tw, th)
             if plot.contains(box) and box.collidelist(taken) < 0:
                 taken.append(box)
                 fonts.draw(surf, label, box.topleft, theme.DIM, fonts.small)
                 break
     if now is not None:
-        px, py = P(now[0], now[1])
-        pygame.draw.circle(surf, (255, 255, 255), (int(px), int(py)), 5)
-        pygame.draw.circle(surf, color, (int(px), int(py)), 3)
+        mx, my = P(now[0], now[1])
+        pygame.draw.circle(surf, (255, 255, 255), (int(mx), int(my)), px(5))
+        pygame.draw.circle(surf, color, (int(mx), int(my)), px(3))
 
 
 # --- Dialogs ----------------------------------------------------------------------------
@@ -552,18 +557,18 @@ def draw_ascent_tab(surf, x, y, w, app, i, asc) -> int:
     if asc.phase != "pad" and not asc.burning and not asc.released:
         head = "STAGING COAST"
     fonts.draw(surf, _clock(met), (x, y), theme.WARN if met < 0 else theme.GOOD, fonts.title)
-    fonts.draw(surf, head, (x + w, y + 4), theme.TEXT, fonts.small, "topright")
-    y += 28
+    fonts.draw(surf, head, (x + w, y + px(4)), theme.TEXT, fonts.small, "topright")
+    y += px(28)
     site = spec.site or f"{spec.lat:.2f}, {spec.lon:.2f}"
     fonts.draw(surf, f"{spec.vehicle.name} from {site}"[:52], (x, y), theme.DIM, fonts.small)
-    y += 20
+    y += px(20)
     st = asc.telemetry()
     planned = asc.planned
-    draw_profile(surf, pygame.Rect(x, y, w, 150), fonts, asc.samples, asc.stage_marks,
+    draw_profile(surf, pygame.Rect(x, y, w, px(150)), fonts, asc.samples, asc.stage_marks,
                  planned[0] if planned else None,
                  None if asc.phase == "pad" else (st["downrange"], st["alt"]), sat.color)
-    y += 158
-    y = _draw_stages(surf, fonts, x, y, w, asc, sat.color) + 6
+    y += px(158)
+    y = _draw_stages(surf, fonts, x, y, w, asc, sat.color) + px(6)
     el = st["el"]
     if el.e >= 1:
         orbit_now = "escape"
@@ -610,7 +615,7 @@ def _draw_stages(surf, fonts, x, y, w, asc, color) -> int:
     """A propellant bar per stage (separated, burning/coasting or still full);
     returns the y below the list."""
     fonts.draw(surf, "STAGES", (x, y), theme.ACCENT, fonts.small)
-    y += 18
+    y += px(18)
     for k, stg in enumerate(asc.spec.vehicle.stages):
         if k < asc.k:
             frac, note, col = 0.0, "separated", theme.FAINT
@@ -620,16 +625,16 @@ def _draw_stages(surf, fonts, x, y, w, asc, color) -> int:
             col = theme.WARN if asc.burning else theme.DIM
         else:
             frac, note, col = 1.0, "full", theme.DIM
-        fonts.draw(surf, stg.name[:10], (x + 4, y), theme.TEXT if k == asc.k else theme.DIM,
+        fonts.draw(surf, stg.name[:10], (x + px(4), y), theme.TEXT if k == asc.k else theme.DIM,
                    fonts.small)
-        bar = pygame.Rect(x + 90, y + 3, w - 180, 10)
-        pygame.draw.rect(surf, theme.FIELD, bar, border_radius=3)
+        bar = pygame.Rect(x + px(90), y + px(3), w - px(180), px(10))
+        pygame.draw.rect(surf, theme.FIELD, bar, border_radius=px(3))
         if frac > 0:
             fill = bar.copy()
-            fill.w = max(3, int(bar.w * frac))
-            pygame.draw.rect(surf, col if k != asc.k else color, fill, border_radius=3)
+            fill.w = max(px(3), int(bar.w * frac))
+            pygame.draw.rect(surf, col if k != asc.k else color, fill, border_radius=px(3))
         fonts.draw(surf, f"{frac * 100:3.0f}% {note}", (x + w, y), col, fonts.small, "topright")
-        y += 17
+        y += px(17)
     return y
 
 

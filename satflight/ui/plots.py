@@ -10,6 +10,7 @@ from ..elements import rv2coe
 from ..forces import conservative_energy
 from ..frames import ecef_to_geodetic, eci_to_ecef
 from . import theme
+from .theme import px
 
 
 def _el(s):
@@ -67,7 +68,7 @@ class PlotView:
         name, unit, fn = METRICS[self.metric]
         i = app.selected
         title = f"{name}" + (f" [{unit}]" if unit else "") + "   (click to change)"
-        fonts.draw(surf, title, (rect.x + 10, rect.y + 5), theme.ACCENT, fonts.small)
+        fonts.draw(surf, title, (rect.x + px(10), rect.y + px(5)), theme.ACCENT, fonts.small)
         if not 0 <= i < sim.n:
             fonts.draw(surf, "select a satellite", rect.center, theme.FAINT, fonts.small, "center")
             return
@@ -86,7 +87,7 @@ class PlotView:
         if ok.sum() < 2:
             return
         t, y = t[ok], y[ok]
-        pr = pygame.Rect(rect.x + 70, rect.y + 24, rect.w - 84, rect.h - 44)
+        pr = pygame.Rect(rect.x + px(70), rect.y + px(24), rect.w - px(84), rect.h - px(44))
         lo, hi = float(y.min()), float(y.max())
         if hi - lo < 1e-12 * max(1.0, abs(hi)):
             lo, hi = lo - 1e-9 - abs(lo) * 1e-9, hi + 1e-9 + abs(hi) * 1e-9
@@ -97,15 +98,16 @@ class PlotView:
             pygame.draw.line(surf, (30, 40, 62), (pr.x, yy), (pr.right, yy))
             val = lo + (hi - lo) * k / 4
             txt = f"{val:.4g}" if abs(val) < 1e5 else f"{val:.3e}"
-            fonts.draw(surf, txt, (pr.x - 6, yy), theme.FAINT, fonts.small, "midright")
+            fonts.draw(surf, txt, (pr.x - px(6), yy), theme.FAINT, fonts.small, "midright")
         t0, t1 = t[0], t[-1]
         span = max(t1 - t0, 1e-9)
         xs = pr.x + (t - t0) / span * pr.w
         ys = pr.bottom - (y - lo) / (hi - lo) * pr.h
         pygame.draw.aalines(surf, sim.sats[i].color, False, np.stack([xs, ys], 1).tolist())
         unit_t, div = ("h", 3600.0) if span > 7200 else ("min", 60.0)
-        fonts.draw(surf, f"-{span / div:.1f} {unit_t}", (pr.x, pr.bottom + 3), theme.FAINT,
+        fonts.draw(surf, f"-{span / div:.1f} {unit_t}", (pr.x, pr.bottom + px(3)), theme.FAINT,
                    fonts.small)
-        fonts.draw(surf, "now", (pr.right, pr.bottom + 3), theme.FAINT, fonts.small, "topright")
+        fonts.draw(surf, "now", (pr.right, pr.bottom + px(3)), theme.FAINT, fonts.small,
+                   "topright")
         fonts.draw(surf, f"{y[-1]:.6g}" + (f" {unit}" if unit else ""), (pr.right, pr.y),
                    theme.TEXT, fonts.small, "topright")

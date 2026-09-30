@@ -11,6 +11,7 @@ import pygame
 
 from ..scenario import Scenario
 from . import theme
+from .theme import px
 from .widgets import Button
 
 # Bundled scenarios in the order the start screen shows them, each with a plain-language
@@ -76,7 +77,7 @@ class StartScreen:
     """Modal start screen on the dialog stack: a grid of scenario cards and a row of
     ways in. Enter opens the highlighted card; Esc keeps the scenario already loaded."""
 
-    GAP = 10
+    GAP = 10           # design px
     HEAD = 84          # title and subtitle
     FOOT = 100         # buttons with their keys, and the hint line
 
@@ -128,25 +129,25 @@ class StartScreen:
     def layout(self):
         """Size the panel to the window and place the cards and buttons."""
         sw, sh = self.app.screen.get_size()
-        w = min(1000, sw - 40)
-        self.cols = 3 if w >= 700 else 2
+        w = min(px(1000), sw - px(40))
+        self.cols = 3 if w >= px(700) else 2
         rows = max(1, math.ceil(len(self.cards) / self.cols))
-        g = self.GAP
-        avail = min(sh - 40, 760) - self.HEAD - self.FOOT
-        card_h = max(56, min(100, (avail - (rows - 1) * g) // rows))
-        h = self.HEAD + rows * card_h + (rows - 1) * g + self.FOOT
-        self.rect = pygame.Rect((sw - w) // 2, max(10, (sh - h) // 2), w, h)
-        card_w = (w - 36 - (self.cols - 1) * g) // self.cols
-        x0, y0 = self.rect.x + 18, self.rect.y + self.HEAD
+        g, head, foot = px(self.GAP), px(self.HEAD), px(self.FOOT)
+        avail = min(sh - px(40), px(760)) - head - foot
+        card_h = max(px(56), min(px(100), (avail - (rows - 1) * g) // rows))
+        h = head + rows * card_h + (rows - 1) * g + foot
+        self.rect = pygame.Rect((sw - w) // 2, max(px(10), (sh - h) // 2), w, h)
+        card_w = (w - px(36) - (self.cols - 1) * g) // self.cols
+        x0, y0 = self.rect.x + px(18), self.rect.y + head
         self.card_rects = [pygame.Rect(x0 + (k % self.cols) * (card_w + g),
                                        y0 + (k // self.cols) * (card_h + g), card_w, card_h)
                            for k in range(len(self.cards))]
-        x = self.rect.x + 18
-        by = self.rect.bottom - self.FOOT + 14
+        x = self.rect.x + px(18)
+        by = self.rect.bottom - foot + px(14)
         for b in self.buttons:
-            bw = self.app.fonts.ui.size(b.text)[0] + 32
-            b.rect = pygame.Rect(x, by, bw, 34)
-            x += bw + 10
+            bw = self.app.fonts.ui.size(b.text)[0] + px(32)
+            b.rect = pygame.Rect(x, by, bw, px(34))
+            x += bw + px(10)
 
     # --- events -----------------------------------------------------------------------
     def handle(self, ev) -> bool:
@@ -194,41 +195,48 @@ class StartScreen:
         surf.blit(shade, (0, 0))
         r = self.rect
         theme.panel(surf, r, (14, 20, 36, 240), theme.ACCENT, 10)
-        fonts.draw(surf, "Satellite Space Flight", (r.x + 18, r.y + 14), theme.TEXT, fonts.big)
+        fonts.draw(surf, "Satellite Space Flight", (r.x + px(18), r.y + px(14)), theme.TEXT,
+                   fonts.big)
         fonts.draw(surf, "Pick a scenario to start. Everything can be changed once it is "
-                         "running.", (r.x + 20, r.y + 54), theme.DIM, fonts.ui)
+                         "running.", (r.x + px(20), r.y + px(54)), theme.DIM, fonts.ui)
         for k in range(len(self.cards)):
             self._draw_card(surf, k)
         for b in self.buttons:
             b.draw(surf, fonts)
-            fonts.draw(surf, b.tooltip, (b.rect.centerx, b.rect.bottom + 3), theme.FAINT,
+            fonts.draw(surf, b.tooltip, (b.rect.centerx, b.rect.bottom + px(3)), theme.FAINT,
                        fonts.small, "midtop")
         fonts.draw(surf, "Enter opens the highlighted scenario   Esc closes this screen   "
-                         "Ctrl+N brings it back", (r.x + 20, r.bottom - 10), theme.FAINT,
+                         "Ctrl+N brings it back", (r.x + px(20), r.bottom - px(10)), theme.FAINT,
                    fonts.small, "bottomleft")
 
     def blurb_lines(self, k: int) -> list[str]:
-        """Card ``k``'s blurb wrapped to fit above its size tag."""
+        """Card ``k``'s blurb wrapped to fit above its size tag. Rather than cut it,
+        the text may take 4 px of the right margin: glyph widths are whole pixels,
+        so a scaled font runs a little wider than the scaled card."""
         font, rect = self.app.fonts.small, self.card_rects[k]
         line_h = font.get_linesize() + 1
-        return wrap(self.cards[k][2], font, rect.w - 24, max(1, (rect.h - 34 - line_h) // line_h))
+        rows = max(1, (rect.h - px(34) - line_h) // line_h)
+        lines = wrap(self.cards[k][2], font, rect.w - px(24), rows)
+        if lines[-1].endswith("..."):
+            lines = wrap(self.cards[k][2], font, rect.w - px(20), rows)
+        return lines
 
     def _draw_card(self, surf, k):
         fonts = self.app.fonts
         _, title, _, tag = self.cards[k]
         rect, focused = self.card_rects[k], k == self.focus
         bg = theme.mix(theme.FIELD, theme.ACCENT, 0.28) if focused else theme.FIELD
-        pygame.draw.rect(surf, bg, rect, border_radius=7)
+        pygame.draw.rect(surf, bg, rect, border_radius=px(7))
         pygame.draw.rect(surf, theme.ACCENT if focused else theme.PANEL_EDGE, rect, 1,
-                         border_radius=7)
+                         border_radius=px(7))
         clip = surf.get_clip()
-        surf.set_clip(rect.inflate(-4, -4))
-        fonts.draw(surf, title, (rect.x + 12, rect.y + 9), theme.TEXT, fonts.bold)
-        y = rect.y + 32
+        surf.set_clip(rect.inflate(-px(4), -px(4)))
+        fonts.draw(surf, title, (rect.x + px(12), rect.y + px(9)), theme.TEXT, fonts.bold)
+        y = rect.y + px(32)
         for line in self.blurb_lines(k):
-            fonts.draw(surf, line, (rect.x + 12, y), theme.DIM, fonts.small)
+            fonts.draw(surf, line, (rect.x + px(12), y), theme.DIM, fonts.small)
             y += fonts.small.get_linesize() + 1
         if tag:
-            fonts.draw(surf, tag, (rect.right - 10, rect.bottom - 6), theme.ACCENT, fonts.small,
-                       "bottomright")
+            fonts.draw(surf, tag, (rect.right - px(10), rect.bottom - px(6)), theme.ACCENT,
+                       fonts.small, "bottomright")
         surf.set_clip(clip)

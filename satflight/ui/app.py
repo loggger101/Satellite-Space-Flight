@@ -33,6 +33,7 @@ from .panels import (
 )
 from .plots import PlotView
 from .render3d import SceneRenderer
+from .theme import px
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,16 +69,19 @@ TOOLTIP_DELAY = 0.4        # s the mouse rests on a button before its hint shows
 # dialog) from turning into one huge jump. Below 1 / MAX_FRAME_DT fps the
 # simulation runs slower than the chosen warp.
 MAX_FRAME_DT = 0.25
+MIN_SIZE = (900, 600)      # smallest window the panels are laid out for (design px)
 
 
 class App:
     """The window: owns the simulation, camera, panels and dialogs, and runs the
     event / update / draw loop. ``root`` is the repository folder holding
     ``scenarios/`` and ``assets/``. ``welcome`` opens the start screen over the
-    scenario."""
+    scenario. ``size`` is in screen pixels; ``ui_scale`` is how many of them a
+    design pixel of the UI takes (Windows' display scaling, see :mod:`.theme`)."""
 
     def __init__(self, scenario=None, size=(1600, 900), root: Path = ROOT,
-                 welcome: bool = False):
+                 welcome: bool = False, fullscreen: bool = False, ui_scale: float = 1.0):
+        theme.set_scale(ui_scale)
         pygame.init()
         self.root = Path(root)
         self.scenario_dir = self.root / "scenarios"
@@ -111,10 +115,14 @@ class App:
         self._info_key = None
         self._info = None
         self._hover = (None, 0.0)    # (button under the mouse, since when)
+        self.fullscreen = False
+        self._windowed = (size, None)   # window size and position to return to from fullscreen
         self.load_scenario(scenario if scenario is not None else self.scenario_dir / "default.json")
         if welcome:
             self.open("start")
             self.toasts.clear()                 # "Loaded ..." would sit on top of it
+        if fullscreen:
+            self.toggle_fullscreen()
 
     # --- scenario management -----------------------------------------------------------
     def scenario_files(self):
@@ -207,6 +215,30 @@ class App:
         """Flip the boolean view option ``name`` of :class:`Options`."""
         setattr(self.opts, name, not getattr(self.opts, name))
 
+    def toggle_fullscreen(self):
+        """Switch between the window and fullscreen (key F11). Fullscreen covers the
+        whole desktop at its own resolution, so the display mode never changes."""
+        if self.fullscreen:
+            self.fullscreen = False
+            size, pos = self._windowed
+            self._set_mode(size)
+            if pos is not None:
+                pygame.display.set_window_position(pos)
+        else:
+            self._windowed = (self.screen.get_size(), pygame.display.get_window_position())
+            self.fullscreen = True
+            self._set_mode((0, 0), pygame.FULLSCREEN)
+
+    def _set_mode(self, size, flags=pygame.RESIZABLE):
+        self.screen = pygame.display.set_mode(size, flags)
+        self._resized()
+
+    def _resized(self):
+        """Fit the camera and any open dialogs to the window's new size."""
+        self.camera.resize(*self.screen.get_size())
+        for d in self.dialogs:
+            d.layout()
+
     def toggle_pause(self):
         """Pause or resume the simulation (key Space)."""
         self.paused = not self.paused
@@ -279,11 +311,10 @@ class App:
             self._clear_hover()
             return
         if ev.type == pygame.VIDEORESIZE:
-            size = (max(900, ev.w), max(600, ev.h))
-            self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
-            self.camera.resize(*self.screen.get_size())
-            for d in self.dialogs:
-                d.layout()
+            if self.fullscreen:                 # the screen's size, not the user's: keep it
+                self._resized()
+            else:
+                self._set_mode((max(px(MIN_SIZE[0]), ev.w), max(px(MIN_SIZE[1]), ev.h)))
             return
         if self.dialogs:
             self.dialogs[-1].handle(ev)
@@ -310,12 +341,13 @@ class App:
         elif ev.type == pygame.MOUSEMOTION and self._drag and any(ev.buttons):
             start, last, btn = self._drag
             dx, dy = ev.pos[0] - last[0], ev.pos[1] - last[1]
-            self.camera.rotate(-dx * 0.006, dy * 0.006)
+            turn = 0.006 / theme.S                  # radians per screen px
+            self.camera.rotate(-dx * turn, dy * turn)
             self._drag = (start, ev.pos, btn)
         elif ev.type == pygame.MOUSEBUTTONUP and self._drag:
             start, _, btn = self._drag
             self._drag = None
-            if btn == 1 and abs(ev.pos[0] - start[0]) + abs(ev.pos[1] - start[1]) < 5:
+            if btn == 1 and abs(ev.pos[0] - start[0]) + abs(ev.pos[1] - start[1]) < px(5):
                 self._pick(ev.pos)
         elif ev.type == pygame.MOUSEWHEEL:
             self._zoom(0.87 ** ev.y)
@@ -343,15 +375,15 @@ class App:
         self.camera.zoom(factor, 5.0 if self.follow else None)
 
     def _pick(self, pos):
-        """Select the satellite drawn nearest the click, if within 14 px."""
+        """Select the satellite drawn nearest the click, if within 14 design px."""
         data = self.renderer.sat_screen
         if data is None:
             return
         sx, sy, vis = data
         d = np.hypot(sx - pos[0], sy - pos[1])
-        d = np.where(np.isfinite(d), d, np.inf) + np.where(vis, 0.0, 6.0)
+        d = np.where(np.isfinite(d), d, np.inf) + np.where(vis, 0.0, px(6))
         k = int(np.argmin(d)) if d.size else -1
-        if k >= 0 and d[k] < 14:
+        if k >= 0 and d[k] < px(14):
             self.select(k)
 
     def _key(self, ev):
@@ -364,6 +396,9 @@ class App:
                        pygame.K_q: lambda: setattr(self, "running", False)}
             if k in actions:
                 actions[k]()
+            return
+        if ev.mod & pygame.KMOD_ALT and k in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.toggle_fullscreen()
             return
         simple = {
             pygame.K_SPACE: self.toggle_pause,
@@ -394,8 +429,9 @@ class App:
             pygame.K_n: lambda: self.open("station"),
             pygame.K_p: lambda: self.open("physics"),
             pygame.K_DELETE: self.delete_selected,
+            pygame.K_F11: self.toggle_fullscreen,
             pygame.K_F12: self.screenshot,
-            pygame.K_ESCAPE: lambda: setattr(self.opts, "help", False),
+            pygame.K_ESCAPE: self._escape,
             pygame.K_TAB: lambda: self.cycle_selection(-1 if shift else 1),
             pygame.K_EQUALS: lambda: self._zoom(0.8),
             pygame.K_KP_PLUS: lambda: self._zoom(0.8),
@@ -408,6 +444,13 @@ class App:
         }
         if k in simple:
             simple[k]()
+
+    def _escape(self):
+        """Esc closes the help; with no help open it leaves fullscreen."""
+        if self.opts.help:
+            self.opts.help = False
+        elif self.fullscreen:
+            self.toggle_fullscreen()
 
     # --- frame ---------------------------------------------------------------------------------
     def update(self, dt_real: float):
@@ -428,32 +471,33 @@ class App:
     def center_span(self):
         """(left, right, window height) of the area between the side panels."""
         w, h = self.screen.get_size()
-        x0 = 2 * GAP + LEFT_W if self.opts.panels else GAP
-        x1 = w - RIGHT_W - 2 * GAP if self.opts.panels else w - GAP
+        gap = px(GAP)
+        x0 = 2 * gap + px(LEFT_W) if self.opts.panels else gap
+        x1 = w - px(RIGHT_W) - 2 * gap if self.opts.panels else w - gap
         return x0, x1, h
 
     def view_rect(self):
         """The part of the window not covered by panels."""
         x0, x1, _ = self.center_span()
-        top = TOP_H + GAP if self.opts.panels else GAP
+        top = px(TOP_H) + px(GAP) if self.opts.panels else px(GAP)
         return pygame.Rect(x0, top, x1 - x0, self._bottom() - top)
 
     def _bottom(self) -> int:
         """Lowest y of the view: the top of the event log, or the window edge."""
         h = self.screen.get_height()
-        return h - LOG_H - 2 * GAP if self.opts.panels else h - GAP
+        return h - px(LOG_H) - 2 * px(GAP) if self.opts.panels else h - px(GAP)
 
     def _map_rect(self):
         """Where the ground-track map sits: along the bottom of the view."""
         x0, x1, _ = self.center_span()
-        mh = int(min((x1 - x0) / 2 + 26, 330))
+        mh = int(min((x1 - x0) / 2 + px(26), px(330)))
         return pygame.Rect(x0, self._bottom() - mh, x1 - x0, mh)
 
     def _plot_rect(self):
         """Where the plot sits: above the map, or along the bottom of the view."""
         x0, x1, _ = self.center_span()
-        bottom = self._map_rect().y - GAP if self.opts.map else self._bottom()
-        return pygame.Rect(x0, bottom - 190, x1 - x0, 190)
+        bottom = self._map_rect().y - px(GAP) if self.opts.map else self._bottom()
+        return pygame.Rect(x0, bottom - px(190), x1 - x0, px(190))
 
     def draw(self):
         """Draw one frame: 3-D scene, panels, map/plot, help, dialogs and toasts."""
@@ -474,16 +518,16 @@ class App:
             self._tooltip(s)
         if self.follow and 0 <= self.selected < self.sim.n:
             self.fonts.draw(s, f"following {self.sim.sats[self.selected].name}  (F to release)",
-                            (s.get_width() // 2, TOP_H + 14), theme.ACCENT, self.fonts.small,
-                            "midtop")
+                            (s.get_width() // 2, px(TOP_H) + px(14)), theme.ACCENT,
+                            self.fonts.small, "midtop")
         for d in self.dialogs:
             d.draw(s)
         now = time.monotonic()
         self.toasts = [(t, m) for t, m in self.toasts if t > now][-4:]
         for k, (_, msg) in enumerate(self.toasts):
             txt = self.fonts.render(msg, theme.TEXT, self.fonts.ui)
-            r = txt.get_rect(midtop=(s.get_width() // 2, TOP_H + 40 + k * 30))
-            theme.panel(s, r.inflate(24, 10), (20, 30, 55, 230), theme.ACCENT, 6)
+            r = txt.get_rect(midtop=(s.get_width() // 2, px(TOP_H) + px(40) + k * px(30)))
+            theme.panel(s, r.inflate(px(24), px(10)), (20, 30, 55, 230), theme.ACCENT, 6)
             s.blit(txt, r)
 
     def run(self, max_frames: int | None = None, screenshot: Path | None = None):

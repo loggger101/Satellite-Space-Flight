@@ -68,6 +68,15 @@ Integration stops exactly at every scheduled manoeuvre and burn boundary, and
 restarts whenever a satellite leaves the active set (re-entry, impact,
 escape).
 
+The steps do not depend on the frame rate. A frame asks the simulation to
+move on by warp x frame time, but the integration never shortens a step to
+end on a frame: it takes whole steps up to the last one that fits, and the
+state drawn for the frame is integrated from there on the side and discarded.
+Advancing an hour in one call or in thousands of frames gives the same
+trajectory and the same events (`tests/test_timestep.py`). A change made
+between frames (adding, removing or editing a satellite) restarts the physics
+from the state as shown.
+
 Analytic alternatives: **kepler** (universal-variable Kepler solution with a
 Laguerre-Conway root finder, valid for every conic) and **j2mean** (the same
 plus the secular J2 rates
@@ -181,8 +190,16 @@ public numbers: performance is realistic in kind, not for mission design.
   Launches starting low are not flagged while they climb.
 - Escape: distance > 924,000 km (Earth's sphere of influence w.r.t. the Sun).
   Beyond it an Earth-centred model is no longer appropriate.
+- Close approaches (below 10 km) are found between steps too: each pair's
+  relative motion over a step is the cubic Hermite curve through both ends'
+  positions and velocities, and its minimum gives the distance and time of
+  closest approach that are logged. The curve stays within
+  4/27 (|m0 - c| + |m1 - c|) of its chord c (m = velocity x step), and the
+  same bound per satellite rules out nearly every pair from the current
+  distances alone, so the search costs little.
 - Eclipses, AOS/LOS and close approaches are evaluated at every accepted
-  step (per-satellite detail for ensembles up to 40 satellites, otherwise for
+  step, not at every frame, so an entry can reach the log up to one step
+  after the view shows it (per-satellite detail for ensembles up to 40 satellites, otherwise for
   the selected one; pairwise approaches up to 300 satellites).
 
 ## Known simplifications

@@ -625,6 +625,7 @@ class Ascent:
         self.coast_until = -math.inf
         self.throttle = 1.0
         self.thrust_dir = _unit(self.y[:3])
+        self._ctrl = None               # (mdot, stage, mode, fixed) of the last step, for peek()
         self.hold = None
         self.tgo = math.nan
         self.kick_start = math.nan
@@ -733,6 +734,19 @@ class Ascent:
             self.y = coast(self.y, self.t, t_end, self.mass, cd_a, self.env)
             self.t = t_end
 
+    def peek(self, t: float):
+        """State (6-tuple) at ``t``, a fraction of a step ahead, without flying
+        there: the vehicle as shown between two steps of the ascent. It keeps
+        the last step's thrust and steering, and changes nothing."""
+        if self.phase == "pad":
+            return self.pad_state(t)
+        h = t - self.t
+        if h <= 0.0 or self.released or self._ctrl is None:
+            return self.y
+        mdot, st, mode, fixed = self._ctrl
+        return _rk4(self.y, h, self.mass, mdot if self.burning else 0.0, st, mode, fixed,
+                    self.cd_a, self.env)
+
     def _liftoff(self):
         """Ignite the first stage, or scrub if it cannot lift the vehicle."""
         st = self.veh.stages[0]
@@ -781,6 +795,7 @@ class Ascent:
         elif self.coast_until > t:
             h = min(h, self.coast_until - t)
         env, cd_a = self.env, self.cd_a
+        self._ctrl = (mdot, st, mode, fixed)
         s1 = _rk4(s0, h, m0, mdot, st, mode, fixed, cd_a, env)
         if self.burning and self.phase == "guided":
             e1 = _energy(s1)

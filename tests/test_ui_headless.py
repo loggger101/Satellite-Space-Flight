@@ -460,3 +460,14 @@ def test_long_names_are_shortened_to_fit(app):
     assert s.endswith("...") and f.small.size(s)[0] <= 120
     app.sim.sats[0].name = "A satellite with a name far too long for the list"
     frame(app)                                                # the list row must not overflow
+
+
+def test_frame_rate_does_not_change_the_physics(app):
+    """A second of real time at 64 fps or at 16 fps reaches the same state."""
+    app.update(1 / 64)                                        # settle the first frame
+    app.reset()
+    frame(app, 64, 1 / 64)
+    t, y = app.sim.t, app.sim.y.copy()
+    app.reset()
+    frame(app, 16, 1 / 16)
+    assert app.sim.t == t and np.array_equal(app.sim.y, y)

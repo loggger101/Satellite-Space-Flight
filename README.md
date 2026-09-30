@@ -13,8 +13,8 @@ perturbing forces.
 | ![Hohmann](docs/images/hohmann.png) | ![Starlink-like shell](docs/images/starlink.png) |
 | **Molniya / Tundra in the Earth-fixed frame** | **J2 precession study with telemetry plot** |
 | ![Molniya](docs/images/molniya_ecef_map.png) | ![J2](docs/images/j2_plot.png) |
-| **Following the ISS over Canada** | |
-| ![Follow camera](docs/images/follow_iss.png) | |
+| **Following the ISS over Canada** | **Orbit inspector: a Molniya satellite near apogee** |
+| ![Follow camera](docs/images/follow_iss.png) | ![Orbit inspector](docs/images/orbit_inspector.png) |
 
 ## Quick start
 
@@ -80,18 +80,20 @@ Earth's sphere of influence.
 - Inertial (ECI) or Earth-fixed (ECEF) frame; follow-camera on any satellite
 - Osculating orbits, perturbed trails, velocity vectors, apsides and node markers, coverage footprint, ground-station links
 - 2-D ground-track map with day/night shading, sub-solar and sub-lunar points
-- Telemetry panel: geodetic position, osculating elements, J2 drift rates, beta angle, illumination, **acceleration budget per force**, energy conservation check, propellant and delta-v, station look angles
+- **Orbit inspector** for the clicked satellite. In 3-D: its translucent orbital plane slicing the globe, the equatorial plane, line of nodes (AN/DN), line of apsides with perigee and apogee altitudes, angle arcs for inclination, RAAN (from the vernal equinox), argument of perigee and true anomaly (argument of latitude for near-circular orbits), the angular-momentum vector and a callout card beside the satellite. In the *Orbit* tab: the orbital plane face-on to scale with the Earth's shadow cut through it, an edge-on inclination view, a view from the north pole with RAAN, the Sun and the local time of the ascending node, a timeline of the next revolution (sunlight, eclipse, apsis and node passes), altitude and speed gauges, and a property sheet: shape (a, b, e, p, apsides), orientation, timing (period, nodal period, track shift, time to the next perigee/apogee/node), speeds (perigee, apogee, circular, escape, C3), J2 drift, sun-synchronous inclination, beta angle, shadow fraction and the spacecraft's mass, area-to-mass, ballistic coefficient, drag at perigee and SRP
+- Telemetry tab: geodetic position, osculating elements, J2 drift rates, beta angle, illumination, **acceleration budget per force**, energy conservation check, propellant and delta-v, station look angles
 - Time-history plots (altitude, speed, a, e, i, RAAN, argument of perigee, perigee height, energy drift)
 
 ## Controls
 
 | input | action |
 |---|---|
-| left-drag / wheel | orbit / zoom camera; click a satellite to select |
+| left-drag / wheel | orbit / zoom camera (the wheel scrolls the right panel under the mouse); click a satellite to select and inspect it |
 | `Space`, `,` `.`, `1` | pause, slower/faster time warp, real time |
 | `Tab`, `F` | next satellite, follow it |
 | `E` | ECI / ECEF frame |
 | `O` `T` `L` `V` `X` `C` `R` `K` | orbits mode, trails, labels, vectors, axes, footprint, GEO ring, coastlines |
+| `D`, `Q` | selected orbit's geometry (full / basic / off), right panel tab (orbit / telemetry) |
 | `M` `G` `I` | ground-track map, plot, hide panels |
 | `A` `W` `B` `N` `P` | add satellite, Walker constellation, manoeuvre, ground station, physics |
 | `Ctrl+O`, `Ctrl+S`, `Ctrl+R` | scenarios, save snapshot, reset |
@@ -145,7 +147,7 @@ sim.advance(86400)
 
 ## Accuracy and validation
 
-The physics is checked by 75 tests (`pytest`), including textbook reference
+The physics is checked by 87 tests (`pytest`), including textbook reference
 cases from Vallado's *Fundamentals of Astrodynamics and Applications*
 (RV to elements, 40-minute Kepler propagation, GMST, Hohmann transfer), the
 numerical integrator against the analytic solution (under 1 m after a day),
@@ -183,6 +185,7 @@ satflight/            physics engine (numpy only)
   maneuvers.py        transfers, Lambert, manoeuvre objects
   planner.py          turns goals into scheduled burns
   analysis.py         J2 rates, footprints, classification, J2-mean propagator
+  orbitinfo.py        derived properties for the orbit inspector (apsides, passes, eclipses, LTAN)
   scenario.py         JSON scenarios, presets, Walker constellations
   simulation.py       the engine: propagation, burns, events, history
   batch.py            headless runs and CSV export

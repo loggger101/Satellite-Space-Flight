@@ -239,10 +239,17 @@ public numbers: performance is realistic in kind, not for mission design.
   4/27 (|m0 - c| + |m1 - c|) of its chord c (m = velocity x step), and the
   same bound per satellite rules out nearly every pair from the current
   distances alone, so the search costs little.
+  Up to 300 satellites every pair is measured. Larger ensembles never
+  measure all N^2 pairs: during a step each satellite stays within half its
+  chord plus that bound of the chord's middle, so the middles are binned in
+  a grid of cubes (alert distance + twice the largest such spread, ~470 km
+  in LEO at 60 s steps) and only satellites in the same or neighboring cubes
+  are paired. For the 1584-satellite shell that is ~2 ms per step. The
+  footer's "closest pair" is then the closest among those candidates.
 - Eclipses, AOS/LOS and close approaches are evaluated at every accepted
   step, not at every frame, so an entry can reach the log up to one step
   after the view shows it (per-satellite detail for ensembles up to 40 satellites, otherwise for
-  the selected one; pairwise approaches up to 300 satellites).
+  the selected one).
 
 ## Known simplifications
 

@@ -79,7 +79,7 @@ def _alpha_poly(surf, color, alpha, pts, clip: pygame.Rect):
     """Translucent filled polygon, drawn through a layer the size of ``clip``."""
     if len(pts) < 3:
         return
-    layer = pygame.Surface(clip.size, pygame.SRCALPHA)
+    layer = theme.scratch(clip.size)
     pygame.draw.polygon(layer, (*color[:3], alpha), [(x - clip.x, y - clip.y) for x, y in pts])
     surf.blit(layer, clip.topleft)
 
@@ -539,6 +539,7 @@ def property_sections(info: OrbitInfo, dv_used: float):
     shape = [
         ("Regime", info.regime),
         ("Semi-major axis a", num(el.a, "km", 1) if closed else f"{el.a:,.1f} km (open)"),
+        ("Mean semi-major axis", num(info.a_mean, "km", 1)),
         ("Semi-minor axis b", num(info.b, "km", 1)),
         ("Eccentricity e", f"{el.e:.6f}"),
         ("Semi-latus rectum p", num(el.p, "km", 1)),

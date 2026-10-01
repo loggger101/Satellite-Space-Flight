@@ -261,6 +261,8 @@ class SatList:
         tips.add(lr, f"Every object in the scenario ({sim.n}): satellites, rockets and spent "
                      "stages, with their altitude. Click one to select it; the wheel scrolls.",
                  "Tab")
+        tips.hot(pygame.Rect(lr.x, lr.y, lr.w, (min(sim.n, self.scroll + rows) - self.scroll)
+                             * row_h))
         clip = surf.get_clip()
         surf.set_clip(lr)
         for k in range(self.scroll, min(sim.n, self.scroll + rows)):
@@ -441,7 +443,7 @@ class InfoPanel:
         env = [("Illumination", f"{shadow_state(s.shadow)} ({s.shadow * 100:.0f}%)"),
                ("Beta angle", num(D(beta_angle(r, v, sun)), "deg", 2))]
         cd_am = s.cd * s.area / s.mass
-        br = sim.forces.breakdown(r, v, cd_am)
+        br = sim.forces.breakdown(r, v, cd_am, sim.gmst())
         for name, (mag, on) in br.items():
             env.append((f"  a_{name}" + ("" if on else " (off)"), f"{mag * 1e3:.3e} m/s^2"))
         e_now = sim.energy(i)
@@ -502,6 +504,7 @@ class InfoPanel:
                 pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=px(5))
             fonts.draw(surf, name, r.center, theme.TEXT if on else theme.DIM, fonts.small, "center")
             tips.add(r, TAB_TIPS[k], "Q")
+            tips.hot(r)
         q = fonts.draw(surf, "Q", (self.rect.right - px(12), self.tab_rects[0].centery),
                        theme.FAINT, fonts.small, "midright")
         tips.add(q.inflate(px(8), px(8)), "Q switches tab; PgUp / PgDn / Home / End or the wheel "

@@ -67,6 +67,7 @@ class Button(Widget):
         if self.text:
             fonts.draw(surf, self.text, self.rect.center, theme.TEXT, fonts.ui, "center")
         tips.add(self.rect, self.hint, self.tooltip)
+        tips.hot(self.rect)
 
 
 class TextField(Widget):
@@ -119,6 +120,7 @@ class TextField(Widget):
         return float(s)
 
     def draw(self, surf, fonts):
+        tips.hot(self.rect, "text")
         bg = theme.FIELD_FOCUS if self.focused else theme.FIELD
         pygame.draw.rect(surf, bg, self.rect, border_radius=px(4))
         edge = theme.BAD if self.error else (theme.ACCENT if self.focused else theme.PANEL_EDGE)
@@ -180,6 +182,7 @@ class Choice(Widget):
         return False
 
     def draw(self, surf, fonts):
+        tips.hot(self.rect)
         bg = theme.mix(theme.FIELD, theme.ACCENT, 0.2) if self.hover else theme.FIELD
         pygame.draw.rect(surf, bg, self.rect, border_radius=px(4))
         pygame.draw.rect(surf, theme.PANEL_EDGE, self.rect, 1, border_radius=px(4))
@@ -212,6 +215,7 @@ class Checkbox(Widget):
         return False
 
     def draw(self, surf, fonts):
+        tips.hot(self.rect)
         box = pygame.Rect(self.rect.x, self.rect.centery - px(9), px(18), px(18))
         pygame.draw.rect(surf, theme.FIELD, box, border_radius=px(3))
         edge = theme.ACCENT if self.value else theme.PANEL_EDGE
@@ -474,9 +478,7 @@ class FormDialog:
     def draw(self, surf):
         """Shade the window, then draw the frame, rows, side panel, buttons and error."""
         fonts = self.app.fonts
-        shade = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
-        shade.fill((0, 0, 0, 110))
-        surf.blit(shade, (0, 0))
+        surf.blit(theme.veil(surf.get_size(), (0, 0, 0, 110)), (0, 0))
         tips.block(surf.get_rect())             # nothing under the shade explains itself
         theme.panel(surf, self.rect, (14, 20, 36, 245), theme.ACCENT)
         head = fonts.draw(surf, self.title, (self.rect.x + px(18), self.rect.y + px(14)),

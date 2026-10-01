@@ -23,7 +23,7 @@ rotation) and for TT in the ephemerides. GMST uses the IAU-82 expression
 
 ## Equations of motion
 
-    r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_drag + a_thrust
+    r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_C22 + a_drag + a_thrust
 
 **Zonal harmonics** - accelerations are the gradients of
 
@@ -32,6 +32,23 @@ rotation) and for TT in the ephemerides. GMST uses the IAU-82 expression
 with EGM-96 J2 = 1.0826e-3, J3 = -2.533e-6, J4 = -1.620e-6. The tests check
 each closed-form term against a numerical gradient of Phi, and that the total
 energy `v^2/2 - Phi` is conserved to 1e-10 over a day.
+
+**Elliptical equator (C22/S22)**, off by default - the gradient of
+
+    U22 = 3 mu Re^2 (C22 (x^2 - y^2) + 2 S22 x y) / r^5
+
+in Earth-fixed x, y (EGM-96 C22 = 1.5745e-6, S22 = -9.038e-7). It turns with
+the Earth, so the forces depend on time through GMST and energy is no longer
+conserved; the energy readouts then show the Jacobi integral
+`E - omega h_z`, conserved to 1e-11 over a day in the tests. Its visible
+effect is on geostationary satellites: they accelerate in longitude toward
+75 E or 105 W (up to ~0.0017 deg/day^2; 3.06 deg in 60 days from 45 deg
+away, `geo_drift.json`). Launch ascents and the analytic propagators leave
+it out.
+
+**Geostationary slots.** A `geo` orbit sits where the equatorial pull
+`mu / r^2 (1 + 3/2 J2 (Re/r)^2)` matches the Earth's rotation when J2 acts,
+~0.5 km above the two-body R_GEO; at R_GEO it drifted east 0.8 deg a month.
 
 **Drag** - `a = -1/2 rho (Cd A / m) |v_rel| v_rel` with `v_rel = v - omega x r`
 (atmosphere co-rotating with the Earth). Density: piecewise-exponential model
@@ -60,9 +77,24 @@ The whole ensemble is one `(N, 6)` state, advanced with one shared step.
   60 s) keeps trails smooth and event detection responsive. Against the exact
   Kepler solution the error after one day is below 1 m.
 - **RK4** fixed step.
-- **Leapfrog** (kick-drift-kick), symplectic: bounded energy error for
-  conservative forces over arbitrarily long runs, as in REBOUND's WHFast
-  family.
+- **Wisdom-Holman** (`wh`), fixed step: kick-drift-kick in which the drift
+  is the exact Kepler orbit (the universal-variable solver below) and only
+  the perturbations - J2-J4, drag, thrust - are kicks, the splitting behind
+  REBOUND's WHFast (Wisdom & Holman 1991). The splitting error scales with
+  the perturbations, about 1e-3 of gravity in LEO, instead of with gravity.
+  Position error after one day, ISS orbit under J2-J4:
+
+  | step | leapfrog | RK4 | Wisdom-Holman |
+  |---|---|---|---|
+  | 60 s | 1,000 km | 2.2 km | 1.2 km |
+  | 120 s | 3,930 km | 65 km | 4.9 km |
+
+  It is symplectic for the conservative forces (bounded energy error);
+  drag and thrust depend on velocity or time, so with them it is only an
+  accurate second-order method.
+- **Leapfrog** (kick-drift-kick with a straight-line drift), symplectic:
+  bounded energy error, but a phase error that grows quickly. It needs steps
+  of a few seconds in LEO; it is kept for comparison.
 
 Integration stops exactly at every scheduled maneuver and burn boundary, and
 restarts whenever a satellite leaves the active set (re-entry, impact,
@@ -85,7 +117,43 @@ plus the secular J2 rates
     dargp/dt =  3/4 n J2 (Re/p)^2 (4 - 5 sin^2 i)
     dM/dt    =  n + 3/4 n J2 (Re/p)^2 sqrt(1-e^2) (2 - 3 sin^2 i)
 
-applied to the osculating elements treated as mean elements).
+applied to mean elements).
+
+The period has to come from the *mean* semi-major axis. J2 makes the
+osculating one swing over each revolution by the first-order short-period
+term (Kozai 1959)
+
+    a_osc - a_mean = 3/2 J2 Re^2 / a [2/3 (1 - 3/2 sin^2 i)((a/r)^3 - (1-e^2)^-3/2)
+                                      + sin^2 i (a/r)^3 cos 2(argp + nu)]
+
+which is about +-6 km in LEO (and over 100 km at a Molniya perigee). Taking
+the osculating value as mean put the ISS 816 km off after a day, farther
+than plain Kepler; with the mean value j2mean stays within 10 km (ISS) to
+50 km (700 km SSO) of a J2 Cowell run over a week, and a Molniya orbit within
+230 km instead of 24,000 km (`tests/test_mean_elements.py`). The other elements
+are taken as given: their short-period terms leave periodic errors of a few
+to a few tens of km but no drift. With the term written as `K / a_mean`, the
+conversion back from osculating to mean is the exact root of a quadratic,
+so re-reading the state every step gives back the same mean value and the
+result does not depend on how the run is chunked.
+
+**Formations.** Walker constellations take their altitude as the mean one,
+and copies spread along one orbit (`count` > 1) share the first copy's mean
+semi-major axis: each member gets the osculating value for its own place in
+the orbit. With equal osculating radii instead, the members' periods differ
+by up to ~0.3 % and a 1584-satellite shell at 550 km shears from 16.4 deg
+in-plane gaps to 4-28 deg within three days under Cowell; with mean values the
+gaps stay within 0.05 deg. A single satellite given by elements is placed
+exactly as given (osculating).
+
+**Readouts and the `sso` keyword.** The Orbit tab's J2 node and perigee
+drifts, nodal period, ground-track shift and sun-synchronous inclination are
+computed from the mean semi-major axis, so they hold steady around the orbit
+and match what a J2 run does (ISS node drift within 0.02 % of a 5-day Cowell
+run; from the osculating value it was 0.3 % off and varied with the
+satellite's position). `"i": "sso"` likewise picks the inclination that makes
+the *mean* orbit sun-synchronous: the 700 km preset now regresses at 0.9862
+deg/day under J2 against the required 0.9856, where it was 0.9906.
 
 ## Orbital elements
 
@@ -197,14 +265,21 @@ public numbers: performance is realistic in kind, not for mission design.
   4/27 (|m0 - c| + |m1 - c|) of its chord c (m = velocity x step), and the
   same bound per satellite rules out nearly every pair from the current
   distances alone, so the search costs little.
+  Up to 300 satellites every pair is measured. Larger ensembles never
+  measure all N^2 pairs: during a step each satellite stays within half its
+  chord plus that bound of the chord's middle, so the middles are binned in
+  a grid of cubes (alert distance + twice the largest such spread, ~470 km
+  in LEO at 60 s steps) and only satellites in the same or neighboring cubes
+  are paired. For the 1584-satellite shell that is ~2 ms per step. The
+  footer's "closest pair" is then the closest among those candidates.
 - Eclipses, AOS/LOS and close approaches are evaluated at every accepted
   step, not at every frame, so an entry can reach the log up to one step
   after the view shows it (per-satellite detail for ensembles up to 40 satellites, otherwise for
-  the selected one; pairwise approaches up to 300 satellites).
+  the selected one).
 
 ## Known simplifications
 
-- No tesseral/sectoral harmonics (only zonal J2-J4).
+- Of the non-zonal harmonics only C22/S22 (no C21/S21, C31, ...).
 - No precession/nutation, polar motion or UT1-UTC.
 - No Sun or Moon gravity and no solar radiation pressure (out of scope,
   [SCOPE.md](SCOPE.md)); the low-precision Sun ephemeris is used for lighting
@@ -216,5 +291,13 @@ public numbers: performance is realistic in kind, not for mission design.
   (no parking-orbit coast and restart; schedule maneuvers for that), and an
   ambient-pressure model of `exp(-h / 7 km)`.
 - Cannonball drag (no attitude-dependent areas).
-- Without the optional `sgp4` package, TLE mean elements are used as
-  osculating elements (a few km of error).
+- Without the optional `sgp4` package, a TLE is read as J2 mean elements:
+  its mean motion is taken as the mean anomaly's rate under J2 (true to
+  first order, as in SGP4), which fixes the mean semi-major axis; the
+  short-period term above makes it osculating, and j2mean carries the state
+  from the TLE epoch, so the plane regresses. For the ISS that is 0.004 deg
+  of RAAN after 3 days (pure Kepler from the epoch was 15 deg off) and
+  0.13 deg along track after a day of Cowell. Drag (B*) and SGP4's
+  higher-order terms are not applied.
+- Mean elements cover the semi-major axis only (first-order J2); the
+  short-period terms of e, i, RAAN, argp and M are neglected.

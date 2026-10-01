@@ -8,7 +8,8 @@ restored from git history (the last commit that has all of it is `c079ded`).
 
 ## In scope
 
-- Earth gravity: point mass plus the zonal harmonics J2, J3 and J4.
+- Earth gravity: point mass, the zonal harmonics J2, J3 and J4, and the
+  sectoral C22/S22 term (the elliptical equator; added 2026-09-30, Earth only).
 - Atmospheric drag (the atmosphere co-rotates with the Earth).
 - Thrust: impulsive and finite burns.
 - **The Sun's position**, used only for things that do not change an orbit:

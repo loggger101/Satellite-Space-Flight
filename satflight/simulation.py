@@ -50,6 +50,7 @@ from .scenario import (
     SatSpec,
     Scenario,
     expand,
+    j2_acts,
     orbit_state,
     palette_color,
     spread_along_orbit,
@@ -63,6 +64,48 @@ SCRUBBED = "scrubbed"     # a launch that never left the pad
 REENTRY_ALT = 80.0        # km: below this the vehicle is considered lost
 ASCENT_SYNC = 1.0         # s: longest ensemble segment while a vehicle is in powered flight
 EVENT_DETAIL_LIMIT = 40   # log per-satellite eclipse/AOS events only below this N
+ALL_PAIRS_LIMIT = 300     # up to this N every pair is measured; above, a spatial grid
+
+
+_HALF_SHELL = [(dx << 42) + (dy << 21) + dz
+               for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+               if (dx, dy, dz) >= (0, 0, 0)]
+
+
+def _near_pairs(r: np.ndarray, radius: float):
+    """Index pairs (a < b) of the rows of ``r`` closer than ``radius``, and
+    their distances, without measuring all N^2 pairs: points are binned in a
+    grid of cubes ``radius`` wide, so a close pair sits in the same or a
+    neighboring cube. Cost grows with N plus the number of close pairs."""
+    cell = np.clip(np.floor(r / radius), -(1 << 20), (1 << 20) - 2).astype(np.int64) + (1 << 20)
+    key = (cell[:, 0] << 42) | (cell[:, 1] << 21) | cell[:, 2]
+    order = np.argsort(key, kind="stable")
+    skey = key[order]
+    ps, qs = [], []
+    # a cell and the 13 neighbors on one side of it: every neighboring pair of
+    # cells is visited once, so each pair of points is found once
+    for off in _HALF_SHELL:
+        want = key + off
+        lo = np.searchsorted(skey, want, "left")
+        n = np.searchsorted(skey, want, "right") - lo
+        if not n.any():
+            continue
+        a = np.repeat(np.arange(len(r)), n)
+        start = np.repeat(lo - np.cumsum(n) + n, n)
+        b = order[start + np.arange(n.sum())]
+        if off == 0:
+            keep = a < b
+            a, b = a[keep], b[keep]
+        ps.append(np.minimum(a, b))
+        qs.append(np.maximum(a, b))
+    if not ps:
+        return np.zeros(0, int), np.zeros(0, int), np.zeros(0)
+    p, q = np.concatenate(ps), np.concatenate(qs)
+    d = np.linalg.norm(r[p] - r[q], axis=1)
+    near = d < radius
+    p, q, d = p[near], q[near], d[near]
+    sort = np.lexsort((q, p))                 # row-major order, as the all-pairs path
+    return p[sort], q[sort], d[sort]
 
 
 def _hermite_min(d0, c, m0, m1, samples: int = 17, iterations: int = 8):
@@ -282,7 +325,7 @@ class Simulation:
     # --- adding / removing ---------------------------------------------------------------
     def add_satellites(self, orbit: dict, name: str, color=None, count: int = 1, **props):
         """Add satellites defined by an orbit spec evaluated at the current time."""
-        r, v = orbit_state(orbit, self.clock, self.t)
+        r, v = orbit_state(orbit, self.clock, self.t, j2_acts(self.propagator, self.forces))
         rows = []
         for k, (rr, vv) in enumerate(spread_along_orbit(r, v, count)):
             nm = name if count == 1 else f"{name}-{k + 1}"
@@ -373,7 +416,7 @@ class Simulation:
         el = rv2coe(self.y[i, :3], self.y[i, 3:])
         if el.e >= 1.0:
             raise ValueError(f"{name} is not on a closed orbit")
-        regresses = self.propagator == "j2mean" or (self.propagator == "cowell" and self.forces.j2)
+        regresses = j2_acts(self.propagator, self.forces)
         rate = float(j2_secular_rates(el.a, el.e, el.i)[0]) if regresses else 0.0
         t_ref, inc, raan = self.t, float(el.i), float(el.raan)
         return math.degrees(inc), lambda t: plane_normal(inc, raan + rate * (t - t_ref))
@@ -577,11 +620,11 @@ class Simulation:
         cd_am = self._props(idx)
         rows = {int(i): k for k, i in enumerate(idx)}
         burn_rows = [(rows[j], b) for b in burns if (j := self.index_of(b.man.sat)) in rows]
-        forces = self.forces
+        forces, clock = self.forces, self.clock
 
         def f(t, y):
             r, v = y[:, :3], y[:, 3:]
-            a = forces.acceleration(r, v, cd_am)
+            a = forces.acceleration(r, v, cd_am, float(clock.gmst(t)) if forces.c22 else 0.0)
             for k, b in burn_rows:
                 m = b.m0 - b.mdot * (t - b.t0)
                 d = finite_direction(b.man, r[k:k + 1], v[k:k + 1])[0]
@@ -789,23 +832,39 @@ class Simulation:
                         self.log(f"LOS {self.sats[i].name} @ {st.name}", "station")
                     self._visible[s, i] = now
 
-        # close approaches (pairwise, small ensembles only)
-        # (vehicles still inside the atmosphere, e.g. on a launch pad, are ignored)
+        # close approaches: every pair in small ensembles, pairs found through a
+        # spatial grid in large ones (vehicles still inside the atmosphere, e.g.
+        # on a launch pad, are ignored)
         orbiting = idx[approx_altitude(r_all[idx]) > 100.0]
-        if 1 < orbiting.size <= 300:
+        if orbiting.size > 1:
             r = r_all[orbiting]
-            d = np.linalg.norm(r[:, None, :] - r[None, :, :], axis=-1)
-            np.fill_diagonal(d, np.inf)
+            sweep = self._sweep(t, orbiting)
+            if orbiting.size <= ALL_PAIRS_LIMIT:
+                p, q = np.triu_indices(orbiting.size, 1)
+                d = np.linalg.norm(r[p] - r[q], axis=1)
+            else:
+                # during the step each satellite stayed within `spread` of the
+                # middle of its chord, so a pair that met had middles within the
+                # alert distance plus both spreads
+                if sweep is None:
+                    mid, spread = r, np.zeros(len(r))
+                else:
+                    mid, spread = sweep[4], sweep[5]
+                radius = self.conjunction_km + 2 * float(np.max(spread, initial=0.0))
+                p, q, _ = _near_pairs(mid, max(radius, 1.0))
+                d = np.linalg.norm(r[p] - r[q], axis=1)
             if any(self.sats[i].family for i in orbiting):
                 # a payload and the stages that carried it drift apart slowly
                 fam = np.array([self.sats[i].family or self.sats[i].name for i in orbiting], object)
-                d[fam[:, None] == fam[None, :]] = np.inf
-            k = int(np.argmin(d))
-            a, b = divmod(k, orbiting.size)
-            self.closest = (float(d[a, b]), int(orbiting[a]), int(orbiting[b]))
+                d = np.where(fam[p] == fam[q], np.inf, d)
+            k = int(np.argmin(d)) if d.size else -1
+            if k >= 0 and math.isfinite(d[k]):
+                self.closest = (float(d[k]), int(orbiting[p[k]]), int(orbiting[q[k]]))
+            else:
+                self.closest = (math.inf, -1, -1)
             now = {}
-            for p, q, dist, tca in self._approaches(t, orbiting, d):
-                now[(p, q)] = (dist, tca)
+            for a, b, dist, tca in self._approaches(t, orbiting, p, q, d, sweep):
+                now[(a, b)] = (dist, tca)
             for p, q in sorted(set(now) - self._close_pairs, key=lambda pq: now[pq][1]):
                 dist, tca = now[(p, q)]
                 self.log(f"Close approach: {self.sats[p].name} - {self.sats[q].name} "
@@ -818,10 +877,37 @@ class Simulation:
             self.closest = (math.inf, -1, -1)
             self._last_sample = None
 
-    def _approaches(self, t: float, orbiting: np.ndarray, d: np.ndarray):
-        """Pairs of ``orbiting`` (index into ``d``, the distances now, inf for
+    def _sweep(self, t: float, orbiting: np.ndarray):
+        """``(t0, h, (y0, y1), reach, mid, spread)`` for the step that just
+        ended, or None without a usable previous sample. ``reach`` bounds how
+        far each satellite can have been during the step from where it is now
+        (-inf for satellites that were not orbiting then: no curve to follow);
+        ``spread`` bounds how far it was from ``mid``, the middle of its chord
+        (its current position and 0 for those not orbiting then)."""
+        prev = self._last_sample
+        if prev is None or not prev[0] < t or prev[1].shape != self.y.shape:
+            return None
+        h = t - prev[0]
+        y0, y1 = prev[1][orbiting], self.y[orbiting]
+        moved = y1[:, :3] - y0[:, :3]
+        step = np.linalg.norm(moved, axis=1)
+        bow = 4 / 27 * (np.linalg.norm(h * y0[:, 3:] - moved, axis=1)
+                        + np.linalg.norm(h * y1[:, 3:] - moved, axis=1))
+        reach = step + bow
+        mid = y1[:, :3] - 0.5 * moved
+        spread = 0.5 * step + bow
+        new = ~prev[2][orbiting]
+        reach[new] = -math.inf
+        mid[new] = y1[new, :3]
+        spread[new] = 0.0
+        return prev[0], h, (y0, y1), reach, mid, spread
+
+    def _approaches(self, t: float, orbiting: np.ndarray, p: np.ndarray, q: np.ndarray,
+                    d: np.ndarray, sweep):
+        """Pairs ``(p, q)`` of ``orbiting`` (``d`` their distances now, inf for
         pairs to ignore) that came within ``conjunction_km`` since the last
-        step, as (i, j, closest km, time of closest approach).
+        step (``sweep`` from :meth:`_sweep`), as (i, j, closest km, time of
+        closest approach).
 
         A fast pass can fall between two steps, so each pair's relative motion
         over the step is modeled as the cubic Hermite curve through both ends'
@@ -832,17 +918,11 @@ class Simulation:
         out most of the rest, and what is left is searched for its minimum."""
         lim = self.conjunction_km
         dist, tca = d.copy(), {}
-        prev = self._last_sample
-        if prev is not None and prev[0] < t and prev[1].shape == self.y.shape:
-            h = t - prev[0]
-            y0, y1 = prev[1][orbiting], self.y[orbiting]
-            moved = y1[:, :3] - y0[:, :3]
-            reach = np.linalg.norm(moved, axis=1) + 4 / 27 * (
-                np.linalg.norm(h * y0[:, 3:] - moved, axis=1)
-                + np.linalg.norm(h * y1[:, 3:] - moved, axis=1))
-            reach[~prev[2][orbiting]] = -math.inf       # not orbiting then: no curve to follow
-            p, q = np.nonzero(np.triu(d - reach[:, None] - reach[None, :] < lim, 1))
-            rel0, rel1 = y0[p] - y0[q], y1[p] - y1[q]
+        if sweep is not None:
+            t0, h, (y0, y1), reach = sweep[:4]
+            sel = np.flatnonzero(d - reach[p] - reach[q] < lim)
+            pp, qq = p[sel], q[sel]
+            rel0, rel1 = y0[pp] - y0[qq], y1[pp] - y1[qq]
             d0, m0 = rel0[:, :3], h * rel0[:, 3:]
             c, m1 = rel1[:, :3] - d0, h * rel1[:, 3:]
             cc = np.einsum("ij,ij->i", c, c)
@@ -852,19 +932,19 @@ class Simulation:
             near = chord - bow < lim
             if near.any():
                 tau, dm = _hermite_min(d0[near], c[near], m0[near], m1[near])
-                for a, b, x, u in zip(p[near], q[near], dm, tau, strict=True):
-                    if x < dist[a, b]:
-                        dist[a, b] = x
-                        tca[a, b] = prev[0] + u * h
-        for a, b in zip(*np.nonzero(np.triu(dist < lim, 1)), strict=True):
-            yield (int(orbiting[a]), int(orbiting[b]), float(dist[a, b]),
-                   tca.get((a, b), t))
+                for k, x, u in zip(sel[near], dm, tau, strict=True):
+                    if x < dist[k]:
+                        dist[k] = x
+                        tca[k] = t0 + u * h
+        for k in np.flatnonzero(dist < lim):
+            yield (int(orbiting[p[k]]), int(orbiting[q[k]]), float(dist[k]),
+                   tca.get(int(k), t))
 
     # --- diagnostics ------------------------------------------------------------------------
     def energy(self, i: int) -> float:
         """Specific energy of satellite ``i`` including the enabled zonal terms."""
         r, v = self.y[i:i + 1, :3], self.y[i:i + 1, 3:]
-        return float(conservative_energy(r, v, self.forces)[0])
+        return float(conservative_energy(r, v, self.forces, self.gmst())[0])
 
     def station_visibility(self, i: int):
         """[(station, az deg, el deg, range km)] for stations that see satellite i."""

@@ -13,8 +13,8 @@ from satflight.elements import kepler_propagate
 from satflight.forces import ForceModel
 from satflight.launch import LAUNCH_SITES, LaunchSpec, vehicle_preset
 from satflight.maneuvers import Maneuver
-from satflight.scenario import IntegratorSettings, SatSpec, Scenario
-from satflight.simulation import Simulation
+from satflight.scenario import ConstellationSpec, IntegratorSettings, SatSpec, Scenario
+from satflight.simulation import ALL_PAIRS_LIMIT, Simulation, _near_pairs
 from satflight.timeutil import UTC
 
 EPOCH = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
@@ -50,7 +50,8 @@ def _orbits(propagator: str, method: str) -> Scenario:
 
 
 @pytest.mark.parametrize("propagator,method", [("cowell", "dopri5"), ("cowell", "rk4"),
-                                               ("cowell", "leapfrog"), ("j2mean", "dopri5"),
+                                               ("cowell", "wh"), ("cowell", "leapfrog"),
+                                               ("j2mean", "dopri5"),
                                                ("kepler", "dopri5")])
 def test_orbits_do_not_depend_on_the_frame_rate(propagator, method):
     sims = [Simulation(_orbits(propagator, method)) for _ in range(2)]
@@ -131,3 +132,29 @@ def test_a_wide_pass_is_not_reported():
     sim = Simulation(_crossing(25.0, 1234.567))
     sim.advance(2000.0)
     assert not any(e.text.startswith("Close approach") for e in sim.events)
+
+
+def test_large_ensembles_still_catch_close_passes():
+    """Above ALL_PAIRS_LIMIT satellites the pairs come from a spatial grid."""
+    sc = _crossing(3.0, 1234.567)
+    sc.constellations = [ConstellationSpec("Shell", 1500.0, 60.0, 400, 20, 1)]
+    sim = Simulation(sc)
+    assert sim.n > ALL_PAIRS_LIMIT
+    sim.advance(2000.0)
+    passes = [e for e in sim.events if e.text.startswith("Close approach")]
+    assert len(passes) == 1 and "Eq - Polar" in passes[0].text
+    assert passes[0].t == pytest.approx(1234.567, abs=0.05)
+    assert sim.closest[0] < 2000.0 and sim.closest[1] >= 0
+
+
+def test_grid_pairs_match_all_pairs():
+    rng = np.random.default_rng(1)
+    r = rng.normal(size=(700, 3)) * 3000.0
+    r[:5] = r[5:10] + 0.5                       # a few pairs almost on top of each other
+    for radius in (1.0, 50.0, 400.0, 2500.0):
+        p, q, d = _near_pairs(r, radius)
+        a, b = np.triu_indices(len(r), 1)
+        full = np.linalg.norm(r[a] - r[b], axis=1)
+        keep = full < radius
+        assert np.array_equal(p, a[keep]) and np.array_equal(q, b[keep])
+        assert np.allclose(d, full[keep])

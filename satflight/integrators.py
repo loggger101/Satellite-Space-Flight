@@ -3,9 +3,13 @@
 * ``dopri5``   Dormand-Prince 5(4) with adaptive step control and FSAL - the
                default; the same scheme as scipy's RK45 and MATLAB's ode45.
 * ``rk4``      classic fixed-step 4th-order Runge-Kutta.
-* ``leapfrog`` kick-drift-kick symplectic integrator, the building block of
-               REBOUND's WHFast/LEAPFROG: bounded energy error over very long
-               runs for conservative forces.
+* ``wh``       Wisdom-Holman: kick-drift-kick where the drift is the exact
+               Kepler orbit and only the small perturbations (J2..J4, drag,
+               thrust) are kicks - the splitting behind REBOUND's WHFast. At a
+               60 s step it is ~1000x more accurate than leapfrog in LEO.
+* ``leapfrog`` kick-drift-kick with a straight-line drift (REBOUND's
+               LEAPFROG). Symplectic, so its energy error stays bounded, but
+               the phase error grows fast: it needs steps of a few seconds.
 
 All satellites share one step (ensemble integration). The adaptive error
 norm takes the worst satellite, so every orbit individually meets the
@@ -19,9 +23,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .constants import MU_EARTH
+from .elements import kepler_propagate
+
 Deriv = Callable[[float, np.ndarray], np.ndarray]
 
-METHODS = ("dopri5", "rk4", "leapfrog")
+METHODS = ("dopri5", "rk4", "wh", "leapfrog")
 
 # Dormand-Prince 5(4) tableau
 _C = np.array([0.0, 1 / 5, 3 / 10, 4 / 5, 8 / 9, 1.0, 1.0])
@@ -69,6 +76,25 @@ def leapfrog_step(f: Deriv, t: float, y: np.ndarray, h: float) -> np.ndarray:
     return np.concatenate([r_new, v_new], axis=1)
 
 
+def _perturbation(f: Deriv, t: float, y: np.ndarray) -> np.ndarray:
+    """Acceleration minus the Earth's point-mass term."""
+    r = y[:, :3]
+    rn = np.sqrt(np.sum(r * r, axis=1))[:, None]
+    return f(t, y)[:, 3:] + MU_EARTH * r / rn ** 3
+
+
+def wh_step(f: Deriv, t: float, y: np.ndarray, h: float) -> np.ndarray:
+    """Wisdom-Holman kick-drift-kick: half a kick of the perturbations, the
+    exact two-body motion over ``h``, then the other half kick. The Kepler
+    drift carries the orbit itself, so the splitting error scales with the
+    perturbations (~1e-3 of gravity) instead of with gravity. With velocity
+    dependent forces (drag) it is no longer exactly symplectic."""
+    v_half = y[:, 3:] + 0.5 * h * _perturbation(f, t, y)
+    r1, v1 = kepler_propagate(y[:, :3], v_half, h)
+    v1 = v1 + 0.5 * h * _perturbation(f, t + h, np.concatenate([r1, v1], axis=1))
+    return np.concatenate([r1, v1], axis=1)
+
+
 def _error_norm(err, y0, y1, rtol, atol):
     """Scaled RMS error of the worst satellite (<= 1 means the step is accepted)."""
     sc = atol + rtol * np.maximum(np.abs(y0), np.abs(y1))
@@ -108,7 +134,7 @@ class Propagator:
             return max(t0, stop), y0
         if self.method == "dopri5":
             return self._dopri5(f, t0, y0, t1, callback, stop)
-        step = rk4_step if self.method == "rk4" else leapfrog_step
+        step = {"rk4": rk4_step, "wh": wh_step, "leapfrog": leapfrog_step}[self.method]
         evals = 4 if self.method == "rk4" else 2
         t, y = t0, y0
         while t < t1:

@@ -14,6 +14,7 @@
     "j2": true,
     "j3": true,
     "j4": true,
+    "c22": false,
     "drag": false,
     "density_scale": 1.0
   },

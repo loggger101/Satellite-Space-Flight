@@ -23,7 +23,7 @@ def _altitude(sim, t, s):
 
 
 def _energy_drift(sim, t, s):
-    e = conservative_energy(s[:, :3], s[:, 3:], sim.forces)
+    e = conservative_energy(s[:, :3], s[:, 3:], sim.forces, sim.clock.gmst(t))
     return (e - e[0]) / abs(e[0])
 
 
@@ -79,6 +79,7 @@ class PlotView:
         """The selected satellite's metric over the history buffer up to now, with a value grid."""
         sim, fonts = app.sim, app.fonts
         self.rect = rect
+        tips.hot(rect)
         theme.panel(surf, rect)
         name, unit, fn = METRICS[self.metric]
         tips.add(rect, f"{name} of the selected satellite over its recent history, now at "

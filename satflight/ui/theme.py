@@ -141,17 +141,20 @@ class Fonts:
         return rect
 
 
-_PANELS = LRU(64)            # panel backgrounds by (size, color, radius)
+# panel backgrounds by (size, color, radius); a resized window brings new sizes,
+# so the cache stays small (a full-height side panel is ~1.5 MB at 1920x1200)
+_PANELS = LRU(32)
+_VEILS = LRU(2)              # window-sized shades: ~9 MB each at 1920x1200
 _SCRATCH: list = [None]
 
 
 def veil(size, rgba) -> pygame.Surface:
     """A surface of ``size`` filled with the translucent ``rgba`` (a dialog's
     shade over the window), made once per size and color."""
-    key = ("veil", tuple(size), tuple(rgba))
-    out = _PANELS.get(key)
+    key = (tuple(size), tuple(rgba))
+    out = _VEILS.get(key)
     if out is None:
-        out = _PANELS.put(key, pygame.Surface(size, pygame.SRCALPHA))
+        out = _VEILS.put(key, pygame.Surface(size, pygame.SRCALPHA))
         out.fill(rgba)
     return out
 

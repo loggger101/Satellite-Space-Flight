@@ -923,9 +923,10 @@ def test_dropping_files_on_the_window(app, tmp_path):
     bad.write_text("nothing orbital here")
     app.handle(pygame.event.Event(pygame.DROPFILE, file=str(bad)))
     assert app.sim.n == n + 2 and any("Could not open notes.txt" in m for _, m in app.toasts)
+    app.open("maneuver")                       # a dialog tied to the old simulation
     app.handle(pygame.event.Event(pygame.DROPFILE,
                                   file=str(app.scenario_dir / "hohmann_to_geo.json")))
-    assert app.scenario_path.name == "hohmann_to_geo.json"
+    assert app.scenario_path.name == "hohmann_to_geo.json" and not app.dialogs
     frame(app, dt=0.0)
 
 

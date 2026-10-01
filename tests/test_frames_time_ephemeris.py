@@ -53,7 +53,7 @@ def test_eci_ecef_state_round_trip_and_geo_is_stationary():
 def test_look_angles_overhead():
     site = geodetic_to_ecef(0.5, 1.0, 0.0)
     target = geodetic_to_ecef(0.5, 1.0, 500.0)
-    az, el, rng = look_angles(site, 0.5, 1.0, target)
+    _, el, rng = look_angles(site, 0.5, 1.0, target)
     assert math.degrees(el) == pytest.approx(90.0, abs=1e-6)
     assert rng == pytest.approx(500.0, abs=1e-6)
 

@@ -87,8 +87,8 @@ def at(pos):
         return None
     for rect, text, key in reversed(_regions):
         if rect.collidepoint(pos):
-            text = text() if callable(text) else text
-            return (rect, text, key) if (text or key) else None
+            shown = text() if callable(text) else text
+            return (rect, shown, key) if (shown or key) else None
     return None
 
 

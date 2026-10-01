@@ -52,8 +52,8 @@ def test_sun_synchronous_inclination_700km():
 
 
 def _scenario(sats, **kw):
-    sc = Scenario(name="t", satellites=sats, forces=kw.pop("forces", ForceModel(j2=False)), **kw)
-    return sc
+    return Scenario(name="t", satellites=sats, forces=kw.pop("forces", ForceModel(j2=False)),
+                    **kw)
 
 
 def test_simulated_hohmann_reaches_geo():
@@ -166,7 +166,7 @@ def test_tle_parsing():
     assert tle.eccentricity == pytest.approx(0.0006703)
     assert tle.bstar == pytest.approx(-0.11606e-4)
     assert tle.epoch.year == 2008 and tle.epoch.timetuple().tm_yday == 264
-    r, v = tle.state_at(tle.epoch)
+    r, _ = tle.state_at(tle.epoch)
     assert 6600 < np.linalg.norm(r) < 6800
 
 
@@ -218,7 +218,7 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     gravity or SRP still loads, runs Earth-only and says what it ignored."""
     import json
     assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "c22", "drag"}   # Earth only
-    assert not {"sun", "moon", "srp"} & {f for f in vars(ForceModel())}
+    assert not {"sun", "moon", "srp"} & set(vars(ForceModel()))
     d = Scenario(name="old", satellites=[]).to_dict()
     d["forces"].update(sun=True, moon=True, srp=False)
     heo = {"type": "elements", "perigee_alt": 1000, "apogee_alt": 120000, "i": 60}

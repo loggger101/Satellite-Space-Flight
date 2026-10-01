@@ -478,9 +478,7 @@ class FormDialog:
     def draw(self, surf):
         """Shade the window, then draw the frame, rows, side panel, buttons and error."""
         fonts = self.app.fonts
-        shade = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
-        shade.fill((0, 0, 0, 110))
-        surf.blit(shade, (0, 0))
+        surf.blit(theme.veil(surf.get_size(), (0, 0, 0, 110)), (0, 0))
         tips.block(surf.get_rect())             # nothing under the shade explains itself
         theme.panel(surf, self.rect, (14, 20, 36, 245), theme.ACCENT)
         head = fonts.draw(surf, self.title, (self.rect.x + px(18), self.rect.y + px(14)),

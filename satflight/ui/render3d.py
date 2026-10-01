@@ -559,14 +559,12 @@ def _runs(surf, color, xs, ys, mask, width):
     idx = np.flatnonzero(mask)
     if idx.size < 2:
         return
-    breaks = np.flatnonzero(np.diff(idx) != 1)
-    starts = np.r_[0, breaks + 1]
-    ends = np.r_[breaks + 1, idx.size]
-    pts = np.stack([xs, ys], axis=1)
-    for s, e in zip(starts, ends, strict=True):
+    cuts = (np.flatnonzero(np.diff(idx) != 1) + 1).tolist()
+    for s, e in zip([0, *cuts], [*cuts, idx.size], strict=True):
         if e - s < 2:
             continue
-        seg = pts[idx[s:e]].tolist()
+        i = idx[s:e]
+        seg = np.column_stack((xs[i], ys[i])).tolist()
         if width == 1:
             pygame.draw.aalines(surf, color, False, seg)
         else:

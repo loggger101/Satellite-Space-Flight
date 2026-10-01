@@ -574,6 +574,30 @@ STAGE_TIPS = {
 MAX_STAGES = 4
 
 
+def _form_vehicle(dlg) -> Vehicle:
+    """The vehicle described by the form (masses entered in metric tons)."""
+    raw = dlg.raw()
+    n = int(raw["count"])
+    out = []
+    for k in range(1, n + 1):
+        vals = {}
+        for key, label, kind in STAGE_FIELDS:
+            txt = raw[f"s{k}_{key}"].strip()
+            if kind == "text":
+                vals[key] = txt or f"Stage {k}"
+                continue
+            try:
+                vals[key] = float(txt)
+            except ValueError:
+                raise ValueError(f"stage {k}: '{label}' needs a number") from None
+        vals["propellant"] *= 1000.0
+        vals["dry"] *= 1000.0
+        out.append(Stage(**vals))
+    v = dlg.values()
+    return Vehicle(v["vname"] or "Custom", out, v["fairing"], v["fairing_alt"], v["diameter"],
+                   v["cd"], v["max_g"], v["coast"])
+
+
 def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
     """Edit a vehicle's stages; ``on_done(Vehicle)`` receives the result."""
     stages = list(vehicle.stages) + [Stage(f"Stage {k + 1}", 100.0, 330.0, 0.0, 5000.0, 600.0)
@@ -620,34 +644,11 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
                     "orbit takes about 9.3-9.8 km/s including losses.")
               for k in range(MAX_STAGES + 1)]
 
-    def build(dlg) -> Vehicle:
-        """The vehicle described by the form (masses entered in metric tons)."""
-        raw = dlg.raw()
-        n = int(raw["count"])
-        out = []
-        for k in range(1, n + 1):
-            vals = {}
-            for key, label, kind in STAGE_FIELDS:
-                txt = raw[f"s{k}_{key}"].strip()
-                if kind == "text":
-                    vals[key] = txt or f"Stage {k}"
-                    continue
-                try:
-                    vals[key] = float(txt)
-                except ValueError:
-                    raise ValueError(f"stage {k}: '{label}' needs a number") from None
-            vals["propellant"] *= 1000.0
-            vals["dry"] *= 1000.0
-            out.append(Stage(**vals))
-        v = dlg.values()
-        return Vehicle(v["vname"] or "Custom", out, v["fairing"], v["fairing_alt"], v["diameter"],
-                       v["cd"], v["max_g"], v["coast"])
-
     def on_change(dlg, key):
         for k in range(MAX_STAGES + 1):
             dlg.info[f"sum{k}"] = ""
         try:
-            veh = build(dlg)
+            veh = _form_vehicle(dlg)
             rows = veh.stage_summary(payload)
             for k, (m0, dv, tb, tw) in enumerate(rows):
                 dlg.info[f"sum{k}"] = (f"{veh.stages[k].name[:12]}: ignition {m0 / 1000:,.1f} t, "
@@ -662,7 +663,7 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
             shown[k] = dlg.info[f"sum{k}"]
 
     def on_ok(v):
-        veh = build(dlg)
+        veh = _form_vehicle(dlg)
         if any(s.thrust <= 0 or s.isp_vac <= 0 or s.propellant <= 0 for s in veh.stages):
             return "every stage needs thrust, Isp and propellant"
         on_done(veh)

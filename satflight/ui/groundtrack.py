@@ -134,23 +134,31 @@ class GroundTrackView:
                        "ring around the selected satellite is the area that sees it at least "
                        "10 degrees above the horizon.", "M")
         surf.blit(self.background(mr.size), mr.topleft)
-        jd = sim.jd()
         theta = sim.gmst()
-        lat_s, lon_s = subsolar_point(jd, theta)
+        lat_s, lon_s = subsolar_point(sim.jd(), theta)
         surf.blit(self._night_overlay(mr.size, float(lat_s), float(lon_s)), mr.topleft)
-        r = (mr.x, mr.y, mr.w, mr.h)
         clip = surf.get_clip()
         surf.set_clip(mr)
+        self._draw_sun(surf, mr, lat_s, lon_s)
+        self._draw_stations(surf, app, mr, labels)
+        self._draw_pads(surf, app, mr, labels)
+        self._draw_tracks(surf, app, mr)
+        self._draw_subpoints(surf, app, mr, theta)
+        surf.set_clip(clip)
+        pygame.draw.rect(surf, theme.PANEL_EDGE, mr, 1)
 
-        # sub-solar point
-        sx, sy = self.xy(math.degrees(lat_s), math.degrees(lon_s), r)
+    def _draw_sun(self, surf, mr, lat_s, lon_s):
+        """The sub-solar point (lat/lon in rad)."""
+        sx, sy = self.xy(math.degrees(lat_s), math.degrees(lon_s), mr)
         pygame.draw.circle(surf, theme.SUN, (int(sx), int(sy)), px(6))
         tips.add(_spot(sx, sy, 8), "Sub-solar point: the Sun is straight overhead here "
                                    "(local noon).", clip=mr)
 
-        # stations
-        for st in sim.stations:
-            x, y = self.xy(st.lat, st.lon, r)
+    def _draw_stations(self, surf, app, mr, labels: bool):
+        """Ground stations, named when ``labels``."""
+        fonts = app.fonts
+        for st in app.sim.stations:
+            x, y = self.xy(st.lat, st.lon, mr)
             pygame.draw.rect(surf, (120, 255, 160), (int(x) - px(3), int(y) - px(3), px(7), px(7)),
                              1)
             tips.add(_spot(x, y, 6), f"Ground station {st.name} ({st.lat:.2f}, {st.lon:.2f}): "
@@ -160,10 +168,13 @@ class GroundTrackView:
                 fonts.draw(surf, st.name, (int(x) + px(6), int(y) - px(6)), (120, 220, 150),
                            fonts.small)
 
-        # launch pads with a vehicle waiting or climbing (labels stack when pads share a site)
+    def _draw_pads(self, surf, app, mr, labels: bool):
+        """Launch pads with a vehicle waiting or climbing; when ``labels``, a countdown
+        under each waiting one (stacked when pads share a site)."""
+        sim, fonts = app.sim, app.fonts
         taken: list[pygame.Rect] = []
         for a in sim.ascents:
-            x, y = self.xy(a.spec.lat, a.spec.lon, r)
+            x, y = self.xy(a.spec.lat, a.spec.lon, mr)
             x, y = int(x), int(y)
             pygame.draw.polygon(surf, (255, 170, 90),
                                 [(x, y - px(7)), (x - px(5), y + px(4)), (x + px(5), y + px(4))])
@@ -177,39 +188,44 @@ class GroundTrackView:
                 taken.append(box)
                 fonts.draw(surf, text, box.topleft, (255, 190, 120), fonts.small)
 
-        # tracks
+    def _draw_tracks(self, surf, app, mr):
+        """The recorded ground tracks: every satellite's in small ensembles, only the
+        selected one's in large ones."""
+        sim = app.sim
         times, data = sim.history.series()
         if sim.n <= 30:
             ids = list(range(sim.n))
-        else:           # large ensembles: only the selected satellite's track
+        else:
             ids = [app.selected] if 0 <= app.selected < sim.n else []
-        if len(times) > 1 and ids:
-            pos = eci_to_ecef(data[ids, :, :3], sim.clock.gmst(times)[None, :])
-            lat, lon, _ = ecef_to_geodetic(pos)
-            for k, i in enumerate(ids):
-                col = sim.sats[i].color
-                col = col if i == app.selected else theme.dim(col, 0.7)
-                self.polyline(surf, col, np.degrees(lat[k]), np.degrees(lon[k]), r,
-                               px(2) if i == app.selected else 1)
+        if len(times) < 2 or not ids:
+            return
+        pos = eci_to_ecef(data[ids, :, :3], sim.clock.gmst(times)[None, :])
+        lat, lon, _ = ecef_to_geodetic(pos)
+        for k, i in enumerate(ids):
+            col = sim.sats[i].color
+            col = col if i == app.selected else theme.dim(col, 0.7)
+            self.polyline(surf, col, np.degrees(lat[k]), np.degrees(lon[k]), mr,
+                          px(2) if i == app.selected else 1)
 
-        # current sub-satellite points
-        if sim.n:
-            re = eci_to_ecef(sim.y[:, :3], theta)
-            lat, lon, alt = ecef_to_geodetic(re)
-            x, y = self.xy(np.degrees(lat), np.degrees(lon), r)
-            for i in range(sim.n):
-                if sim.sats[i].status != ACTIVE:
-                    continue
-                rad = px(5 if i == app.selected else 3)
-                pygame.draw.circle(surf, sim.sats[i].color, (int(x[i]), int(y[i])), rad)
-                tips.add(_spot(x[i], y[i], 6),       # worded only if shown: there may be 1000s
-                         lambda i=i: f"{sim.sats[i].name} is above {_latlon(lat[i], lon[i])}, "
-                                     f"{float(alt[i]):,.0f} km up.", clip=mr)
-            i = app.selected
-            if 0 <= i < sim.n and sim.sats[i].status == ACTIVE:
-                lam = coverage_half_angle(float(alt[i]), math.radians(10.0))
-                flat, flon = footprint(float(lat[i]), float(lon[i]), lam, 180)
-                self.polyline(surf, theme.mix(sim.sats[i].color, (255, 255, 255), 0.4),
-                               np.degrees(flat), np.degrees(flon), r)
-        surf.set_clip(clip)
-        pygame.draw.rect(surf, theme.PANEL_EDGE, mr, 1)
+    def _draw_subpoints(self, surf, app, mr, theta: float):
+        """A dot under each active satellite and the selected one's coverage circle."""
+        sim = app.sim
+        if not sim.n:
+            return
+        re = eci_to_ecef(sim.y[:, :3], theta)
+        lat, lon, alt = ecef_to_geodetic(re)
+        x, y = self.xy(np.degrees(lat), np.degrees(lon), mr)
+        for i in range(sim.n):
+            if sim.sats[i].status != ACTIVE:
+                continue
+            rad = px(5 if i == app.selected else 3)
+            pygame.draw.circle(surf, sim.sats[i].color, (int(x[i]), int(y[i])), rad)
+            tips.add(_spot(x[i], y[i], 6),       # worded only if shown: there may be 1000s
+                     lambda i=i: f"{sim.sats[i].name} is above {_latlon(lat[i], lon[i])}, "
+                                 f"{float(alt[i]):,.0f} km up.", clip=mr)
+        i = app.selected
+        if 0 <= i < sim.n and sim.sats[i].status == ACTIVE:
+            lam = coverage_half_angle(float(alt[i]), math.radians(10.0))
+            flat, flon = footprint(float(lat[i]), float(lon[i]), lam, 180)
+            self.polyline(surf, theme.mix(sim.sats[i].color, (255, 255, 255), 0.4),
+                          np.degrees(flat), np.degrees(flon), mr)

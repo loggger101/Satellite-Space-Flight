@@ -50,6 +50,7 @@ from .scenario import (
     SatSpec,
     Scenario,
     expand,
+    j2_acts,
     orbit_state,
     palette_color,
     spread_along_orbit,
@@ -324,7 +325,7 @@ class Simulation:
     # --- adding / removing ---------------------------------------------------------------
     def add_satellites(self, orbit: dict, name: str, color=None, count: int = 1, **props):
         """Add satellites defined by an orbit spec evaluated at the current time."""
-        r, v = orbit_state(orbit, self.clock, self.t)
+        r, v = orbit_state(orbit, self.clock, self.t, j2_acts(self.propagator, self.forces))
         rows = []
         for k, (rr, vv) in enumerate(spread_along_orbit(r, v, count)):
             nm = name if count == 1 else f"{name}-{k + 1}"
@@ -415,7 +416,7 @@ class Simulation:
         el = rv2coe(self.y[i, :3], self.y[i, 3:])
         if el.e >= 1.0:
             raise ValueError(f"{name} is not on a closed orbit")
-        regresses = self.propagator == "j2mean" or (self.propagator == "cowell" and self.forces.j2)
+        regresses = j2_acts(self.propagator, self.forces)
         rate = float(j2_secular_rates(el.a, el.e, el.i)[0]) if regresses else 0.0
         t_ref, inc, raan = self.t, float(el.i), float(el.raan)
         return math.degrees(inc), lambda t: plane_normal(inc, raan + rate * (t - t_ref))

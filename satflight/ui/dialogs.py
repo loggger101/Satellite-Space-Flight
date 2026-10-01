@@ -27,6 +27,7 @@ from ..scenario import (
     PRESETS,
     ConstellationSpec,
     GroundStation,
+    j2_acts,
     orbit_state,
     palette_color,
     walker_states,
@@ -223,7 +224,8 @@ def _preview(dlg):
     """One-line summary of the orbit the form describes (blank while it is invalid)."""
     try:
         v = dlg.values()
-        r, vv = orbit_state(_orbit_from(v), dlg.app.sim.clock, dlg.app.sim.t)
+        sim = dlg.app.sim
+        r, vv = orbit_state(_orbit_from(v), sim.clock, sim.t, j2_acts(sim.propagator, sim.forces))
         el = rv2coe(r, vv)
         if el.e < 1:
             txt = (f"a {el.a:,.0f} km  e {el.e:.4f}  i {math.degrees(el.i):.2f} deg  "

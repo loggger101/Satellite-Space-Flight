@@ -79,10 +79,9 @@ def _orbit_from(v: dict) -> dict:
     """The scenario orbit spec described by the Add-satellite form."""
     mode = v["mode"]
     if mode in _SHAPE_FIELDS:
-        o = {"type": "elements", "i": v["i"], "raan": v["raan"], "argp": v["argp"], "nu": v["nu"]}
+        o = {"type": "elements", "i": v["i"], "raan": v["raan"],
+             "argp": v.get("argp", 0.0), "nu": v["nu"]}         # a circle has no perigee
         o.update((key, v[field]) for key, field in _SHAPE_FIELDS[mode])
-        if mode == "Circular altitude":
-            o["argp"] = 0.0
         return o
     if mode == "Surface launch":
         return {"type": "surface", **{key: v[field] for key, field in _SURFACE_FIELDS}}

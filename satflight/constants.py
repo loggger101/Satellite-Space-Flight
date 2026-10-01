@@ -20,6 +20,9 @@ OMEGA_EARTH = 7.292115146706979e-5     # rad/s, sidereal rotation rate
 J2 = 1.08262668355e-3
 J3 = -2.53265648533e-6
 J4 = -1.61962159137e-6
+# sectoral degree-2 order-2 coefficients (EGM-96, unnormalized): the equator's ellipticity
+C22 = 1.57446037456e-6
+S22 = -9.03803806639e-7
 
 # --- Sun (position only: lighting, eclipses, beta angle) -------------------
 # The Sun and Moon exert no force in this simulator; see docs/SCOPE.md.

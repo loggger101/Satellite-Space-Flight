@@ -23,7 +23,7 @@ rotation) and for TT in the ephemerides. GMST uses the IAU-82 expression
 
 ## Equations of motion
 
-    r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_drag + a_thrust
+    r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_C22 + a_drag + a_thrust
 
 **Zonal harmonics** - accelerations are the gradients of
 
@@ -32,6 +32,23 @@ rotation) and for TT in the ephemerides. GMST uses the IAU-82 expression
 with EGM-96 J2 = 1.0826e-3, J3 = -2.533e-6, J4 = -1.620e-6. The tests check
 each closed-form term against a numerical gradient of Phi, and that the total
 energy `v^2/2 - Phi` is conserved to 1e-10 over a day.
+
+**Elliptical equator (C22/S22)**, off by default - the gradient of
+
+    U22 = 3 mu Re^2 (C22 (x^2 - y^2) + 2 S22 x y) / r^5
+
+in Earth-fixed x, y (EGM-96 C22 = 1.5745e-6, S22 = -9.038e-7). It turns with
+the Earth, so the forces depend on time through GMST and energy is no longer
+conserved; the energy readouts then show the Jacobi integral
+`E - omega h_z`, conserved to 1e-11 over a day in the tests. Its visible
+effect is on geostationary satellites: they accelerate in longitude toward
+75 E or 105 W (up to ~0.0017 deg/day^2; 3.06 deg in 60 days from 45 deg
+away, `geo_drift.json`). Launch ascents and the analytic propagators leave
+it out.
+
+**Geostationary slots.** A `geo` orbit sits where the equatorial pull
+`mu / r^2 (1 + 3/2 J2 (Re/r)^2)` matches the Earth's rotation when J2 acts,
+~0.5 km above the two-body R_GEO; at R_GEO it drifted east 0.8 deg a month.
 
 **Drag** - `a = -1/2 rho (Cd A / m) |v_rel| v_rel` with `v_rel = v - omega x r`
 (atmosphere co-rotating with the Earth). Density: piecewise-exponential model
@@ -262,7 +279,7 @@ public numbers: performance is realistic in kind, not for mission design.
 
 ## Known simplifications
 
-- No tesseral/sectoral harmonics (only zonal J2-J4).
+- Of the non-zonal harmonics only C22/S22 (no C21/S21, C31, ...).
 - No precession/nutation, polar motion or UT1-UTC.
 - No Sun or Moon gravity and no solar radiation pressure (out of scope,
   [SCOPE.md](SCOPE.md)); the low-precision Sun ephemeris is used for lighting

@@ -1,0 +1,125 @@
+{
+  "name": "Geostationary drift",
+  "description": "Eight geostationary satellites 45 deg apart with no station-keeping. The slightly elliptical equator (C22/S22) pulls each one toward 75 E or 105 W, where it would rock back and forth. Best in the Earth-fixed frame (E) with the map (M); a day passes every second.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 600.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "c22": true,
+    "drag": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 86400,
+  "satellites": [
+    {
+      "name": "GEO -165",
+      "orbit": {
+        "type": "geo",
+        "lon": -165
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO -120",
+      "orbit": {
+        "type": "geo",
+        "lon": -120
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO -75",
+      "orbit": {
+        "type": "geo",
+        "lon": -75
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO -30",
+      "orbit": {
+        "type": "geo",
+        "lon": -30
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO +15",
+      "orbit": {
+        "type": "geo",
+        "lon": 15
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO +60",
+      "orbit": {
+        "type": "geo",
+        "lon": 60
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO +105",
+      "orbit": {
+        "type": "geo",
+        "lon": 105
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "GEO +150",
+      "orbit": {
+        "type": "geo",
+        "lon": 150
+      },
+      "color": null,
+      "mass": 3000,
+      "area": 30,
+      "cd": 2.2,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [],
+  "maneuvers": [],
+  "launches": []
+}

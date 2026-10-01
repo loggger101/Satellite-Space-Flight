@@ -28,6 +28,7 @@ CARDS = [
     ("polar_star", "Iridium-like polar orbits, with a seam where planes pass head-on."),
     ("molniya_tundra", "Long, looping orbits that linger over the far north."),
     ("j2_precession", "The Earth's bulge slowly twists orbits at six inclinations."),
+    ("geo_drift", "Geostationary satellites drift from their slots toward two resting points."),
     ("drag_decay", "Air drag pulls three spacecraft down. The balloon falls first."),
     ("launches_and_arcs", "Short hops, one satellite reaching orbit, one escaping Earth."),
 ]
@@ -42,8 +43,8 @@ def scenario_card(path: Path) -> tuple[str, str, str] | None:
     """(title, blurb, size tag) for a scenario file, or None if it cannot be read."""
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
-        sats = len(d.get("satellites", [])) + sum(int(c.get("total", 0))
-                                                  for c in d.get("constellations", []))
+        sats = (sum(int(s.get("count", 1)) for s in d.get("satellites", []))   # copies count
+                + sum(int(c.get("total", 0)) for c in d.get("constellations", [])))
         launches = len(d.get("launches", []))
     except (OSError, ValueError, AttributeError, TypeError):
         return None

@@ -156,6 +156,9 @@ ROWS = {
             "perturbation for most orbits.",
     "a_J3": "Acceleration from the Earth's slight pear shape (J3).",
     "a_J4": "Acceleration from the J4 zonal term of the Earth's gravity field.",
+    "a_C22": "Acceleration from the Earth's slightly elliptical equator (the C22/S22 "
+             "term). It turns with the Earth and makes geostationary satellites drift "
+             "toward 75 E or 105 W.",
     "a_drag": "Deceleration from air drag. '(off)' means the force is shown but not applied "
               "(turn it on in Physics).",
     # --- launch

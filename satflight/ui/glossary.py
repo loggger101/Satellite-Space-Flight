@@ -44,8 +44,12 @@ ROWS = {
     # --- shape
     "Regime": "Which family of orbit this is: low Earth orbit, geostationary, highly "
               "elliptical and so on.",
-    "Semi-major axis a": "Half the longest diameter of the orbit's ellipse. It alone sets "
-                         "the period and the orbit's energy.",
+    "Semi-major axis a": "Half the longest diameter of the ellipse the satellite is on at "
+                         "this instant. It sets the orbit's energy; the Earth's bulge makes "
+                         "it swing by several km around each revolution.",
+    "Mean semi-major axis": "The semi-major axis averaged over a revolution, without the "
+                            "swing the Earth's bulge (J2) gives it. This is what sets the "
+                            "period: satellites meant to fly in formation share it.",
     "Semi-minor axis b": "Half the shortest diameter of the ellipse.",
     "Eccentricity e": "How stretched the orbit is: 0 is a circle, close to 1 a long thin "
                       "ellipse, 1 or more an open escape path.",

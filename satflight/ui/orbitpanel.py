@@ -539,6 +539,7 @@ def property_sections(info: OrbitInfo, dv_used: float):
     shape = [
         ("Regime", info.regime),
         ("Semi-major axis a", num(el.a, "km", 1) if closed else f"{el.a:,.1f} km (open)"),
+        ("Mean semi-major axis", num(info.a_mean, "km", 1)),
         ("Semi-minor axis b", num(info.b, "km", 1)),
         ("Eccentricity e", f"{el.e:.6f}"),
         ("Semi-latus rectum p", num(el.p, "km", 1)),

@@ -9,6 +9,7 @@ from satflight.constants import MU_EARTH, R_EARTH
 from satflight.elements import coe2rv, kepler_propagate, rv2coe, vis_viva
 from satflight.ephemeris import sun_position
 from satflight.orbitinfo import local_time_of_node, orbit_info
+from satflight.scenario import ConstellationSpec, walker_states
 from satflight.simulation import Satellite
 
 D = np.radians
@@ -122,3 +123,12 @@ def test_hyperbolic_orbit():
     assert not info.closed and info.c3 > 0
     assert math.isinf(info.period) and math.isinf(info.t_apo)
     assert info.timeline_t.size == 0 and math.isnan(info.eclipse_duration)
+
+
+def test_mean_semi_major_axis_is_shown():
+    """A Walker member's osculating a swings with its place in the orbit; the
+    mean value the inspector also shows is the shell's altitude."""
+    for _, r, v in walker_states(ConstellationSpec("S", 550.0, 53.0, 8, 2, 1))[:4]:
+        info = orbit_info(r, v, 2461041.5)
+        assert info.a_mean == pytest.approx(R_EARTH + 550.0, abs=1e-6)
+        assert abs(info.el.a - info.a_mean) < 10.0

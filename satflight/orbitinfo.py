@@ -15,7 +15,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .analysis import beta_angle, classify, coverage_half_angle, j2_secular_rates
+from .analysis import (
+    beta_angle,
+    classify,
+    coverage_half_angle,
+    j2_secular_rates,
+    osculating_to_mean_a,
+)
 from .atmosphere import density
 from .constants import MU_EARTH, OMEGA_EARTH, R_EARTH
 from .eclipse import shadow_fraction
@@ -47,6 +53,7 @@ class OrbitInfo:
     # shape
     b: float                 # semi-minor axis (km); nan if open
     c: float                 # center-to-focus distance a*e (km); nan if open
+    a_mean: float            # J2 orbit-averaged semi-major axis (km); nan if open
     rp_alt: float            # km
     ra_alt: float            # km (inf if open)
     # speeds
@@ -174,6 +181,7 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         radius=rm, altitude=alt, speed=vm,
         fpa=math.asin(float(np.clip(np.dot(r, v) / (rm * vm), -1, 1))),
         b=b, c=c, rp_alt=rp_alt, ra_alt=(el.ra - R_EARTH) if closed else inf,
+        a_mean=float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)) if closed else nan,
         v_peri=v_peri, v_apo=v_apo,
         v_circ=math.sqrt(MU_EARTH / rm), v_esc=math.sqrt(2 * MU_EARTH / rm), c3=2 * el.energy,
         period=el.period if closed else inf, nodal_period=nodal_period,

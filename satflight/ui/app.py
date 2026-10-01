@@ -177,6 +177,8 @@ class App:
         path = Path(path)
         try:
             if path.suffix.lower() == ".json":
+                # open dialogs hold on to the simulation being replaced
+                self.dialogs = [d for d in self.dialogs if isinstance(d, welcome.StartScreen)]
                 self.load_scenario(path)
                 return
             tles = split_tles(path.read_text(encoding="utf-8", errors="replace"))

@@ -2,11 +2,13 @@
 burns, J2 regression, drag decay, propagator agreement, scenario files and TLEs."""
 
 import math
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from satflight import tle as tle_module
 from satflight.analysis import j2_secular_rates, osculating_to_mean_a
 from satflight.constants import R_EARTH, R_GEO
 from satflight.elements import coe2rv, kepler_propagate, rv2coe
@@ -165,6 +167,30 @@ def test_tle_parsing():
     assert tle.epoch.year == 2008 and tle.epoch.timetuple().tm_yday == 264
     r, v = tle.state_at(tle.epoch)
     assert 6600 < np.linalg.norm(r) < 6800
+
+
+def test_tle_fallback_follows_the_mean_elements(monkeypatch):
+    """Without sgp4: the plane regresses from the TLE epoch (pure Kepler kept
+    the RAAN 15 deg off after 3 days) and the satellite keeps the TLE's mean
+    motion (the Kepler semi-major axis put it 7 deg off along track in a day)."""
+    monkeypatch.setattr(tle_module, "HAVE_SGP4", False)
+    tle = parse_tle("\n".join(ISS_TLE), "ISS")
+    a = tle.semi_major_axis
+    _, wd, md = j2_secular_rates(a, tle.eccentricity, tle.inclination)
+    assert math.sqrt(3.986004418e5 / a ** 3) + md == pytest.approx(tle.mean_motion, rel=1e-12)
+    rd = j2_secular_rates(a, tle.eccentricity, tle.inclination)[0]
+    el = rv2coe(*tle.state_at(tle.epoch + timedelta(days=3)))
+    want = tle.raan + rd * 3 * 86400.0
+    assert abs(math.remainder(el.raan - want, 2 * math.pi)) < math.radians(0.02)
+    # one day of J2 Cowell from the epoch state keeps the TLE's rate along track
+    sc = _scenario([SatSpec("ISS", {"type": "state", "r": tle.state_at(tle.epoch)[0].tolist(),
+                                    "v": tle.state_at(tle.epoch)[1].tolist()})])
+    sc.forces = ForceModel(j2=True)
+    sim = Simulation(sc)
+    sim.advance(86400.0)
+    el = rv2coe(sim.y[0, :3], sim.y[0, 3:])
+    u_want = tle.argp + tle.mean_anomaly + (tle.mean_motion + wd) * 86400.0
+    assert abs(math.remainder(el.argp + el.nu - u_want, 2 * math.pi)) < math.radians(0.3)
 
 
 def test_rendezvous_scenario_arrives_at_target():

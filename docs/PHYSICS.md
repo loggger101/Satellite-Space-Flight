@@ -129,6 +129,15 @@ in-plane gaps to 4-28 deg within three days under Cowell; with mean values the
 gaps stay within 0.05 deg. A single satellite given by elements is placed
 exactly as given (osculating).
 
+**Readouts and the `sso` keyword.** The Orbit tab's J2 node and perigee
+drifts, nodal period, ground-track shift and sun-synchronous inclination are
+computed from the mean semi-major axis, so they hold steady around the orbit
+and match what a J2 run does (ISS node drift within 0.02 % of a 5-day Cowell
+run; from the osculating value it was 0.3 % off and varied with the
+satellite's position). `"i": "sso"` likewise picks the inclination that makes
+the *mean* orbit sun-synchronous: the 700 km preset now regresses at 0.9862
+deg/day under J2 against the required 0.9856, where it was 0.9906.
+
 ## Orbital elements
 
 `rv2coe` / `coe2rv` follow Vallado Algorithms 9 and 10. For undefined

@@ -113,6 +113,18 @@ def test_add_satellite_dialog_with_preset(app):
     frame(app, 2)
 
 
+def test_add_satellite_dialog_defaults_add_a_circular_orbit(app):
+    app.open("add")
+    dlg = app.dialogs[-1]
+    assert dlg.widgets["mode"].value == "Circular altitude"     # argp is hidden in this mode
+    fill(dlg, "alt", 700)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    el = rv2coe(app.sim.y[-1, :3], app.sim.y[-1, 3:])
+    assert el.rp - R_EARTH == pytest.approx(700, abs=25)        # J2 makes it slightly osculating
+    assert el.ra - R_EARTH == pytest.approx(700, abs=25)
+
+
 def test_add_satellite_surface_launch_and_bad_input(app):
     app.open("add")
     dlg = app.dialogs[-1]

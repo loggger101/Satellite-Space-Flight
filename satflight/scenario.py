@@ -255,15 +255,20 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
             e = float(orbit.get("e", 0.0))
         if e >= 1.0 and a > 0:
             a = -abs(a)          # hyperbola: a < 0 by convention
-        inc = orbit.get("i", 0.0)
-        if isinstance(inc, str) and inc.lower() == "sso":
-            inc = math.degrees(sun_synchronous_inclination(a, e))
-        i = math.radians(float(inc))
         raan, argp = _deg(orbit, "raan"), _deg(orbit, "argp")
         if "M" in orbit and "nu" not in orbit:
             nu = mean_to_true(math.radians(float(orbit["M"])), e)
         else:
             nu = _deg(orbit, "nu")
+        inc = orbit.get("i", 0.0)
+        if isinstance(inc, str) and inc.lower() == "sso":
+            # sun-synchronous for the mean orbit, which sets the node drift; the
+            # mean a itself depends a little on i, so settle the two together
+            i = sun_synchronous_inclination(a, e)
+            for _ in range(3):
+                i = sun_synchronous_inclination(float(osculating_to_mean_a(a, e, i, argp, nu)), e)
+        else:
+            i = math.radians(float(inc))
         r, v = coe2rv(a, e, i, raan, argp, nu)
         return np.asarray(r, float), np.asarray(v, float)
     if kind == "state":

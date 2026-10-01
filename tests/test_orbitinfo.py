@@ -8,9 +8,10 @@ import pytest
 from satflight.constants import MU_EARTH, R_EARTH
 from satflight.elements import coe2rv, kepler_propagate, rv2coe, vis_viva
 from satflight.ephemeris import sun_position
+from satflight.forces import ForceModel
 from satflight.orbitinfo import local_time_of_node, orbit_info
-from satflight.scenario import ConstellationSpec, walker_states
-from satflight.simulation import Satellite
+from satflight.scenario import ConstellationSpec, Scenario, preset_spec, walker_states
+from satflight.simulation import Satellite, Simulation
 
 D = np.radians
 JD = 2461313.0          # 2026-09-29 12:00 UTC
@@ -98,8 +99,25 @@ def test_ltan_and_sun_synchronous_inclination():
     r, v = coe2rv(R_EARTH + 700, 0.0, D(98.19), ra_sun + D(-67.5), 0, 0.3)
     info = orbit_info(r, v, JD)
     assert info.ltan == pytest.approx(7.5, abs=1e-6)
-    assert math.degrees(info.sso_inclination) == pytest.approx(98.19, abs=0.02)
-    assert math.degrees(info.raan_dot) * 86400 == pytest.approx(0.9856, abs=0.002)
+    # the mean orbit sits ~7 km below this instant's osculating one, so it needs a
+    # little less than the textbook 98.19 deg for a 700 km radius
+    assert math.degrees(info.sso_inclination) == pytest.approx(98.157, abs=0.005)
+    r, v = coe2rv(R_EARTH + 700, 0.0, info.sso_inclination, ra_sun + D(-67.5), 0, 0.3)
+    info = orbit_info(r, v, JD)
+    assert math.degrees(info.raan_dot) * 86400 == pytest.approx(0.98565, abs=1e-4)
+
+
+def test_secular_rates_follow_the_simulation():
+    """The node drift shown is the one a J2 run produces, at any point of the orbit."""
+    sc = Scenario(name="n", satellites=[preset_spec("ISS (LEO 420 km, 51.6 deg)")],
+                  forces=ForceModel(j2=True))
+    sim = Simulation(sc)
+    info = orbit_info(sim.y[0, :3], sim.y[0, 3:], JD)
+    el0 = rv2coe(sim.y[0, :3], sim.y[0, 3:])
+    sim.advance(5 * 86400.0)
+    el1 = rv2coe(sim.y[0, :3], sim.y[0, 3:])
+    measured = math.remainder(el1.raan - el0.raan, 2 * math.pi) / (5 * 86400.0)
+    assert info.raan_dot == pytest.approx(measured, rel=1e-3)      # osculating a: 3e-3 off
 
 
 def test_physical_properties():

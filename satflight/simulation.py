@@ -800,82 +800,84 @@ class Simulation:
 
     def _events(self, t: float, idx: np.ndarray):
         """Log eclipse, station AOS/LOS and close-approach events."""
-        detail = self.n <= EVENT_DETAIL_LIMIT
         free = {int(i) for i in idx}
-        watch = free if detail else self.watch & free
-        jd = self.clock.jd(t)
-        r_all = self.y[:, :3]
-
-        # eclipses
+        watch = free if self.n <= EVENT_DETAIL_LIMIT else self.watch & free
         if watch:
             w = np.array(sorted(watch))
-            frac = shadow_fraction(r_all[w], sun_position(jd))
-            for i, fr in zip(w, frac, strict=True):
-                sat = self.sats[i]
-                if sat.shadow >= 0.5 > fr:
-                    self.log(f"{sat.name} entered Earth's shadow", "eclipse")
-                elif sat.shadow < 0.5 <= fr:
-                    self.log(f"{sat.name} back in sunlight", "eclipse")
-                sat.shadow = float(fr)
+            self._eclipse_events(t, w)
+            if self.stations:
+                self._station_events(t, w)
+        self._approach_events(t, idx)
 
-        # ground stations
-        if self.stations and watch:
-            if self._visible.shape != (len(self.stations), self.n):
-                self._resize_visible()
-            w = np.array(sorted(watch))
-            r_ecef = eci_to_ecef(r_all[w], self.clock.gmst(t))
-            for s, st in enumerate(self.stations):
-                for i, now in zip(w, st.sees(r_ecef), strict=True):
-                    if now and not self._visible[s, i]:
-                        self.log(f"AOS {self.sats[i].name} @ {st.name}", "station")
-                    elif not now and self._visible[s, i]:
-                        self.log(f"LOS {self.sats[i].name} @ {st.name}", "station")
-                    self._visible[s, i] = now
+    def _eclipse_events(self, t: float, w: np.ndarray):
+        """Log satellites ``w`` entering and leaving the Earth's shadow."""
+        frac = shadow_fraction(self.y[:, :3][w], sun_position(self.clock.jd(t)))
+        for i, fr in zip(w, frac, strict=True):
+            sat = self.sats[i]
+            if sat.shadow >= 0.5 > fr:
+                self.log(f"{sat.name} entered Earth's shadow", "eclipse")
+            elif sat.shadow < 0.5 <= fr:
+                self.log(f"{sat.name} back in sunlight", "eclipse")
+            sat.shadow = float(fr)
 
-        # close approaches: every pair in small ensembles, pairs found through a
-        # spatial grid in large ones (vehicles still inside the atmosphere, e.g.
-        # on a launch pad, are ignored)
+    def _station_events(self, t: float, w: np.ndarray):
+        """Log ground stations gaining (AOS) and losing (LOS) sight of satellites ``w``."""
+        if self._visible.shape != (len(self.stations), self.n):
+            self._resize_visible()
+        r_ecef = eci_to_ecef(self.y[:, :3][w], self.clock.gmst(t))
+        for s, st in enumerate(self.stations):
+            for i, now in zip(w, st.sees(r_ecef), strict=True):
+                if now and not self._visible[s, i]:
+                    self.log(f"AOS {self.sats[i].name} @ {st.name}", "station")
+                elif not now and self._visible[s, i]:
+                    self.log(f"LOS {self.sats[i].name} @ {st.name}", "station")
+                self._visible[s, i] = now
+
+    def _approach_events(self, t: float, idx: np.ndarray):
+        """Update :attr:`closest` and log new close approaches among the satellites
+        ``idx`` (vehicles still inside the atmosphere, e.g. on a launch pad, are ignored)."""
+        r_all = self.y[:, :3]
         orbiting = idx[approx_altitude(r_all[idx]) > 100.0]
-        if orbiting.size > 1:
-            r = r_all[orbiting]
-            sweep = self._sweep(t, orbiting)
-            if orbiting.size <= ALL_PAIRS_LIMIT:
-                p, q = np.triu_indices(orbiting.size, 1)
-                d = np.linalg.norm(r[p] - r[q], axis=1)
-            else:
-                # during the step each satellite stayed within `spread` of the
-                # middle of its chord, so a pair that met had middles within the
-                # alert distance plus both spreads
-                if sweep is None:
-                    mid, spread = r, np.zeros(len(r))
-                else:
-                    mid, spread = sweep[4], sweep[5]
-                radius = self.conjunction_km + 2 * float(np.max(spread, initial=0.0))
-                p, q, _ = _near_pairs(mid, max(radius, 1.0))
-                d = np.linalg.norm(r[p] - r[q], axis=1)
-            if any(self.sats[i].family for i in orbiting):
-                # a payload and the stages that carried it drift apart slowly
-                fam = np.array([self.sats[i].family or self.sats[i].name for i in orbiting], object)
-                d = np.where(fam[p] == fam[q], np.inf, d)
-            k = int(np.argmin(d)) if d.size else -1
-            if k >= 0 and math.isfinite(d[k]):
-                self.closest = (float(d[k]), int(orbiting[p[k]]), int(orbiting[q[k]]))
-            else:
-                self.closest = (math.inf, -1, -1)
-            now = {}
-            for a, b, dist, tca in self._approaches(t, orbiting, p, q, d, sweep):
-                now[(a, b)] = (dist, tca)
-            for p, q in sorted(set(now) - self._close_pairs, key=lambda pq: now[pq][1]):
-                dist, tca = now[(p, q)]
-                self.log(f"Close approach: {self.sats[p].name} - {self.sats[q].name} "
-                         f"{dist:.2f} km", "alert", tca)
-            self._close_pairs = set(now)
-            mask = np.zeros(self.n, dtype=bool)
-            mask[orbiting] = True
-            self._last_sample = (t, self.y.copy(), mask)
-        else:
+        if orbiting.size < 2:
             self.closest = (math.inf, -1, -1)
             self._last_sample = None
+            return
+        r = r_all[orbiting]
+        sweep = self._sweep(t, orbiting)
+        p, q = self._candidate_pairs(r, sweep)
+        d = np.linalg.norm(r[p] - r[q], axis=1)
+        if any(self.sats[i].family for i in orbiting):
+            # a payload and the stages that carried it drift apart slowly
+            fam = np.array([self.sats[i].family or self.sats[i].name for i in orbiting], object)
+            d = np.where(fam[p] == fam[q], np.inf, d)
+        k = int(np.argmin(d)) if d.size else -1
+        if k >= 0 and math.isfinite(d[k]):
+            self.closest = (float(d[k]), int(orbiting[p[k]]), int(orbiting[q[k]]))
+        else:
+            self.closest = (math.inf, -1, -1)
+        now = {(a, b): (dist, tca)
+               for a, b, dist, tca in self._approaches(t, orbiting, p, q, d, sweep)}
+        for a, b in sorted(set(now) - self._close_pairs, key=lambda ab: now[ab][1]):
+            dist, tca = now[(a, b)]
+            self.log(f"Close approach: {self.sats[a].name} - {self.sats[b].name} "
+                     f"{dist:.2f} km", "alert", tca)
+        self._close_pairs = set(now)
+        mask = np.zeros(self.n, dtype=bool)
+        mask[orbiting] = True
+        self._last_sample = (t, self.y.copy(), mask)
+
+    def _candidate_pairs(self, r: np.ndarray, sweep):
+        """Index pairs ``(p, q)`` of rows of ``r`` that may have come close: every
+        pair in small ensembles, pairs found through a spatial grid in large ones."""
+        if len(r) <= ALL_PAIRS_LIMIT:
+            return np.triu_indices(len(r), 1)
+        # during the step each satellite stayed within `spread` of the middle of
+        # its chord, so a pair that met had middles within the alert distance plus
+        # both spreads
+        mid, spread = (r, np.zeros(len(r))) if sweep is None else (sweep[4], sweep[5])
+        radius = self.conjunction_km + 2 * float(np.max(spread, initial=0.0))
+        p, q, _ = _near_pairs(mid, max(radius, 1.0))
+        return p, q
 
     def _sweep(self, t: float, orbiting: np.ndarray):
         """``(t0, h, (y0, y1), reach, mid, spread)`` for the step that just

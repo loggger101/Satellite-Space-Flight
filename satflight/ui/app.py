@@ -358,34 +358,14 @@ class App:
 
     # --- input -------------------------------------------------------------------------------
     def handle(self, ev):
-        """Route an event: dialogs first, then panels, then the 3-D view."""
+        """Route an event: window events, then dialogs, panels and the 3-D view."""
         self._last_input = time.monotonic()
-        if ev.type == pygame.QUIT:
-            self.running = False
-            return
-        if ev.type == pygame.WINDOWLEAVE:
-            self._clear_hover()
-            self.mouse = None
-            return
-        if ev.type == pygame.DROPFILE:
-            self.open_file(ev.file)
-            return
-        if ev.type in (pygame.WINDOWMINIMIZED, pygame.WINDOWHIDDEN):
-            self.visible = False
-            return
-        if ev.type in (pygame.WINDOWRESTORED, pygame.WINDOWMAXIMIZED, pygame.WINDOWSHOWN):
-            self.visible = True
+        if self._window_event(ev):
             return
         if ev.type == pygame.MOUSEMOTION:
             self.mouse, self._tip_hidden = ev.pos, any(ev.buttons)
         elif ev.type == pygame.MOUSEBUTTONDOWN:
             self.mouse, self._tip_hidden = ev.pos, True
-        if ev.type == pygame.VIDEORESIZE:
-            if self.fullscreen:                 # the screen's size, not the user's: keep it
-                self._resized()
-            else:
-                self._set_mode((max(px(MIN_SIZE[0]), ev.w), max(px(MIN_SIZE[1]), ev.h)))
-            return
         if self.dialogs:
             self.dialogs[-1].handle(ev)
             return
@@ -394,16 +374,46 @@ class App:
                 and key.collidepoint(ev.pos)):
             self.opts.legend = not self.opts.legend
             return
-        if self.opts.panels:
-            if self.topbar.handle(ev):
-                return
-            if (self.opts.map and ev.type == pygame.MOUSEBUTTONDOWN
-                    and self._map_rect().collidepoint(ev.pos)):
-                return
-            if self.opts.plot and self.plot.handle(ev):
-                return
-            if self.satlist.handle(ev) or self.info.handle(ev):
-                return
+        if self.opts.panels and self._panels_take(ev):
+            return
+        self._view_input(ev)
+
+    def _window_event(self, ev) -> bool:
+        """Handle quitting, dropped files, resizing and the window's visibility;
+        True if ``ev`` was one of those."""
+        if ev.type == pygame.QUIT:
+            self.running = False
+        elif ev.type == pygame.WINDOWLEAVE:
+            self._clear_hover()
+            self.mouse = None
+        elif ev.type == pygame.DROPFILE:
+            self.open_file(ev.file)
+        elif ev.type in (pygame.WINDOWMINIMIZED, pygame.WINDOWHIDDEN):
+            self.visible = False
+        elif ev.type in (pygame.WINDOWRESTORED, pygame.WINDOWMAXIMIZED, pygame.WINDOWSHOWN):
+            self.visible = True
+        elif ev.type == pygame.VIDEORESIZE:
+            if self.fullscreen:                 # the screen's size, not the user's: keep it
+                self._resized()
+            else:
+                self._set_mode((max(px(MIN_SIZE[0]), ev.w), max(px(MIN_SIZE[1]), ev.h)))
+        else:
+            return False
+        return True
+
+    def _panels_take(self, ev) -> bool:
+        """Offer ``ev`` to the panels; True if one of them used it."""
+        if self.topbar.handle(ev):
+            return True
+        if (self.opts.map and ev.type == pygame.MOUSEBUTTONDOWN
+                and self._map_rect().collidepoint(ev.pos)):
+            return True                         # clicks on the map go no further
+        if self.opts.plot and self.plot.handle(ev):
+            return True
+        return bool(self.satlist.handle(ev) or self.info.handle(ev))
+
+    def _view_input(self, ev):
+        """Keys, dragging (turn the view, click to select) and scrolling (zoom)."""
         if ev.type == pygame.KEYDOWN:
             self._key(ev)
         elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button in (1, 3):

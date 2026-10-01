@@ -33,6 +33,7 @@ APSIS = (225, 230, 245)
 EQUATOR = (100, 160, 230)
 EARTH_DAY = (58, 118, 196)
 EARTH_NIGHT = (24, 40, 74)
+EARTH_EDGE = (120, 170, 230)
 H_VEC = (150, 240, 150)
 BOX = (8, 12, 24, 200)
 LABEL_BACK = (4, 7, 16, 200)      # behind diagram labels
@@ -179,7 +180,6 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     el = info.el
     _box(surf, rect, fonts, "ORBITAL PLANE  (face-on)", f"e {el.e:.4f}")
     P, Q = perifocal_axes(el.i, el.raan, el.argp)
-    Wn = np.cross(P, Q)
     e, p = float(el.e), float(el.p)
     if info.closed:
         nu = np.linspace(0.0, 2 * np.pi, 241)
@@ -202,38 +202,16 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
 
     clip = surf.get_clip()
     surf.set_clip(rect.inflate(-px(2), -px(2)).clip(clip))
-    s_hat = np.asarray(r_sun) / np.linalg.norm(r_sun)
-    sp = np.array([s_hat @ P, s_hat @ Q])
-    sin_b = float(s_hat @ Wn)
-    spn = float(np.linalg.norm(sp))
-    u_hat = sp / spn if spn > 1e-9 else np.array([1.0, 0.0])
-    w_hat = np.array([-u_hat[1], u_hat[0]])
-
-    # Earth's (cylindrical) shadow where it cuts the plane: a half-ellipse of
-    # semi-axes R/|sin beta| (anti-Sun) and R
+    sun = _sun_in_plane(r_sun, P, Q)
+    u_hat, _, _, spn = sun
     if spn > 0.02:
-        span = (xmax - xmin + ymax - ymin) * 2
-        A = min(R_EARTH / max(abs(sin_b), 1e-9), span)
-        t = np.linspace(-np.pi / 2, np.pi / 2, 60)
-        uu, ww = -A * np.cos(t), R_EARTH * np.sin(t)
-        pts = [S(*(a * u_hat + b * w_hat)) for a, b in zip(uu, ww, strict=True)]
-        _alpha_poly(surf, (0, 0, 12), 150, pts, rect)
+        _draw_plane_shadow(surf, rect, S, sun, (xmax - xmin + ymax - ymin) * 2)
 
     # orbit interior, then the Earth with its lit half toward the Sun
     outline = [S(a, b) for a, b in zip(x, y, strict=True)]
     _alpha_poly(surf, color, 38, outline + ([S(0, 0)] if not info.closed else []), rect)
     ecen = S(0, 0)
-    er = max(px(3), int(R_EARTH * scale))
-    pygame.draw.circle(surf, EARTH_NIGHT, ecen, er)
-    if spn > 0.02:
-        t = np.linspace(-np.pi / 2, np.pi / 2, 40)
-        day = [S(*(R_EARTH * (math.cos(a) * u_hat + math.sin(a) * w_hat))) for a in t]
-        term = [S(*(-R_EARTH * sin_b * math.cos(a) * u_hat + R_EARTH * math.sin(a) * w_hat))
-                for a in t[::-1]]
-        pygame.draw.polygon(surf, EARTH_DAY, day + term)
-    elif sin_b > 0:
-        pygame.draw.circle(surf, EARTH_DAY, ecen, er)
-    pygame.draw.circle(surf, (120, 170, 230), ecen, er, 1)
+    _draw_plane_earth(surf, S, max(px(3), int(R_EARTH * scale)), sun)
 
     # orbit colored by illumination
     pos3 = x[:, None] * P + y[:, None] * Q
@@ -245,29 +223,74 @@ def draw_orbit_plane(surf, rect, info: OrbitInfo, color, r_sun, fonts):
         pygame.draw.line(surf, c, pts[k], pts[k + 1], px(2))
 
     labels = _plane_apsides_nodes(surf, info, S)
-
-    # Sun direction, radius vector, satellite and velocity
-    if spn > 0.1:
+    if spn > 0.1:                               # the Sun's direction, at the edge
         far = np.array(ecen) + np.array([u_hat[0], -u_hat[1]]) * 1e4
         edge = _ray_to_rect(ecen, far, area)
         pygame.draw.circle(surf, SUNLIT, edge, px(5))
         labels.insert(0, ("Sun", (edge[0], edge[1] - px(12)), SUNLIT, "center"))
-    nu0 = float(el.nu)
-    r0 = p / (1.0 + e * math.cos(nu0))
-    sat = S(r0 * math.cos(nu0), r0 * math.sin(nu0))
-    pygame.draw.line(surf, theme.dim(color, 0.7), ecen, sat)
-    vx, vy = -math.sin(nu0), e + math.cos(nu0)
-    vn = math.hypot(vx, vy) or 1.0
-    arm = px(26)
-    _arrow(surf, (255, 255, 255), sat, (sat[0] + arm * vx / vn, sat[1] - arm * vy / vn), 6, 2)
-    pygame.draw.circle(surf, color, sat, px(5))
-    pygame.draw.circle(surf, (255, 255, 255), sat, px(8), 1)
+    sat = _draw_plane_satellite(surf, S, el, color)
     # labels last, so no line crosses them, and never over the satellite
     placed = [pygame.Rect(0, 0, px(18), px(18)).move(sat[0] - px(9), sat[1] - px(9))]
     for text, pos, col, anchor in labels:
         _label(surf, fonts, text, pos, col, anchor, rect.inflate(-px(6), -px(6)), placed)
     surf.set_clip(clip)
     _legend(surf, fonts, rect, color, dark)
+
+
+def _sun_in_plane(r_sun, P, Q):
+    """The Sun seen in the orbit plane (perifocal axes ``P``, ``Q``):
+    ``(u_hat, w_hat, sin_b, spn)``, the 2-D unit vector toward the Sun's projection
+    (``P`` when the Sun is over the orbit's pole), the one 90 deg on from it, the
+    sine of the beta angle and the projection's length."""
+    s_hat = np.asarray(r_sun) / np.linalg.norm(r_sun)
+    sp = np.array([s_hat @ P, s_hat @ Q])
+    sin_b = float(s_hat @ np.cross(P, Q))
+    spn = float(np.linalg.norm(sp))
+    u_hat = sp / spn if spn > 1e-9 else np.array([1.0, 0.0])
+    return u_hat, np.array([-u_hat[1], u_hat[0]]), sin_b, spn
+
+
+def _draw_plane_shadow(surf, rect, S, sun, span):
+    """The Earth's (cylindrical) shadow where it cuts the plane: a half-ellipse of
+    semi-axes R/|sin beta| (anti-Sun, at most ``span``) and R."""
+    u_hat, w_hat, sin_b, _ = sun
+    A = min(R_EARTH / max(abs(sin_b), 1e-9), span)
+    t = np.linspace(-np.pi / 2, np.pi / 2, 60)
+    uu, ww = -A * np.cos(t), R_EARTH * np.sin(t)
+    pts = [S(*(a * u_hat + b * w_hat)) for a, b in zip(uu, ww, strict=True)]
+    _alpha_poly(surf, (0, 0, 12), 150, pts, rect)
+
+
+def _draw_plane_earth(surf, S, er, sun):
+    """The Earth, ``er`` px in radius, with the half facing the Sun lit (all of it
+    when the Sun is above the orbit's north pole)."""
+    u_hat, w_hat, sin_b, spn = sun
+    ecen = S(0, 0)
+    pygame.draw.circle(surf, EARTH_NIGHT, ecen, er)
+    if spn > 0.02:
+        t = np.linspace(-np.pi / 2, np.pi / 2, 40)
+        day = [S(*(R_EARTH * (math.cos(a) * u_hat + math.sin(a) * w_hat))) for a in t]
+        term = [S(*(-R_EARTH * sin_b * math.cos(a) * u_hat + R_EARTH * math.sin(a) * w_hat))
+                for a in t[::-1]]
+        pygame.draw.polygon(surf, EARTH_DAY, day + term)
+    elif sin_b > 0:
+        pygame.draw.circle(surf, EARTH_DAY, ecen, er)
+    pygame.draw.circle(surf, EARTH_EDGE, ecen, er, 1)
+
+
+def _draw_plane_satellite(surf, S, el, color):
+    """The satellite, its radius vector and its velocity arrow; returns its screen point."""
+    e, p, nu0 = float(el.e), float(el.p), float(el.nu)
+    r0 = p / (1.0 + e * math.cos(nu0))
+    sat = S(r0 * math.cos(nu0), r0 * math.sin(nu0))
+    pygame.draw.line(surf, theme.dim(color, 0.7), S(0, 0), sat)
+    vx, vy = -math.sin(nu0), e + math.cos(nu0)
+    vn = math.hypot(vx, vy) or 1.0
+    arm = px(26)
+    _arrow(surf, (255, 255, 255), sat, (sat[0] + arm * vx / vn, sat[1] - arm * vy / vn), 6, 2)
+    pygame.draw.circle(surf, color, sat, px(5))
+    pygame.draw.circle(surf, (255, 255, 255), sat, px(8), 1)
+    return sat
 
 
 def _plane_apsides_nodes(surf, info: OrbitInfo, S):
@@ -353,7 +376,7 @@ def draw_inclination(surf, rect, info: OrbitInfo, color, fonts):
     L = rect.w * 0.42
     er = px(15)
     pygame.draw.circle(surf, EARTH_NIGHT, c, er)
-    pygame.draw.circle(surf, (120, 170, 230), c, er, 1)
+    pygame.draw.circle(surf, EARTH_EDGE, c, er, 1)
     _dashed(surf, EQUATOR, (c[0] - L, c[1]), (c[0] + L, c[1]))
     _arrow(surf, theme.DIM, (c[0], c[1] - er), (c[0], c[1] - er - px(16)), 4)
     i = float(el.i)
@@ -408,7 +431,7 @@ def draw_north_view(surf, rect, info: OrbitInfo, color, r_sun, fonts):
     tt = np.linspace(sa - np.pi / 2, sa + np.pi / 2, 30)
     pygame.draw.polygon(surf, EARTH_DAY,
                         [(c[0] + er * math.cos(a), c[1] - er * math.sin(a)) for a in tt])
-    pygame.draw.circle(surf, (120, 170, 230), c, er, 1)
+    pygame.draw.circle(surf, EARTH_EDGE, c, er, 1)
     scr = np.stack([c[0] + k * pts[:, 0], c[1] - k * pts[:, 1]], 1)
     pygame.draw.lines(surf, color, False, scr.tolist(), px(2))
     # vernal equinox and Sun directions, line of nodes and RAAN

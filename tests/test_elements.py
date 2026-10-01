@@ -76,7 +76,7 @@ def test_kepler_round_trip_and_invariants(a, e):
     r0, v0 = coe2rv(a, e, D(40), D(20), D(60), D(5))
     for dt in (-5000.0, 1234.5, 86400.0):
         r, v = kepler_propagate(r0, v0, dt)
-        rb, vb = kepler_propagate(r, v, -dt)
+        rb, _ = kepler_propagate(r, v, -dt)
         assert np.allclose(rb, r0, atol=1e-5)
         energy0 = 0.5 * np.dot(v0, v0) - MU_EARTH / np.linalg.norm(r0)
         energy = 0.5 * np.dot(v, v) - MU_EARTH / np.linalg.norm(r)

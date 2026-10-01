@@ -61,8 +61,8 @@ def fit_window(scale=None):
     return scale, (w, h)
 
 
-def main(argv=None):
-    """Parse the command line, build the :class:`App` and run it."""
+def _parser() -> argparse.ArgumentParser:
+    """The command line of ``python -m satflight``."""
     ap = argparse.ArgumentParser(prog="satflight", description="Satellite Space Flight simulator")
     ap.add_argument("scenario", nargs="?", help="scenario JSON (default: scenarios/default.json)")
     ap.add_argument("--size", help="window size WxH in screen pixels (default: 1600x900 "
@@ -89,31 +89,14 @@ def main(argv=None):
     ap.add_argument("--distance", type=float, help="camera distance (km)")
     ap.add_argument("--yaw", type=float, help="camera yaw (deg)")
     ap.add_argument("--pitch", type=float, help="camera pitch (deg)")
-    args = ap.parse_args(argv)
+    return ap
 
-    if args.headless:
-        os.environ["SDL_VIDEODRIVER"] = "dummy"     # must precede importing pygame
-        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
-    else:
-        # the screen's real pixels, not a 100 % image Windows stretches (and blurs)
-        os.environ.setdefault("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2")
-    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
+def _set_up(app, args):
+    """Apply the options that act on a built :class:`App`: warp, head start,
+    selection, frame, panels and camera."""
     from .batch import parse_duration
-    from .ui.app import App
 
-    if args.headless:
-        scale = args.ui_scale or 1.0
-        w, h = window_size((1 << 16, 1 << 16), scale=scale)
-    else:
-        scale, (w, h) = fit_window(args.ui_scale)
-    if args.size:
-        w, h = (int(x) for x in args.size.lower().split("x"))
-    welcome = args.welcome
-    if welcome is None:
-        welcome = not (args.scenario or args.headless)
-    app = App(Path(args.scenario) if args.scenario else None, size=(w, h), welcome=welcome,
-              fullscreen=args.fullscreen, ui_scale=scale)
     if args.warp:
         app.warp = args.warp
     adv = parse_duration(args.advance)
@@ -138,6 +121,34 @@ def main(argv=None):
         app.toggle_follow()
         if args.distance:                           # following resets the distance
             app.camera.distance = args.distance
+
+
+def main(argv=None):
+    """Parse the command line, build the :class:`App` and run it."""
+    args = _parser().parse_args(argv)
+    if args.headless:
+        os.environ["SDL_VIDEODRIVER"] = "dummy"     # must precede importing pygame
+        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    else:
+        # the screen's real pixels, not a 100 % image Windows stretches (and blurs)
+        os.environ.setdefault("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2")
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+
+    from .ui.app import App
+
+    if args.headless:
+        scale = args.ui_scale or 1.0
+        w, h = window_size((1 << 16, 1 << 16), scale=scale)
+    else:
+        scale, (w, h) = fit_window(args.ui_scale)
+    if args.size:
+        w, h = (int(x) for x in args.size.lower().split("x"))
+    welcome = args.welcome
+    if welcome is None:
+        welcome = not (args.scenario or args.headless)
+    app = App(Path(args.scenario) if args.scenario else None, size=(w, h), welcome=welcome,
+              fullscreen=args.fullscreen, ui_scale=scale)
+    _set_up(app, args)
     app.run(max_frames=args.frames, screenshot=args.screenshot)
 
 

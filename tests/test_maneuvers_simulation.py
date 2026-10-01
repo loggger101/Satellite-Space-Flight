@@ -14,7 +14,7 @@ from satflight.forces import ForceModel
 from satflight.maneuvers import Maneuver, bielliptic, hohmann, lambert, sun_synchronous_inclination
 from satflight.scenario import ConstellationSpec, SatSpec, Scenario
 from satflight.simulation import Simulation
-from satflight.tle import checksum, parse_tle
+from satflight.tle import checksum, parse_tle, split_tles
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -207,3 +207,11 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     sim.advance(6 * 3600)
     ref.advance(6 * 3600)
     assert np.array_equal(sim.y, ref.y)
+
+
+def test_split_tles_reads_two_and_three_line_files():
+    two = "\n".join(ISS_TLE)
+    text = f"ISS (ZARYA)\n{two}\n\n0 OTHER\n{two}\n{two}\n1 broken\n2 broken\n"
+    tles = split_tles(text)
+    assert [t.name for t in tles] == ["ISS (ZARYA)", "OTHER", "SAT 25544"]
+    assert all(t.checksum_ok for t in tles)

@@ -30,10 +30,12 @@ from ..launch import (
     LaunchSpec,
     Stage,
     Vehicle,
+    plan_launch,
     vehicle_preset,
 )
 from ..simulation import ACTIVE
 from . import glossary, theme, tips
+from .background import Latest
 from .groundtrack import GroundTrackView
 from .orbitpanel import countdown, draw_section, num
 from .theme import px
@@ -81,7 +83,11 @@ def _wrap(font, text: str, width: int) -> list[str]:
 
 class LaunchPreview:
     """Right-hand panel of the Launch dialog: the pad map, the planned altitude
-    profile and a text summary, re-planned shortly after the form stops changing."""
+    profile and a text summary, re-planned shortly after the form stops changing.
+
+    A plan flies ~25 ascents (~0.3 s), so re-plans while typing run on a
+    background thread (:class:`~satflight.ui.background.Latest`) and the last
+    plan stays on show meanwhile; :meth:`refresh` plans at once, for OK."""
 
     width = 470                   # design px
     min_height = 600
@@ -98,14 +104,17 @@ class LaunchPreview:
         self.dirty_at = None
         self.map_rect = pygame.Rect(0, 0, 0, 0)
         self._orbit_track = None
+        self._worker = Latest()
+        self._pending = None          # key of the plan being flown in the background
 
     def mark_dirty(self):
         """Schedule a re-plan ``DEBOUNCE`` s from now."""
         self.dirty_at = time.monotonic()
 
     def refresh(self, dlg):
-        """Build the spec from the form and fly it (cached per spec)."""
+        """Build the spec from the form and fly it now (cached per spec)."""
         self.dirty_at = None
+        self._pending = None          # a background plan still on its way is now stale
         try:
             spec = build_spec(dlg, self.vehicle)
             key = json.dumps(spec.to_dict(), sort_keys=True, default=str)
@@ -117,6 +126,44 @@ class LaunchPreview:
             self.error = ""
         except Exception as exc:     # keep the dialog alive on any bad input
             self.plan, self.key, self.error = None, None, str(exc)
+
+    def request(self, dlg):
+        """Like :meth:`refresh`, but fly the plan in the background. What it needs
+        from the simulation (time, Earth model, a target's plane) is read here."""
+        self.dirty_at = None
+        try:
+            spec = build_spec(dlg, self.vehicle)
+            key = json.dumps(spec.to_dict(), sort_keys=True, default=str)
+            if key in (self.key, self._pending):
+                self.spec, self.error = spec, ("" if key == self.key else self.error)
+                return
+            sim = self.app.sim
+            env, t_now = sim.ascent_env(), sim.t
+            plane = sim.plane_of(spec.target) if spec.target else None
+        except Exception as exc:
+            self.plan, self.key, self._pending, self.error = None, None, None, str(exc)
+            return
+        self._pending = key
+        self._worker.submit(key, lambda: (spec, plan_launch(spec, env, t_now,
+                                                            lambda name: plane)))
+
+    def collect(self):
+        """Take a finished background plan if it is still the one wanted."""
+        done = self._worker.poll()
+        if done is None or done[0] != self._pending:
+            return
+        key, result, error = done
+        self._pending = None
+        if error is not None:
+            self.plan, self.key, self.error = None, None, str(error)
+        else:
+            self.spec, self.plan = result
+            self.key, self.error, self._orbit_track = key, "", None
+
+    @property
+    def updating(self) -> bool:
+        """True while a newer plan is being flown."""
+        return self._pending is not None
 
     # --- input ---
     def handle(self, ev, dlg) -> bool:
@@ -138,8 +185,9 @@ class LaunchPreview:
     def draw(self, surf, rect, dlg):
         """Re-plan if the form settled since the last change, then draw the map,
         profile and summary into ``rect`` (text that does not fit is cut)."""
+        self.collect()
         if self.dirty_at is not None and time.monotonic() - self.dirty_at > self.DEBOUNCE:
-            self.refresh(dlg)
+            self.request(dlg)
         fonts = self.app.fonts
         x, y, w = rect.x + px(6), rect.y, rect.w - px(18)
         fonts.draw(surf, "LAUNCH SITE - click the map to launch from anywhere", (x, y), theme.FAINT,
@@ -151,6 +199,7 @@ class LaunchPreview:
         tips.add(self.map_rect, "Click anywhere to move the pad there. The red triangle is the "
                                 "pad, gray dots the known spaceports, orange the planned "
                                 "climb and blue the first orbit after separation.")
+        tips.hot(self.map_rect)
         self._draw_map(surf, self.map_rect, dlg)
         y += mh + px(8)
         ph = max(px(90), min(px(150), rect.bottom - y - px(130)))
@@ -239,6 +288,8 @@ class LaunchPreview:
         if self.plan is None:
             out.append(("planning...", theme.FAINT))
             return out
+        if self.updating:
+            out.append(("updating the preview for the new settings...", theme.FAINT))
         p, f, sim = self.plan, self.plan.flight, self.app.sim
         wait = p.res.t0 - sim.t
         at = sim.clock.datetime(p.res.t0).strftime("%H:%M:%S")

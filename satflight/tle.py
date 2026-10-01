@@ -9,6 +9,7 @@ osculating ones - adequate for visualization, a few km off in position.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -89,6 +90,23 @@ class TLE:
         if dt:
             r, v = kepler_propagate(r, v, dt)
         return np.asarray(r), np.asarray(v)
+
+
+def split_tles(text: str) -> list[TLE]:
+    """Every TLE in ``text`` (a Celestrak-style file): pairs of lines starting
+    with "1 " and "2 ", each named by the line just before it if that is not
+    part of a pair. Pairs that do not parse are skipped."""
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    out, prev, k = [], "", 0
+    while k < len(lines):
+        ln = lines[k]
+        if ln.startswith("1 ") and k + 1 < len(lines) and lines[k + 1].startswith("2 "):
+            with contextlib.suppress(ValueError):
+                out.append(parse_tle(ln + "\n" + lines[k + 1], prev.lstrip("0 ").strip()))
+            prev, k = "", k + 2
+            continue
+        prev, k = ln.strip(), k + 1
+    return out
 
 
 def parse_tle(text: str, name: str = "") -> TLE:

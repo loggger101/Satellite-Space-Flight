@@ -180,6 +180,7 @@ what it does, with its keyboard shortcut.
 | `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+R`, `Ctrl+Q` | start menu, scenarios, save snapshot, reset, quit |
 | `Ctrl+E`, `Del`, `F12`, `H` / `F1` | edit / delete satellite, screenshot, help (`Esc` closes it) |
 | `F11` or `Alt+Enter` | fullscreen on / off (`Esc` also leaves it; `--fullscreen` starts in it) |
+| drop a file on the window | a scenario `.json` opens; a TLE file (2- or 3-line, e.g. from Celestrak) adds its satellites |
 
 The window and fullscreen use the screen's native resolution. On Windows with
 display scaling (125 %, 150 %, ...) the panels and text are drawn that much
@@ -299,7 +300,8 @@ satflight/            physics engine (numpy only)
     groundtrack.py    2-D ground-track map
     plots.py          telemetry time-history plot
     widgets.py        buttons, text fields, choices and the form dialog
-    tips.py           hover tips: parts register what they are as they draw
+    tips.py           hover tips and mouse cursors: parts register what they are as they draw
+    background.py     slow work (launch preview planning) off the UI thread, newest request only
     glossary.py       plain-language explanations of every readout
     theme.py          colors, fonts and drawing helpers
 scenarios/            example scenarios

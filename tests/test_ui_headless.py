@@ -2,6 +2,7 @@
 dialogs, keyboard shortcuts and panels."""
 
 import os
+import time
 from pathlib import Path
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
@@ -449,6 +450,38 @@ def test_launch_dialog_map_pick_preview_and_flight(app):
     frame(app, 2, dt=0.0)
 
 
+def _settle(prev, timeout=20.0):
+    """Wait for the preview's background plan."""
+    end = time.monotonic() + timeout
+    while prev.updating and time.monotonic() < end:
+        time.sleep(0.01)
+        prev.collect()
+
+
+def test_launch_preview_replans_in_the_background(app):
+    app.open("launch")
+    dlg = app.dialogs[-1]
+    prev = dlg.preview
+    assert prev.plan.ok and not prev.updating
+    fill(dlg, "inc", 40)
+    dlg.changed("inc")
+    prev.dirty_at -= 1.0                          # the form has settled
+    frame(app, dt=0.0)
+    # the frame came back before the ~0.3 s flight was done: it is not in the frame
+    assert prev.updating and "updating" in " ".join(t for t, _ in prev._lines())
+    _settle(prev)
+    assert prev.plan.flight.insertion["i"] == pytest.approx(40, abs=0.05)
+    # a change made while a plan is flown replaces it; the stale result is dropped
+    fill(dlg, "inc", 45)
+    prev.request(dlg)
+    fill(dlg, "inc", 50)
+    prev.request(dlg)
+    _settle(prev)
+    assert prev.plan.flight.insertion["i"] == pytest.approx(50, abs=0.05)
+    frame(app, dt=0.0)
+    assert not prev.updating
+
+
 def test_launch_dialog_reports_impossible_launches(app):
     app.open("launch")
     dlg = app.dialogs[-1]
@@ -841,3 +874,75 @@ def test_frame_rate_does_not_change_the_physics(app):
     app.reset()
     frame(app, 16, 1 / 16)
     assert app.sim.t == t and np.array_equal(app.sim.y, y)
+
+
+# --- window niceties -----------------------------------------------------------------------
+
+def test_cursor_shows_what_a_click_does(app):
+    frame(app, dt=0.0)
+    button = app.topbar.buttons[0].rect
+    hover(app, button.center)
+    frame(app, dt=0.0)
+    assert app.cursor == "hand"
+    view = app.view_rect()
+    empty = (view.x + 40, view.bottom - 40)                  # a corner of space
+    hover(app, empty)
+    frame(app, dt=0.0)
+    assert app.cursor is None
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=empty))
+    frame(app, dt=0.0)
+    assert app.cursor == "move"                              # dragging the view
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=empty))
+    app.open("add")
+    frame(app, dt=0.0)
+    dlg = app.dialogs[-1]
+    field = next(w for w in dlg.widgets.values() if isinstance(w, TextField))
+    hover(app, field.rect.center)
+    frame(app, dt=0.0)
+    assert app.cursor == "text"
+    hover(app, button.center)                                # the shade hides the top bar
+    frame(app, dt=0.0)
+    assert app.cursor is None
+
+
+ISS_3LE = """ISS (ZARYA)
+1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927
+2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537
+"""
+
+
+def test_dropping_files_on_the_window(app, tmp_path):
+    n = app.sim.n
+    tles = tmp_path / "stations.txt"
+    tles.write_text("junk header\n" + ISS_3LE + ISS_3LE.replace("ISS (ZARYA)", "0 TWIN"))
+    app.handle(pygame.event.Event(pygame.DROPFILE, file=str(tles)))
+    assert app.sim.n == n + 2
+    assert [s.name for s in app.sim.sats[-2:]] == ["ISS (ZARYA)", "TWIN"]
+    assert any("Added 2 satellites" in m for _, m in app.toasts)
+    bad = tmp_path / "notes.txt"
+    bad.write_text("nothing orbital here")
+    app.handle(pygame.event.Event(pygame.DROPFILE, file=str(bad)))
+    assert app.sim.n == n + 2 and any("Could not open notes.txt" in m for _, m in app.toasts)
+    app.handle(pygame.event.Event(pygame.DROPFILE,
+                                  file=str(app.scenario_dir / "hohmann_to_geo.json")))
+    assert app.scenario_path.name == "hohmann_to_geo.json"
+    frame(app, dt=0.0)
+
+
+def test_a_minimized_window_keeps_time_but_does_not_draw(app, monkeypatch):
+    pygame.event.clear()                      # the window's own "shown" from startup
+    app.handle(pygame.event.Event(pygame.WINDOWMINIMIZED))
+    assert not app.visible
+    drawn = []
+    monkeypatch.setattr(app, "draw", lambda: drawn.append(1))
+    t0 = app.sim.t
+    app.run(max_frames=3)
+    assert not drawn and app.sim.t > t0
+    app.handle(pygame.event.Event(pygame.WINDOWRESTORED))
+    assert app.visible
+
+
+def test_window_icon():
+    icon = theme.app_icon()
+    assert icon.get_size() == (64, 64) and icon.get_at((0, 0)).a == 0
+    assert icon.get_at((32, 32)).a == 255

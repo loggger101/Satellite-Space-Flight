@@ -305,6 +305,7 @@ class StartScreen:
         fonts = self.app.fonts
         path, title, blurb, tag = self.cards[k]
         rect, focused = self.card_rects[k], k == self.focus
+        tips.hot(rect)
         tips.add(rect, f"{title}{f' ({tag})' if tag else ''}: "
                        f"{self.descriptions.get(path) or blurb}\nClick (or Enter) to start it.")
         bg = theme.mix(theme.FIELD, theme.ACCENT, 0.28) if focused else theme.FIELD

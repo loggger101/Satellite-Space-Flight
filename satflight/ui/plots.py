@@ -79,6 +79,7 @@ class PlotView:
         """The selected satellite's metric over the history buffer up to now, with a value grid."""
         sim, fonts = app.sim, app.fonts
         self.rect = rect
+        tips.hot(rect)
         theme.panel(surf, rect)
         name, unit, fn = METRICS[self.metric]
         tips.add(rect, f"{name} of the selected satellite over its recent history, now at "

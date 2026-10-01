@@ -13,8 +13,9 @@ import pygame
 
 from ..constants import R_EARTH
 from ..orbitinfo import orbit_info
-from ..scenario import Scenario
+from ..scenario import Scenario, orbit_state, palette_color
 from ..simulation import ACTIVE, Simulation
+from ..tle import split_tles
 from . import dialogs, launchui, theme, tips, welcome
 from .camera import Camera
 from .groundtrack import GroundTrackView
@@ -69,6 +70,10 @@ WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
 # simulation runs slower than the chosen warp.
 MAX_FRAME_DT = 0.25
 MIN_SIZE = (900, 600)      # smallest window the panels are laid out for (design px)
+IDLE_FPS = 10              # frame rate while the window is minimized (nothing is drawn)
+MAX_DROPPED = 3000         # most satellites a dropped TLE file adds
+CURSORS = {"hand": pygame.SYSTEM_CURSOR_HAND, "text": pygame.SYSTEM_CURSOR_IBEAM,
+           "move": pygame.SYSTEM_CURSOR_SIZEALL, None: pygame.SYSTEM_CURSOR_ARROW}
 
 
 class App:
@@ -87,6 +92,7 @@ class App:
         self.root = Path(root)
         self.scenario_dir = self.root / "scenarios"
         self.user_scenario_dir = self.scenario_dir / "user"
+        pygame.display.set_icon(theme.app_icon())
         self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
         pygame.display.set_caption("Satellite Space Flight")
         pygame.key.set_repeat(350, 35)
@@ -120,6 +126,9 @@ class App:
         self.tip_rect = None         # where this frame's hover tip went (tests read it)
         self.fullscreen = False
         self._windowed = (size, None)   # window size and position to return to from fullscreen
+        self.visible = True          # False while minimized: the loop idles and draws nothing
+        self.cursor = None           # mouse cursor kind shown (see tips.hot), None the arrow
+        self._cursor_ok = True       # False where SDL has no system cursors (dummy driver)
         self.started = False    # a scenario was chosen: the start menu can go back to it
         if welcome and scenario is None:
             self.load_scenario(Scenario(name="Empty"))    # a placeholder the menu replaces
@@ -158,6 +167,30 @@ class App:
         self.camera.target = np.zeros(3)
         self.started = True
         self.toast(f"Loaded '{sc.name}'")
+
+    def open_file(self, path):
+        """Open a file dropped on the window: a scenario (``.json``) replaces the
+        run; any other file is read for TLEs, whose satellites are added."""
+        path = Path(path)
+        try:
+            if path.suffix.lower() == ".json":
+                self.load_scenario(path)
+                return
+            tles = split_tles(path.read_text(encoding="utf-8", errors="replace"))
+            if not tles:
+                raise ValueError("no TLEs found")
+            if self.in_menu:
+                self.load_scenario(Scenario(name=path.stem))
+            rows = []
+            for k, t in enumerate(tles[:MAX_DROPPED]):
+                r, v = orbit_state({"type": "tle", "line1": t.line1, "line2": t.line2},
+                                   self.sim.clock, self.sim.t)
+                rows.append((t.name, palette_color(self.sim.n + k), {}, r, v))
+            self.sim.add_many(rows)
+            self.toast(f"Added {len(rows)} satellite{'s' if len(rows) != 1 else ''} "
+                       f"from {path.name}")
+        except Exception as exc:          # a bad file must not end the session
+            self.toast(f"Could not open {path.name}: {exc}")
 
     def reset(self):
         """Reload the current scenario from its file (or its in-memory original)."""
@@ -327,6 +360,15 @@ class App:
         if ev.type == pygame.WINDOWLEAVE:
             self._clear_hover()
             self.mouse = None
+            return
+        if ev.type == pygame.DROPFILE:
+            self.open_file(ev.file)
+            return
+        if ev.type in (pygame.WINDOWMINIMIZED, pygame.WINDOWHIDDEN):
+            self.visible = False
+            return
+        if ev.type in (pygame.WINDOWRESTORED, pygame.WINDOWMAXIMIZED, pygame.WINDOWSHOWN):
+            self.visible = True
             return
         if ev.type == pygame.MOUSEMOTION:
             self.mouse, self._tip_hidden = ev.pos, any(ev.buttons)
@@ -562,6 +604,8 @@ class App:
             self._draw_menu(s)
             return
         self.renderer.draw(s, self)
+        if self.renderer.legend_rect is not None:
+            tips.hot(self.renderer.legend_rect)          # a click folds the key
         self._scene_tips()
         if self.opts.panels:
             self.topbar.draw(s)
@@ -603,17 +647,32 @@ class App:
             s.blit(txt, r)
         busy = self._tip_hidden or self._drag is not None
         self.tip_rect = None if busy else tips.draw(s, self.fonts, self.mouse)
+        self._update_cursor()
+
+    def _update_cursor(self):
+        """A hand over what can be clicked, an I-beam over text fields, the move
+        cursor while the view is dragged, else the arrow."""
+        kind = "move" if self._drag is not None else tips.cursor_at(self.mouse)
+        if kind == self.cursor:
+            return
+        self.cursor = kind
+        if self._cursor_ok:
+            try:
+                pygame.mouse.set_cursor(CURSORS[kind])
+            except pygame.error:          # no system cursors here (the dummy video driver)
+                self._cursor_ok = False
 
     def run(self, max_frames: int | None = None, screenshot: Path | None = None):
         """Main loop at up to 60 fps; optionally stop after ``max_frames`` and save a screenshot."""
         frames = 0
         while self.running:
-            dt = self.clock.tick(60) / 1000.0
+            dt = self.clock.tick(60 if self.visible else IDLE_FPS) / 1000.0
             for ev in pygame.event.get():
                 self.handle(ev)
             self.update(dt)
-            self.draw()
-            pygame.display.flip()
+            if self.visible:                # minimized: time runs on, nothing is drawn
+                self.draw()
+                pygame.display.flip()
             frames += 1
             if max_frames is not None and frames >= max_frames:
                 break

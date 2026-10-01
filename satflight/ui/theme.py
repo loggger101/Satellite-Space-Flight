@@ -8,6 +8,7 @@ drawn 1.25 times larger and the UI stays the size the user chose, only sharper."
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 import pygame
@@ -51,6 +52,31 @@ EVENT_COLORS = {
 }
 
 
+class LRU(OrderedDict):
+    """A dict that keeps at most ``size`` entries, dropping the least recently
+    used one when full (instead of emptying itself and re-rendering everything
+    in one frame)."""
+
+    def __init__(self, size: int):
+        super().__init__()
+        self.size = size
+
+    def get(self, key, default=None):
+        """The value for ``key``, now the most recently used."""
+        try:
+            self.move_to_end(key)
+        except KeyError:
+            return default
+        return self[key]
+
+    def put(self, key, value):
+        """Store ``value``; returns it."""
+        self[key] = value
+        if len(self) > self.size:
+            self.popitem(last=False)
+        return value
+
+
 FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 SYSTEM_FONTS = {"sans": "segoeui", "mono": "consolas"}     # Windows' own; the layout's reference
 BUNDLED_FONTS = {("sans", False): "DejaVuSans.ttf", ("sans", True): "DejaVuSans-Bold.ttf",
@@ -82,7 +108,7 @@ class Fonts:
         self.bold = load_font("sans", px(15), bold=True)
         self.title = load_font("sans", px(19), bold=True)
         self.big = load_font("sans", px(30), bold=True)
-        self._cache: dict = {}
+        self._cache = LRU(3000)
 
     def render(self, text: str, color=TEXT, font=None) -> pygame.Surface:
         """Rendered text surface, cached by (text, color, font)."""
@@ -90,10 +116,7 @@ class Fonts:
         key = (text, color, id(font))
         surf = self._cache.get(key)
         if surf is None:
-            if len(self._cache) > 3000:
-                self._cache.clear()
-            surf = font.render(text, True, color)
-            self._cache[key] = surf
+            surf = self._cache.put(key, font.render(text, True, color))
         return surf
 
     def fit(self, text: str, max_w: int, font=None) -> str:
@@ -107,7 +130,7 @@ class Fonts:
                 while out and font.size(out + "...")[0] > max_w:
                     out = out[:-1]
                 out = out.rstrip() + "..."
-            self._cache[key] = out
+            self._cache.put(key, out)
         return out
 
     def draw(self, target, text, pos, color=TEXT, font=None, anchor="topleft"):
@@ -118,15 +141,35 @@ class Fonts:
         return rect
 
 
+_PANELS = LRU(64)            # panel backgrounds by (size, color, radius)
+
+
 def panel(surface: pygame.Surface, rect: pygame.Rect, alpha_color=PANEL, edge=PANEL_EDGE,
           radius: int = 8):
     """Translucent rounded panel (``radius`` in design px)."""
     radius = px(radius)
-    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
-    pygame.draw.rect(layer, alpha_color, layer.get_rect(), border_radius=radius)
+    key = (rect.size, tuple(alpha_color), radius)
+    layer = _PANELS.get(key)
+    if layer is None:
+        layer = _PANELS.put(key, pygame.Surface(rect.size, pygame.SRCALPHA))
+        pygame.draw.rect(layer, alpha_color, layer.get_rect(), border_radius=radius)
     surface.blit(layer, rect.topleft)
     if edge:
         pygame.draw.rect(surface, edge, rect, 1, border_radius=radius)
+
+
+def app_icon(size: int = 64) -> pygame.Surface:
+    """The window icon: the Earth crossed by an orbit with a satellite on it."""
+    s = pygame.Surface((size, size), pygame.SRCALPHA)
+    c, k = size // 2, size / 64.0
+    pygame.draw.circle(s, (28, 84, 160), (c, c), round(19 * k))
+    pygame.draw.circle(s, (70, 150, 105), (c - round(6 * k), c - round(5 * k)), round(8 * k))
+    pygame.draw.circle(s, (60, 135, 95), (c + round(8 * k), c + round(7 * k)), round(5 * k))
+    orbit = pygame.Rect(round(3 * k), c - round(11 * k), size - round(6 * k), round(22 * k))
+    pygame.draw.ellipse(s, ACCENT, orbit, max(2, round(3 * k)))
+    pygame.draw.circle(s, (255, 196, 64), (orbit.right - round(9 * k), c + round(8 * k)),
+                       round(6 * k))
+    return s
 
 
 def scrollbar(surface: pygame.Surface, x: int, area: pygame.Rect, first: float, visible: float,

@@ -13,6 +13,7 @@ from satflight.analysis import j2_secular_rates, osculating_to_mean_a
 from satflight.constants import R_EARTH, R_GEO
 from satflight.elements import coe2rv, kepler_propagate, rv2coe
 from satflight.forces import ForceModel
+from satflight.frames import eci_to_ecef
 from satflight.maneuvers import Maneuver, bielliptic, hohmann, lambert, sun_synchronous_inclination
 from satflight.scenario import ConstellationSpec, SatSpec, Scenario
 from satflight.simulation import Simulation
@@ -241,3 +242,17 @@ def test_split_tles_reads_two_and_three_line_files():
     tles = split_tles(text)
     assert [t.name for t in tles] == ["ISS (ZARYA)", "OTHER", "SAT 25544"]
     assert all(t.checksum_ok for t in tles)
+
+
+@pytest.mark.parametrize("propagator,j2", [("cowell", True), ("j2mean", True), ("cowell", False)])
+def test_geostationary_preset_holds_its_longitude(propagator, j2):
+    """At the two-body R_GEO with J2 on, the slot drifted east 0.8 deg a month."""
+    sc = Scenario(name="g", satellites=[SatSpec("G", {"type": "geo", "lon": -75})],
+                  forces=ForceModel(j2=j2), propagator=propagator)
+    sim = Simulation(sc)
+
+    def lon():
+        p = eci_to_ecef(sim.y[0, :3], sim.gmst())
+        return math.degrees(math.atan2(p[1], p[0]))
+    sim.advance(30 * 86400.0)
+    assert abs(lon() + 75.0) < 0.005

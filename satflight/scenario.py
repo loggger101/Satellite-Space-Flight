@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from .analysis import mean_to_osculating_a, osculating_to_mean_a
-from .constants import OMEGA_EARTH, R_EARTH, R_GEO
+from .constants import J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
@@ -237,8 +237,27 @@ def _deg(d, key, default=0.0):
     return math.radians(float(d.get(key, default)))
 
 
-def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
-    """ECI (r, v) at simulation time ``t`` for an orbit spec."""
+def j2_acts(propagator: str, forces: ForceModel) -> bool:
+    """Whether the Earth's oblateness moves the satellites of a run."""
+    return propagator == "j2mean" or (propagator == "cowell" and forces.j2)
+
+
+def geostationary_radius(j2: bool = True) -> float:
+    """Radius of the circular equatorial orbit that turns with the Earth. With
+    J2 the equator pulls harder, mu / r^2 (1 + 3/2 J2 (Re/r)^2), so it sits
+    ~0.5 km above the two-body R_GEO; at R_GEO it would drift east by
+    ~0.027 deg/day (0.8 deg a month)."""
+    if not j2:
+        return R_GEO
+    r = R_GEO
+    for _ in range(4):
+        r = (MU_EARTH * (1.0 + 1.5 * J2 * (R_EARTH / r) ** 2) / OMEGA_EARTH ** 2) ** (1.0 / 3.0)
+    return r
+
+
+def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
+    """ECI (r, v) at simulation time ``t`` for an orbit spec. ``j2`` says
+    whether J2 acts in the run (it moves the geostationary radius)."""
     kind = orbit.get("type", "elements")
     if kind == "elements":
         if "perigee_alt" in orbit or "apogee_alt" in orbit:
@@ -285,8 +304,9 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
         return ecef_to_eci_state(r_ecef, v_ecef, clock.gmst(t))
     if kind == "geo":
         ang = clock.gmst(t) + math.radians(float(orbit.get("lon", 0.0)))
-        r = R_GEO * np.array([math.cos(ang), math.sin(ang), 0.0])
-        vmag = OMEGA_EARTH * R_GEO
+        rg = geostationary_radius(j2)
+        r = rg * np.array([math.cos(ang), math.sin(ang), 0.0])
+        vmag = OMEGA_EARTH * rg
         v = vmag * np.array([-math.sin(ang), math.cos(ang), 0.0])
         return r, v
     if kind == "tle":
@@ -339,7 +359,7 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
     out = []
     idx = 0
     for spec in scenario.satellites:
-        r, v = orbit_state(spec.orbit, clock, t)
+        r, v = orbit_state(spec.orbit, clock, t, j2_acts(scenario.propagator, scenario.forces))
         states = spread_along_orbit(r, v, int(spec.count))
         for k, (rr, vv) in enumerate(states):
             name = spec.name if len(states) == 1 else f"{spec.name}-{k + 1}"

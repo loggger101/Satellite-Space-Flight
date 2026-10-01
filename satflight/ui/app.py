@@ -71,6 +71,8 @@ WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
 MAX_FRAME_DT = 0.25
 MIN_SIZE = (900, 600)      # smallest window the panels are laid out for (design px)
 IDLE_FPS = 10              # frame rate while the window is minimized (nothing is drawn)
+RESTING_FPS = 20           # paused (or on the start menu) and untouched for REST_AFTER s
+REST_AFTER = 1.0           # s without input before a still picture is redrawn less often
 MAX_DROPPED = 3000         # most satellites a dropped TLE file adds
 CURSORS = {"hand": pygame.SYSTEM_CURSOR_HAND, "text": pygame.SYSTEM_CURSOR_IBEAM,
            "move": pygame.SYSTEM_CURSOR_SIZEALL, None: pygame.SYSTEM_CURSOR_ARROW}
@@ -127,6 +129,7 @@ class App:
         self.fullscreen = False
         self._windowed = (size, None)   # window size and position to return to from fullscreen
         self.visible = True          # False while minimized: the loop idles and draws nothing
+        self._last_input = time.monotonic()   # when the last event arrived (see frame_rate)
         self.cursor = None           # mouse cursor kind shown (see tips.hot), None the arrow
         self._cursor_ok = True       # False where SDL has no system cursors (dummy driver)
         self.started = False    # a scenario was chosen: the start menu can go back to it
@@ -354,6 +357,7 @@ class App:
     # --- input -------------------------------------------------------------------------------
     def handle(self, ev):
         """Route an event: dialogs first, then panels, then the 3-D view."""
+        self._last_input = time.monotonic()
         if ev.type == pygame.QUIT:
             self.running = False
             return
@@ -662,11 +666,24 @@ class App:
             except pygame.error:          # no system cursors here (the dummy video driver)
                 self._cursor_ok = False
 
+    def frame_rate(self, now: float | None = None) -> int:
+        """Frames per second to aim for: 60 while anything can change; fewer when
+        nothing moves (paused or on the start menu, no input for ``REST_AFTER``
+        s), so a still picture does not keep a CPU core busy; ``IDLE_FPS`` while
+        minimized. Any event brings 60 back on the next frame."""
+        if not self.visible:
+            return IDLE_FPS
+        now = time.monotonic() if now is None else now
+        still = (self.paused or self.in_menu) and self._drag is None
+        if still and now - self._last_input > REST_AFTER:
+            return RESTING_FPS
+        return 60
+
     def run(self, max_frames: int | None = None, screenshot: Path | None = None):
         """Main loop at up to 60 fps; optionally stop after ``max_frames`` and save a screenshot."""
         frames = 0
         while self.running:
-            dt = self.clock.tick(60 if self.visible else IDLE_FPS) / 1000.0
+            dt = self.clock.tick(self.frame_rate()) / 1000.0
             for ev in pygame.event.get():
                 self.handle(ev)
             self.update(dt)

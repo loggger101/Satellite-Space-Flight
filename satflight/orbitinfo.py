@@ -15,7 +15,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .analysis import beta_angle, classify, coverage_half_angle, j2_secular_rates
+from .analysis import (
+    beta_angle,
+    classify,
+    coverage_half_angle,
+    j2_secular_rates,
+    osculating_to_mean_a,
+)
 from .atmosphere import density
 from .constants import MU_EARTH, OMEGA_EARTH, R_EARTH
 from .eclipse import shadow_fraction
@@ -47,6 +53,7 @@ class OrbitInfo:
     # shape
     b: float                 # semi-minor axis (km); nan if open
     c: float                 # center-to-focus distance a*e (km); nan if open
+    a_mean: float            # J2 orbit-averaged semi-major axis (km); nan if open
     rp_alt: float            # km
     ra_alt: float            # km (inf if open)
     # speeds
@@ -142,18 +149,22 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         b = el.a * math.sqrt(1.0 - el.e ** 2)
         c = el.a * el.e
         v_apo = el.h / el.ra
-        rd, wd, md = (float(x) for x in j2_secular_rates(el.a, el.e, el.i))
-        nodal_period = nan if equatorial else 2 * math.pi / (el.n + md + wd)
+        # the secular J2 drifts follow the mean orbit, not the osculating ellipse
+        # of this instant (whose a swings by several km around each revolution)
+        a_mean = float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu))
+        n_mean = math.sqrt(MU_EARTH / a_mean ** 3)
+        rd, wd, md = (float(x) for x in j2_secular_rates(a_mean, el.e, el.i))
+        nodal_period = nan if equatorial else 2 * math.pi / (n_mean + md + wd)
         rev = el.period if equatorial else nodal_period
         ground_shift = (math.degrees((OMEGA_EARTH - rd) * rev) + 180.0) % 360.0 - 180.0
         try:
-            sso = sun_synchronous_inclination(el.a, el.e)
+            sso = sun_synchronous_inclination(a_mean, el.e)
         except ValueError:
             sso = nan
         t_line, lit = sunlight_timeline(el, r_sun)
         eclipse = float(np.mean(1.0 - lit[:-1]))   # the last sample repeats the first
     else:
-        b = c = v_apo = nodal_period = sso = nan
+        b = c = v_apo = nodal_period = sso = a_mean = nan
         rd = wd = 0.0
         ground_shift = nan
         t_line, lit = np.zeros(0), np.zeros(0)
@@ -174,6 +185,7 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         radius=rm, altitude=alt, speed=vm,
         fpa=math.asin(float(np.clip(np.dot(r, v) / (rm * vm), -1, 1))),
         b=b, c=c, rp_alt=rp_alt, ra_alt=(el.ra - R_EARTH) if closed else inf,
+        a_mean=a_mean,
         v_peri=v_peri, v_apo=v_apo,
         v_circ=math.sqrt(MU_EARTH / rm), v_esc=math.sqrt(2 * MU_EARTH / rm), c3=2 * el.energy,
         period=el.period if closed else inf, nodal_period=nodal_period,

@@ -2,19 +2,22 @@
 burns, J2 regression, drag decay, propagator agreement, scenario files and TLEs."""
 
 import math
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from satflight.analysis import j2_secular_rates
+from satflight import tle as tle_module
+from satflight.analysis import j2_secular_rates, osculating_to_mean_a
 from satflight.constants import R_EARTH, R_GEO
 from satflight.elements import coe2rv, kepler_propagate, rv2coe
 from satflight.forces import ForceModel
+from satflight.frames import eci_to_ecef
 from satflight.maneuvers import Maneuver, bielliptic, hohmann, lambert, sun_synchronous_inclination
 from satflight.scenario import ConstellationSpec, SatSpec, Scenario
 from satflight.simulation import Simulation
-from satflight.tle import checksum, parse_tle
+from satflight.tle import checksum, parse_tle, split_tles
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -130,8 +133,9 @@ def test_walker_and_json_round_trip(tmp_path):
     sc.save(path)
     sim = Simulation(Scenario.load(path))
     assert sim.n == 27
-    rs = np.linalg.norm(sim.y[3:, :3], axis=1)   # satellites first, then Walker
-    assert np.allclose(rs, R_EARTH + 550)
+    el = rv2coe(sim.y[3:, :3], sim.y[3:, 3:])     # satellites first, then Walker
+    a_mean = osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)
+    assert np.allclose(a_mean, R_EARTH + 550)      # osculating radii swing by ~6 km
 
 
 def test_snapshot_reproduces_state():
@@ -166,6 +170,30 @@ def test_tle_parsing():
     assert 6600 < np.linalg.norm(r) < 6800
 
 
+def test_tle_fallback_follows_the_mean_elements(monkeypatch):
+    """Without sgp4: the plane regresses from the TLE epoch (pure Kepler kept
+    the RAAN 15 deg off after 3 days) and the satellite keeps the TLE's mean
+    motion (the Kepler semi-major axis put it 7 deg off along track in a day)."""
+    monkeypatch.setattr(tle_module, "HAVE_SGP4", False)
+    tle = parse_tle("\n".join(ISS_TLE), "ISS")
+    a = tle.semi_major_axis
+    _, wd, md = j2_secular_rates(a, tle.eccentricity, tle.inclination)
+    assert math.sqrt(3.986004418e5 / a ** 3) + md == pytest.approx(tle.mean_motion, rel=1e-12)
+    rd = j2_secular_rates(a, tle.eccentricity, tle.inclination)[0]
+    el = rv2coe(*tle.state_at(tle.epoch + timedelta(days=3)))
+    want = tle.raan + rd * 3 * 86400.0
+    assert abs(math.remainder(el.raan - want, 2 * math.pi)) < math.radians(0.02)
+    # one day of J2 Cowell from the epoch state keeps the TLE's rate along track
+    sc = _scenario([SatSpec("ISS", {"type": "state", "r": tle.state_at(tle.epoch)[0].tolist(),
+                                    "v": tle.state_at(tle.epoch)[1].tolist()})])
+    sc.forces = ForceModel(j2=True)
+    sim = Simulation(sc)
+    sim.advance(86400.0)
+    el = rv2coe(sim.y[0, :3], sim.y[0, 3:])
+    u_want = tle.argp + tle.mean_anomaly + (tle.mean_motion + wd) * 86400.0
+    assert abs(math.remainder(el.argp + el.nu - u_want, 2 * math.pi)) < math.radians(0.3)
+
+
 def test_rendezvous_scenario_arrives_at_target():
     sim = Simulation(Scenario.load(ROOT / "scenarios" / "rendezvous.json"))
     t_match = max(m.t for m in sim.maneuvers)
@@ -189,7 +217,7 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     """Only the Earth acts on satellites: a scenario asking for Sun/Moon
     gravity or SRP still loads, runs Earth-only and says what it ignored."""
     import json
-    assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "drag"}
+    assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "c22", "drag"}   # Earth only
     assert not {"sun", "moon", "srp"} & {f for f in vars(ForceModel())}
     d = Scenario(name="old", satellites=[]).to_dict()
     d["forces"].update(sun=True, moon=True, srp=False)
@@ -206,3 +234,40 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     sim.advance(6 * 3600)
     ref.advance(6 * 3600)
     assert np.array_equal(sim.y, ref.y)
+
+
+def test_split_tles_reads_two_and_three_line_files():
+    two = "\n".join(ISS_TLE)
+    text = f"ISS (ZARYA)\n{two}\n\n0 OTHER\n{two}\n{two}\n1 broken\n2 broken\n"
+    tles = split_tles(text)
+    assert [t.name for t in tles] == ["ISS (ZARYA)", "OTHER", "SAT 25544"]
+    assert all(t.checksum_ok for t in tles)
+
+
+@pytest.mark.parametrize("propagator,j2", [("cowell", True), ("j2mean", True), ("cowell", False)])
+def test_geostationary_preset_holds_its_longitude(propagator, j2):
+    """At the two-body R_GEO with J2 on, the slot drifted east 0.8 deg a month."""
+    sc = Scenario(name="g", satellites=[SatSpec("G", {"type": "geo", "lon": -75})],
+                  forces=ForceModel(j2=j2), propagator=propagator)
+    sim = Simulation(sc)
+
+    def lon():
+        p = eci_to_ecef(sim.y[0, :3], sim.gmst())
+        return math.degrees(math.atan2(p[1], p[0]))
+    sim.advance(30 * 86400.0)
+    assert abs(lon() + 75.0) < 0.005
+
+
+@pytest.mark.parametrize("lon0,toward", [(30.0, 75.0), (-60.0, -105.0)])
+def test_c22_pulls_geostationary_satellites_toward_the_stable_longitudes(lon0, toward):
+    """Unattended GEO satellites accelerate toward 75 E or 105 W at ~0.0017 deg/day^2
+    at most: about 3 deg in 60 days from 45 deg away."""
+    sc = Scenario(name="g", satellites=[SatSpec("G", {"type": "geo", "lon": lon0})],
+                  forces=ForceModel(j2=True, c22=True))
+    sc.integrator.h_max = 600.0
+    sim = Simulation(sc)
+    sim.advance(60 * 86400.0)
+    p = eci_to_ecef(sim.y[0, :3], sim.gmst())
+    moved = math.degrees(math.atan2(p[1], p[0])) - lon0
+    assert math.copysign(1.0, moved) == math.copysign(1.0, toward - lon0)
+    assert 2.5 < abs(moved) < 3.6

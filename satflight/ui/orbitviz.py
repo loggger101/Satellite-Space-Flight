@@ -163,7 +163,7 @@ def draw_legend(surf, fonts, rows, rect: pygame.Rect, shown: bool = True):
             c, r = (x0, y + px(15)), px(18)
             t = np.linspace(0.0, 0.8, 8)
             pts = [(c[0] + r * math.cos(a), c[1] - r * math.sin(a)) for a in t]
-            theme_poly = pygame.Surface(rect.size, pygame.SRCALPHA)
+            theme_poly = theme.scratch(rect.size)
             pygame.draw.polygon(theme_poly, (*col[:3], 90),
                                 [(u - rect.x, v - rect.y) for u, v in [c] + pts])
             surf.blit(theme_poly, rect.topleft)
@@ -251,7 +251,7 @@ def draw_fill(surf, cam, poly_world, rgba, part: str):
     y0, y1 = max(0, int(sy.min())), min(h, int(sy.max()) + 2)
     if x1 <= x0 or y1 <= y0:
         return
-    layer = pygame.Surface((x1 - x0, y1 - y0), pygame.SRCALPHA)
+    layer = theme.scratch((x1 - x0, y1 - y0))
     pygame.draw.polygon(layer, rgba, np.stack([sx - x0, sy - y0], 1).tolist())
     surf.blit(layer, (x0, y0))
 

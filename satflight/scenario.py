@@ -17,6 +17,11 @@ the propagator settings. Orbit specs are dicts with a ``type``:
 
 ``count`` > 1 on a satellite spreads copies evenly in mean anomaly.
 
+Copies along one orbit and Walker constellations share one *mean*
+semi-major axis (J2 short-period term removed, Kozai 1959), so they keep
+their spacing: equal osculating ones would give each member a different
+period and a 1584-satellite shell closes its gaps within days.
+
 ``launches`` lists rockets that lift off from a pad during the run (see
 ``satflight.launch.LaunchSpec``): vehicle stages, site, target orbit, timing.
 """
@@ -32,7 +37,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .constants import OMEGA_EARTH, R_EARTH, R_GEO
+from .analysis import mean_to_osculating_a, osculating_to_mean_a
+from .constants import J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
@@ -231,8 +237,27 @@ def _deg(d, key, default=0.0):
     return math.radians(float(d.get(key, default)))
 
 
-def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
-    """ECI (r, v) at simulation time ``t`` for an orbit spec."""
+def j2_acts(propagator: str, forces: ForceModel) -> bool:
+    """Whether the Earth's oblateness moves the satellites of a run."""
+    return propagator == "j2mean" or (propagator == "cowell" and forces.j2)
+
+
+def geostationary_radius(j2: bool = True) -> float:
+    """Radius of the circular equatorial orbit that turns with the Earth. With
+    J2 the equator pulls harder, mu / r^2 (1 + 3/2 J2 (Re/r)^2), so it sits
+    ~0.5 km above the two-body R_GEO; at R_GEO it would drift east by
+    ~0.027 deg/day (0.8 deg a month)."""
+    if not j2:
+        return R_GEO
+    r = R_GEO
+    for _ in range(4):
+        r = (MU_EARTH * (1.0 + 1.5 * J2 * (R_EARTH / r) ** 2) / OMEGA_EARTH ** 2) ** (1.0 / 3.0)
+    return r
+
+
+def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
+    """ECI (r, v) at simulation time ``t`` for an orbit spec. ``j2`` says
+    whether J2 acts in the run (it moves the geostationary radius)."""
     kind = orbit.get("type", "elements")
     if kind == "elements":
         if "perigee_alt" in orbit or "apogee_alt" in orbit:
@@ -249,15 +274,20 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
             e = float(orbit.get("e", 0.0))
         if e >= 1.0 and a > 0:
             a = -abs(a)          # hyperbola: a < 0 by convention
-        inc = orbit.get("i", 0.0)
-        if isinstance(inc, str) and inc.lower() == "sso":
-            inc = math.degrees(sun_synchronous_inclination(a, e))
-        i = math.radians(float(inc))
         raan, argp = _deg(orbit, "raan"), _deg(orbit, "argp")
         if "M" in orbit and "nu" not in orbit:
             nu = mean_to_true(math.radians(float(orbit["M"])), e)
         else:
             nu = _deg(orbit, "nu")
+        inc = orbit.get("i", 0.0)
+        if isinstance(inc, str) and inc.lower() == "sso":
+            # sun-synchronous for the mean orbit, which sets the node drift; the
+            # mean a itself depends a little on i, so settle the two together
+            i = sun_synchronous_inclination(a, e)
+            for _ in range(3):
+                i = sun_synchronous_inclination(float(osculating_to_mean_a(a, e, i, argp, nu)), e)
+        else:
+            i = math.radians(float(inc))
         r, v = coe2rv(a, e, i, raan, argp, nu)
         return np.asarray(r, float), np.asarray(v, float)
     if kind == "state":
@@ -274,8 +304,9 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
         return ecef_to_eci_state(r_ecef, v_ecef, clock.gmst(t))
     if kind == "geo":
         ang = clock.gmst(t) + math.radians(float(orbit.get("lon", 0.0)))
-        r = R_GEO * np.array([math.cos(ang), math.sin(ang), 0.0])
-        vmag = OMEGA_EARTH * R_GEO
+        rg = geostationary_radius(j2)
+        r = rg * np.array([math.cos(ang), math.sin(ang), 0.0])
+        vmag = OMEGA_EARTH * rg
         v = vmag * np.array([-math.sin(ang), math.cos(ang), 0.0])
         return r, v
     if kind == "tle":
@@ -285,23 +316,28 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
 
 
 def spread_along_orbit(r, v, count: int):
-    """``count`` states sharing an orbit, evenly spaced in mean anomaly."""
+    """``count`` states sharing an orbit, evenly spaced in mean anomaly. The
+    first is the given state; the others share its mean semi-major axis."""
     if count <= 1:
         return [(r, v)]
     el = rv2coe(r, v)
     if el.e >= 1.0:
         raise ValueError("cannot spread satellites along an open orbit")
+    a_mean = float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu))
     out = []
     for k in range(count):
         M = el.M + 2 * math.pi * k / count
         nu = mean_to_true(M, el.e)
-        rr, vv = coe2rv(el.a, el.e, el.i, el.raan, el.argp, nu)
+        a = el.a if k == 0 else float(mean_to_osculating_a(a_mean, el.e, el.i, el.argp, nu))
+        rr, vv = coe2rv(a, el.e, el.i, el.raan, el.argp, nu)
         out.append((np.asarray(rr), np.asarray(vv)))
     return out
 
 
 def walker_states(c: ConstellationSpec):
-    """ECI states of a Walker i:t/p/f constellation (circular orbits)."""
+    """ECI states of a Walker i:t/p/f constellation (circular orbits). The
+    altitude is the mean one: each member's osculating semi-major axis carries
+    the J2 short-period term for its place in the orbit."""
     if c.total % c.planes:
         raise ValueError("total satellites must be a multiple of the number of planes")
     per = c.total // c.planes
@@ -313,7 +349,7 @@ def walker_states(c: ConstellationSpec):
         raan = math.radians(c.raan0) + spread * p / c.planes
         for s in range(per):
             u = 2 * math.pi * s / per + 2 * math.pi * c.phasing * p / c.total
-            r, v = coe2rv(a, 0.0, i, raan, 0.0, u)
+            r, v = coe2rv(float(mean_to_osculating_a(a, 0.0, i, 0.0, u)), 0.0, i, raan, 0.0, u)
             out.append((f"{c.name}-{p + 1:02d}{s + 1:02d}", np.asarray(r), np.asarray(v)))
     return out
 
@@ -323,7 +359,7 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
     out = []
     idx = 0
     for spec in scenario.satellites:
-        r, v = orbit_state(spec.orbit, clock, t)
+        r, v = orbit_state(spec.orbit, clock, t, j2_acts(scenario.propagator, scenario.forces))
         states = spread_along_orbit(r, v, int(spec.count))
         for k, (rr, vv) in enumerate(states):
             name = spec.name if len(states) == 1 else f"{spec.name}-{k + 1}"

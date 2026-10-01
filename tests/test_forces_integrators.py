@@ -7,15 +7,17 @@ import numpy as np
 import pytest
 
 from satflight import integrators
-from satflight.constants import MU_EARTH
+from satflight.constants import MU_EARTH, OMEGA_EARTH
 from satflight.elements import coe2rv, kepler_propagate
 from satflight.forces import (
     ForceModel,
+    accel_c22,
     accel_drag,
     accel_j2,
     accel_j3,
     accel_j4,
     accel_point_mass,
+    c22_potential,
     conservative_energy,
     zonal_potential,
 )
@@ -81,7 +83,8 @@ def test_dopri5_matches_analytic_kepler():
     assert np.max(np.linalg.norm(y[:, 3:] - v_ref, axis=1)) < 1e-6
 
 
-@pytest.mark.parametrize("method,tol", [("dopri5", 1e-9), ("rk4", 1e-7), ("leapfrog", 1e-4)])
+@pytest.mark.parametrize("method,tol", [("dopri5", 1e-9), ("rk4", 1e-7), ("wh", 1e-12),
+                                        ("leapfrog", 1e-4)])
 def test_energy_conservation_ten_orbits(method, tol):
     r0, v0 = coe2rv(7000.0, 0.05, 0.5, 0.1, 0.2, 0.0)
     y0 = np.concatenate([r0, v0])[None, :]
@@ -108,8 +111,54 @@ def test_energy_with_zonals_is_conserved():
     assert abs((e1 - e0) / e0) < 1e-10
 
 
+def test_wisdom_holman_is_accurate_at_long_steps():
+    """With the Kepler orbit as its drift, wh at 60 s stays within a few km of
+    the truth after a day in LEO under J2-J4, where leapfrog is ~1000 km off."""
+    model = ForceModel(j2=True, j3=True, j4=True)
+    r0, v0 = coe2rv(6798.0, 0.0005, math.radians(51.6), 0.5, 4.7, 0.2)
+    y0 = np.concatenate([r0, v0])[None, :]
+
+    def f(t, y):
+        return np.concatenate([y[:, 3:], model.acceleration(y[:, :3], y[:, 3:], np.zeros(1))],
+                              axis=1)
+    _, ref = Propagator("dopri5", rtol=1e-13, atol=1e-10, h_max=10.0).integrate(f, 0.0, y0,
+                                                                              86400.0)
+    err = {}
+    for method in ("wh", "leapfrog"):
+        _, y = Propagator(method, h_fixed=60.0).integrate(f, 0.0, y0, 86400.0)
+        err[method] = np.linalg.norm(y[0, :3] - ref[0, :3])
+    assert err["wh"] < 3.0
+    assert err["leapfrog"] > 100 * err["wh"]
+
+
 def test_callback_can_stop_integration():
     y0 = np.concatenate(coe2rv(7000.0, 0.0, 0.0, 0.0, 0.0, 0.0))[None, :]
     prop = Propagator("dopri5", h_max=10.0)
     t, _ = prop.integrate(_two_body, 0.0, y0, 1000.0, lambda t, y: t >= 50.0)
     assert 50.0 <= t < 100.0
+
+
+@pytest.mark.parametrize("theta", [0.0, 1.1, 4.0])
+def test_c22_acceleration_is_the_potential_gradient(theta):
+    for r in (np.array([7000.0, 1200.0, -900.0]), np.array([-30000.0, 28000.0, 4000.0])):
+        num = _num_grad(lambda x: c22_potential(x, theta), r, 0.5)
+        assert np.allclose(accel_c22(r, theta), num, rtol=1e-6, atol=1e-18)
+
+
+def test_jacobi_integral_is_conserved_with_c22():
+    """The C22 field turns with the Earth: energy changes, E - omega h_z does not."""
+    model = ForceModel(j2=True, c22=True)
+    r0, v0 = coe2rv(12000.0, 0.2, 0.7, 0.3, 0.4, 0.5)
+    y0 = np.concatenate([r0, v0])[None, :]
+
+    def f(t, y):
+        a = model.acceleration(y[:, :3], y[:, 3:], np.zeros(1), OMEGA_EARTH * t)
+        return np.concatenate([y[:, 3:], a], axis=1)
+    _, y = Propagator("dopri5", rtol=1e-12, atol=1e-10, h_max=60.0).integrate(f, 0.0, y0, 86400.0)
+    j0 = conservative_energy(y0[:, :3], y0[:, 3:], model, 0.0)[0]
+    j1 = conservative_energy(y[:, :3], y[:, 3:], model, OMEGA_EARTH * 86400.0)[0]
+    assert abs((j1 - j0) / j0) < 1e-10
+    plain = ForceModel(j2=True)
+    e0 = conservative_energy(y0[:, :3], y0[:, 3:], plain)[0]
+    e1 = conservative_energy(y[:, :3], y[:, 3:], plain)[0]
+    assert abs((e1 - e0) / e0) > 1e-8                  # the energy alone is not conserved

@@ -3,20 +3,26 @@
 When the optional ``sgp4`` package (the propagator skyfield uses) is
 installed, TLEs are initialized through SGP4 for the proper mean-to-
 osculating conversion; the TEME frame it returns is used as ECI (they differ
-by well under a milliradian). Without it the mean elements are applied as
-osculating ones - adequate for visualization, a few km off in position.
+by well under a milliradian). Without it the TLE's mean motion is read as
+the rate of the mean anomaly under J2 (true to first order in J2, as in
+SGP4), which gives the mean semi-major axis; the J2 short-period term turns
+that into the osculating one, and the analytic J2 propagator carries the
+state from the TLE epoch, so the plane regresses as it should. Drag, J3+
+and the higher-order SGP4 terms are left out: tens of km over days.
 """
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import numpy as np
 
+from .analysis import j2_mean_propagate, j2_secular_rates, mean_to_osculating_a
 from .constants import MU_EARTH
-from .elements import coe2rv, kepler_propagate, mean_to_true
+from .elements import coe2rv, mean_to_true
 from .timeutil import UTC, ensure_utc, julian_date
 
 try:  # optional dependency
@@ -69,8 +75,14 @@ class TLE:
 
     @property
     def semi_major_axis(self) -> float:
-        """Kepler semi-major axis (km) from the mean motion."""
-        return (MU_EARTH / self.mean_motion ** 2) ** (1.0 / 3.0)
+        """Mean semi-major axis (km): the one whose two-body rate plus J2's
+        secular drift of the mean anomaly is the TLE's mean motion."""
+        n0, e, i = self.mean_motion, self.eccentricity, self.inclination
+        a = (MU_EARTH / n0 ** 2) ** (1.0 / 3.0)
+        for _ in range(6):                    # contracts by ~1e-3 per pass
+            md = float(j2_secular_rates(a, e, i)[2])
+            a = (MU_EARTH / (n0 - md) ** 2) ** (1.0 / 3.0)
+        return a
 
     def state_at(self, when: datetime):
         """ECI (TEME) position and velocity at ``when``."""
@@ -82,13 +94,32 @@ class TLE:
             err, r, v = sat.sgp4(jd_i, jd - jd_i)
             if err == 0:
                 return np.array(r), np.array(v)
-        nu = mean_to_true(self.mean_anomaly, self.eccentricity)
-        r, v = coe2rv(self.semi_major_axis, self.eccentricity, self.inclination,
-                      self.raan, self.argp, nu)
+        e, i = self.eccentricity, self.inclination
+        nu = mean_to_true(self.mean_anomaly, e)
+        a = float(mean_to_osculating_a(self.semi_major_axis, e, i, self.argp, nu))
+        r, v = coe2rv(a, e, i, self.raan, self.argp, nu)
         dt = (when - self.epoch).total_seconds()
         if dt:
-            r, v = kepler_propagate(r, v, dt)
+            r, v = j2_mean_propagate(np.asarray(r)[None], np.asarray(v)[None], dt)
+            r, v = r[0], v[0]
         return np.asarray(r), np.asarray(v)
+
+
+def split_tles(text: str) -> list[TLE]:
+    """Every TLE in ``text`` (a Celestrak-style file): pairs of lines starting
+    with "1 " and "2 ", each named by the line just before it if that is not
+    part of a pair. Pairs that do not parse are skipped."""
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    out, prev, k = [], "", 0
+    while k < len(lines):
+        ln = lines[k]
+        if ln.startswith("1 ") and k + 1 < len(lines) and lines[k + 1].startswith("2 "):
+            with contextlib.suppress(ValueError):
+                out.append(parse_tle(ln + "\n" + lines[k + 1], prev.lstrip("0 ").strip()))
+            prev, k = "", k + 2
+            continue
+        prev, k = ln.strip(), k + 1
+    return out
 
 
 def parse_tle(text: str, name: str = "") -> TLE:

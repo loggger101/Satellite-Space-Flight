@@ -2,6 +2,7 @@
 dialogs, keyboard shortcuts and panels."""
 
 import os
+import time
 from pathlib import Path
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
@@ -12,12 +13,16 @@ import numpy as np
 import pygame
 import pytest
 
+from satflight.analysis import osculating_to_mean_a
 from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
+from satflight.scenario import Scenario
+from satflight.simulation import Simulation
 from satflight.ui import glossary, theme, tips
-from satflight.ui.app import App
+from satflight.ui.app import REST_AFTER, RESTING_FPS, App
 from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
+from satflight.ui.welcome import scenario_card
 from satflight.ui.widgets import TextField
 
 
@@ -97,8 +102,10 @@ def test_add_satellite_dialog_with_preset(app):
     dlg.submit()
     assert not app.dialogs
     assert app.sim.n == 10
-    el = rv2coe(app.sim.y[-1, :3], app.sim.y[-1, 3:])
+    el = rv2coe(app.sim.y[-3, :3], app.sim.y[-3, 3:])            # the first copy as entered
     assert el.a == pytest.approx(26554, rel=1e-9) and el.e == pytest.approx(0.72)
+    el = rv2coe(app.sim.y[-3:, :3], app.sim.y[-3:, 3:])          # copies share the mean orbit
+    assert np.ptp(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)) < 1e-6
     frame(app, 2)
 
 
@@ -444,6 +451,38 @@ def test_launch_dialog_map_pick_preview_and_flight(app):
     assert app.sim.ascent_of(i) is None and app.sim.sats[i].launch_report["outcome"] == "orbit"
     app.info.tab = 1
     frame(app, 2, dt=0.0)
+
+
+def _settle(prev, timeout=20.0):
+    """Wait for the preview's background plan."""
+    end = time.monotonic() + timeout
+    while prev.updating and time.monotonic() < end:
+        time.sleep(0.01)
+        prev.collect()
+
+
+def test_launch_preview_replans_in_the_background(app):
+    app.open("launch")
+    dlg = app.dialogs[-1]
+    prev = dlg.preview
+    assert prev.plan.ok and not prev.updating
+    fill(dlg, "inc", 40)
+    dlg.changed("inc")
+    prev.dirty_at -= 1.0                          # the form has settled
+    frame(app, dt=0.0)
+    # the frame came back before the ~0.3 s flight was done: it is not in the frame
+    assert prev.updating and "updating" in " ".join(t for t, _ in prev._lines())
+    _settle(prev)
+    assert prev.plan.flight.insertion["i"] == pytest.approx(40, abs=0.05)
+    # a change made while a plan is flown replaces it; the stale result is dropped
+    fill(dlg, "inc", 45)
+    prev.request(dlg)
+    fill(dlg, "inc", 50)
+    prev.request(dlg)
+    _settle(prev)
+    assert prev.plan.flight.insertion["i"] == pytest.approx(50, abs=0.05)
+    frame(app, dt=0.0)
+    assert not prev.updating
 
 
 def test_launch_dialog_reports_impossible_launches(app):
@@ -838,3 +877,98 @@ def test_frame_rate_does_not_change_the_physics(app):
     app.reset()
     frame(app, 16, 1 / 16)
     assert app.sim.t == t and np.array_equal(app.sim.y, y)
+
+
+# --- window niceties -----------------------------------------------------------------------
+
+def test_cursor_shows_what_a_click_does(app):
+    frame(app, dt=0.0)
+    button = app.topbar.buttons[0].rect
+    hover(app, button.center)
+    frame(app, dt=0.0)
+    assert app.cursor == "hand"
+    view = app.view_rect()
+    empty = (view.x + 40, view.bottom - 40)                  # a corner of space
+    hover(app, empty)
+    frame(app, dt=0.0)
+    assert app.cursor is None
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=empty))
+    frame(app, dt=0.0)
+    assert app.cursor == "move"                              # dragging the view
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=empty))
+    app.open("add")
+    frame(app, dt=0.0)
+    dlg = app.dialogs[-1]
+    field = next(w for w in dlg.widgets.values() if isinstance(w, TextField))
+    hover(app, field.rect.center)
+    frame(app, dt=0.0)
+    assert app.cursor == "text"
+    hover(app, button.center)                                # the shade hides the top bar
+    frame(app, dt=0.0)
+    assert app.cursor is None
+
+
+ISS_3LE = """ISS (ZARYA)
+1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927
+2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537
+"""
+
+
+def test_dropping_files_on_the_window(app, tmp_path):
+    n = app.sim.n
+    tles = tmp_path / "stations.txt"
+    tles.write_text("junk header\n" + ISS_3LE + ISS_3LE.replace("ISS (ZARYA)", "0 TWIN"))
+    app.handle(pygame.event.Event(pygame.DROPFILE, file=str(tles)))
+    assert app.sim.n == n + 2
+    assert [s.name for s in app.sim.sats[-2:]] == ["ISS (ZARYA)", "TWIN"]
+    assert any("Added 2 satellites" in m for _, m in app.toasts)
+    bad = tmp_path / "notes.txt"
+    bad.write_text("nothing orbital here")
+    app.handle(pygame.event.Event(pygame.DROPFILE, file=str(bad)))
+    assert app.sim.n == n + 2 and any("Could not open notes.txt" in m for _, m in app.toasts)
+    app.open("maneuver")                       # a dialog tied to the old simulation
+    app.handle(pygame.event.Event(pygame.DROPFILE,
+                                  file=str(app.scenario_dir / "hohmann_to_geo.json")))
+    assert app.scenario_path.name == "hohmann_to_geo.json" and not app.dialogs
+    frame(app, dt=0.0)
+
+
+def test_a_minimized_window_keeps_time_but_does_not_draw(app, monkeypatch):
+    pygame.event.clear()                      # the window's own "shown" from startup
+    app.handle(pygame.event.Event(pygame.WINDOWMINIMIZED))
+    assert not app.visible
+    drawn = []
+    monkeypatch.setattr(app, "draw", lambda: drawn.append(1))
+    t0 = app.sim.t
+    app.run(max_frames=3)
+    assert not drawn and app.sim.t > t0
+    app.handle(pygame.event.Event(pygame.WINDOWRESTORED))
+    assert app.visible
+
+
+def test_window_icon():
+    icon = theme.app_icon()
+    assert icon.get_size() == (64, 64) and icon.get_at((0, 0)).a == 0
+    assert icon.get_at((32, 32)).a == 255
+
+
+def test_a_still_picture_is_redrawn_less_often(app):
+    now = time.monotonic()
+    app.paused = False
+    assert app.frame_rate(now + 10) == 60                   # the simulation moves
+    app.paused = True
+    assert app.frame_rate(now + 10) == RESTING_FPS          # paused and untouched
+    hover(app, (50, 50))
+    assert app.frame_rate() == 60                           # input: full rate at once
+    assert app.frame_rate(time.monotonic() + REST_AFTER + 0.1) == RESTING_FPS
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.view_rect().center))
+    assert app.frame_rate(time.monotonic() + 10) == 60      # dragging the view
+
+
+def test_start_menu_counts_every_satellite():
+    """Copies along one orbit count (the Molniya card said 2 for 6 satellites)."""
+    root = Path(__file__).resolve().parents[1] / "scenarios"
+    for stem in ("molniya_tundra", "default", "starlink_shell"):
+        tag = scenario_card(root / f"{stem}.json")[2]
+        n = Simulation(Scenario.load(root / f"{stem}.json")).n
+        assert tag.startswith(f"{n:,} satellite"), (stem, tag, n)

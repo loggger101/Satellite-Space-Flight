@@ -7,6 +7,10 @@ frame, in draw order, so the last one under the mouse is the thing on top.
 :func:`block` marks a surface that hides what was drawn before it (a modal
 dialog's shade, the help overlay) without a tip of its own. Once the mouse has
 rested :data:`DELAY` seconds on one region, :func:`draw` shows its tip.
+
+The same pass records where a click does something: :func:`hot` marks a part
+as clickable (a hand cursor) or as a text field (an I-beam), and
+:func:`cursor_at` gives the mouse cursor for a point. Blockers hide these too.
 """
 
 from __future__ import annotations
@@ -22,12 +26,14 @@ DELAY = 0.4          # s the mouse rests on a part before its tip shows
 MAX_W = 380          # design px of tip text per line
 
 _regions: list[tuple[pygame.Rect, str, str]] = []
+_hot: list[tuple[pygame.Rect, str | None]] = []     # (rect, cursor kind); None: a blocker
 _rest: tuple = (None, 0.0)           # (region under the mouse, since when)
 
 
 def begin():
     """Forget last frame's regions (App.draw calls this first)."""
     _regions.clear()
+    _hot.clear()
 
 
 def add(rect, text, key: str = "", clip: pygame.Rect | None = None):
@@ -46,6 +52,27 @@ def add(rect, text, key: str = "", clip: pygame.Rect | None = None):
 def block(rect):
     """``rect`` now covers everything drawn before it: no tips from under it."""
     _regions.append((pygame.Rect(rect), "", ""))
+    _hot.append((pygame.Rect(rect), None))
+
+
+def hot(rect, kind: str = "hand", clip: pygame.Rect | None = None):
+    """A click on ``rect`` does something: show the ``kind`` cursor ("hand", or
+    "text" for a text field) over it."""
+    r = pygame.Rect(rect)
+    if clip is not None:
+        r = r.clip(clip)
+    if r.w > 0 and r.h > 0:
+        _hot.append((r, kind))
+
+
+def cursor_at(pos) -> str | None:
+    """The cursor kind of the topmost clickable part at ``pos`` (None: the arrow)."""
+    if pos is None:
+        return None
+    for rect, kind in reversed(_hot):
+        if rect.collidepoint(pos):
+            return kind
+    return None
 
 
 def regions() -> list[tuple[pygame.Rect, str, str]]:

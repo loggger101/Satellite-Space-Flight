@@ -27,6 +27,7 @@ from ..scenario import (
     PRESETS,
     ConstellationSpec,
     GroundStation,
+    j2_acts,
     orbit_state,
     palette_color,
     walker_states,
@@ -223,7 +224,8 @@ def _preview(dlg):
     """One-line summary of the orbit the form describes (blank while it is invalid)."""
     try:
         v = dlg.values()
-        r, vv = orbit_state(_orbit_from(v), dlg.app.sim.clock, dlg.app.sim.t)
+        sim = dlg.app.sim
+        r, vv = orbit_state(_orbit_from(v), sim.clock, sim.t, j2_acts(sim.propagator, sim.forces))
         el = rv2coe(r, vv)
         if el.e < 1:
             txt = (f"a {el.a:,.0f} km  e {el.e:.4f}  i {math.degrees(el.i):.2f} deg  "
@@ -523,14 +525,19 @@ def physics_dialog(app):
                        "kepler": "kepler: the exact two-body ellipse. Fast, but ignores the "
                                  "Earth's shape and air.",
                        "j2mean": "j2mean: the ellipse plus the average drift caused by the "
-                                 "Earth's bulge (J2). Fast and good for long runs."}),
+                                 "Earth's bulge (J2), timed by the mean orbit. Fast and "
+                                 "good for long runs; no drag or burns."}),
         F("method", "Integrator (Cowell)", "choice", it.method, list(METHODS),
           tip="The numerical method Cowell uses.",
           option_tips={"dopri5": "dopri5: Dormand-Prince 5(4), adapts its step to meet the "
                                  "tolerances. The accurate default.",
                        "rk4": "rk4: classic Runge-Kutta with the fixed step below.",
-                       "leapfrog": "leapfrog: a symplectic fixed-step method. Its energy "
-                                   "error stays bounded over very long runs."}),
+                       "wh": "wh: Wisdom-Holman. Follows the exact ellipse and adds the "
+                             "small forces as kicks, so long fixed steps (60 s or more) "
+                             "stay accurate and the energy does not drift.",
+                       "leapfrog": "leapfrog: a simple symplectic fixed-step method. Its "
+                                   "energy stays bounded, but its timing drifts quickly: "
+                                   "it needs steps of a few seconds."}),
         F("rtol", "Relative tolerance", "float", f"{it.rtol:g}",
           tip="dopri5's allowed error per step, relative to the state. Smaller is more "
               "accurate and slower."),
@@ -538,8 +545,9 @@ def physics_dialog(app):
           tip="dopri5's allowed error per step in km and km/s, for values near zero."),
         F("h_max", "Max step (s)", "float", f"{it.h_max:g}",
           tip="Longest step dopri5 may take, however smooth the motion."),
-        F("h_fixed", "Fixed step rk4/leapfrog (s)", "float", f"{it.h_fixed:g}",
-          tip="Step length of the fixed-step methods. Low orbits need about 30 s or less."),
+        F("h_fixed", "Fixed step (s)", "float", f"{it.h_fixed:g}",
+          tip="Step length of the fixed-step methods rk4, wh and leapfrog. Low orbits need "
+              "about 30 s or less with rk4, 60 s with wh, a few seconds with leapfrog."),
         F("j2", "J2 oblateness", "bool", fm.j2,
           tip="The Earth's equatorial bulge. It turns orbital planes (node drift) and "
               "ellipses (perigee drift): the largest effect after central gravity."),
@@ -547,6 +555,10 @@ def physics_dialog(app):
           tip="The Earth's slight pear shape (north-south asymmetry). It slowly changes "
               "eccentricity."),
         F("j4", "J4", "bool", fm.j4, tip="The next, smaller term of the Earth's shape."),
+        F("c22", "C22/S22 (elliptical equator)", "bool", fm.c22,
+          tip="The equator is slightly oval, and the oval turns with the Earth. Small, but "
+              "it is what pulls geostationary satellites off their slots (toward 75 E or "
+              "105 W) over weeks. Cowell only."),
         F("drag", "Atmospheric drag", "bool", fm.drag,
           tip="Air resistance from the upper atmosphere. It makes low orbits decay until the "
               "satellite re-enters."),
@@ -563,8 +575,8 @@ def physics_dialog(app):
     def on_ok(v):
         if v["rtol"] <= 0 or v["atol"] <= 0 or v["h_max"] <= 0 or v["h_fixed"] <= 0:
             return "tolerances and steps must be positive"
-        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], drag=v["drag"],
-                                density_scale=v["density_scale"])
+        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
+                                drag=v["drag"], density_scale=v["density_scale"])
         sim.set_propagator(v["propagator"])
         it.method = v["method"]
         it.rtol, it.atol, it.h_max, it.h_fixed = v["rtol"], v["atol"], v["h_max"], v["h_fixed"]

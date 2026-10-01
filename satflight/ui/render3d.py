@@ -142,7 +142,7 @@ class SceneRenderer:
             return
         if cache.get("proj") is None:
             pts = np.concatenate([ln.pts for ln in lines], axis=0)
-            sx, sy, z = cam.project(pts)
+            sx, sy, _ = cam.project(pts)
             hid = cam.hidden_by_sphere(pts)
             ok = np.isfinite(sx) & np.isfinite(sy)
             cache["proj"] = (np.clip(sx, -CLIP, CLIP), np.clip(sy, -CLIP, CLIP), ok, hid)

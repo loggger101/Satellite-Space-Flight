@@ -13,7 +13,7 @@ spec.loader.exec_module(start)
 
 def test_requirements_match_pyproject():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    deps = re.search(r"^dependencies = \[(.*?)\]", text, re.M | re.S).group(1)
+    deps = re.search(r"^dependencies = \[(.*?)\]", text, re.MULTILINE | re.DOTALL).group(1)
     assert re.findall(r'"([^"]+)"', deps) == start.REQUIREMENTS
 
 

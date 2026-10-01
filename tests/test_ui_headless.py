@@ -57,6 +57,10 @@ def key(app, k, mod=0, text=None):
     app.handle(pygame.event.Event(pygame.KEYDOWN, key=k, mod=mod, unicode=text or ""))
 
 
+def button(dlg, text):
+    return next(b for b in dlg.buttons if b.text == text)
+
+
 def fill(dlg, key_, value):
     w = dlg.widgets[key_]
     assert isinstance(w, TextField)
@@ -188,10 +192,10 @@ def test_scenario_dialog_load_save_export(app, tmp_path):
     app.open("scenario")
     dlg = app.dialogs[-1]
     fill(dlg, "save_name", "snap")
-    [b for b in dlg.buttons if b.text == "Save snapshot"][0].callback()
+    button(dlg, "Save snapshot").callback()
     assert (tmp_path / "user" / "snap.json").exists()
     app.open("scenario")
-    [b for b in app.dialogs[-1].buttons if b.text == "Export CSV"][0].callback()
+    button(app.dialogs[-1], "Export CSV").callback()
     assert list((tmp_path / "user" / "exports").glob("*.csv"))
 
 
@@ -312,9 +316,9 @@ def test_geometry_overlay_names_everything_and_has_a_foldable_key(app):
     app.select(app.sim.index_of("Molniya"))
     frame(app, 2)
     sel = app.selected
-    ol, om, fills, legend = orbitviz.build(app.orbit_info(), app.sim.y[sel, :3],
-                                           app.sim.y[sel, 3:], app.sim.sats[sel].color,
-                                           np.eye(3), app.camera, "full", app.view_rect())
+    _, om, fills, legend = orbitviz.build(app.orbit_info(), app.sim.y[sel, :3],
+                                          app.sim.y[sel, 3:], app.sim.sats[sel].color,
+                                          np.eye(3), app.camera, "full", app.view_rect())
     names = [m[3] for m in om]
     for part in ("perigee", "apogee", "AN ascending node", "DN descending node", "RAAN",
                  "arg. of perigee", "true anomaly", "inclination", "h orbit normal",
@@ -508,7 +512,7 @@ def test_launch_dialog_reports_impossible_launches(app):
 def test_vehicle_dialog_builds_a_custom_three_stage_rocket(app):
     app.open("launch")
     dlg = app.dialogs[-1]
-    [b for b in dlg.buttons if b.text == "Vehicle..."][0].callback()
+    button(dlg, "Vehicle...").callback()
     vd = app.dialogs[-1]
     assert vd is not dlg
     vd.set("count", "3")
@@ -543,7 +547,7 @@ def test_following_a_rocket_on_the_pad_keeps_the_camera_above_ground(app):
                 assert np.linalg.norm(cam.position) >= cam.FLOOR - 1e-6
     frame(app, 2, dt=0.0)
     k = app.selected
-    sx, sy, vis = app.renderer.sat_screen
+    _, _, vis = app.renderer.sat_screen
     assert vis[k]                               # the pad vehicle is in sight, not behind the globe
 
 
@@ -593,7 +597,7 @@ def test_start_screen_keys_clicks_and_buttons(app):
     assert app.sim.n == 0 and app.dialogs[-1].title == "Add satellite"
     app.dialogs[-1].close()
     app.open("start")
-    [b for b in app.dialogs[-1].buttons if b.text == "Launch a rocket"][0].callback()
+    button(app.dialogs[-1], "Launch a rocket").callback()
     assert len(app.dialogs) == 1 and app.dialogs[0].title == "Launch"
     frame(app)
 
@@ -636,7 +640,7 @@ def test_start_menu_holds_a_running_simulation_until_resumed(app):
     assert app.in_menu and not app.toasts
     frame(app, 3)
     assert app.sim.t == t                                   # held while on the menu
-    resume = [b for b in app.dialogs[-1].buttons if b.text == "Resume"][0]
+    resume = button(app.dialogs[-1], "Resume")
     assert app.dialogs[-1].rect.contains(resume.rect)
     resume.callback()
     assert not app.in_menu
@@ -701,7 +705,7 @@ def tip_states(app):
         frame(app, dt=0.0)
         yield name
         if name == "launch":
-            next(b for b in app.dialogs[-1].buttons if b.text == "Vehicle...").callback()
+            button(app.dialogs[-1], "Vehicle...").callback()
             frame(app, dt=0.0)
             yield "vehicle"
         app.dialogs.clear()

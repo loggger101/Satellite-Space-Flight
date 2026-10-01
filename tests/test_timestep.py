@@ -50,7 +50,8 @@ def _orbits(propagator: str, method: str) -> Scenario:
 
 
 @pytest.mark.parametrize("propagator,method", [("cowell", "dopri5"), ("cowell", "rk4"),
-                                               ("cowell", "leapfrog"), ("j2mean", "dopri5"),
+                                               ("cowell", "wh"), ("cowell", "leapfrog"),
+                                               ("j2mean", "dopri5"),
                                                ("kepler", "dopri5")])
 def test_orbits_do_not_depend_on_the_frame_rate(propagator, method):
     sims = [Simulation(_orbits(propagator, method)) for _ in range(2)]

@@ -26,9 +26,46 @@ def j2_secular_rates(a, e, i, mu: float = MU_EARTH):
     return raan_dot, argp_dot, m_dot
 
 
+def _j2_sp_shape(e, i, argp, nu):
+    """``a * da`` / (3/2 J2 Re^2): the shape of the J2 short-period term in the
+    semi-major axis, which depends on a only through its 1/a prefactor."""
+    e = np.asarray(e, dtype=float)
+    q = 1.0 - e * e
+    ar3 = ((1.0 + e * np.cos(nu)) / q) ** 3          # (a / r)^3
+    s2 = np.sin(i) ** 2
+    return ((2.0 / 3.0) * (1.0 - 1.5 * s2) * (ar3 - q ** -1.5)
+            + s2 * ar3 * np.cos(2.0 * (argp + nu)))
+
+
+def mean_to_osculating_a(a_mean, e, i, argp, nu):
+    """Osculating semi-major axis at true anomaly ``nu`` of an orbit whose mean
+    (orbit-averaged) semi-major axis is ``a_mean``: the first-order J2
+    short-period term of Kozai (1959),
+
+        a_osc - a_mean = 3/2 J2 Re^2 / a [2/3 (1 - 3/2 sin^2 i)((a/r)^3 - (1-e^2)^-3/2)
+                                          + sin^2 i (a/r)^3 cos 2(argp + nu)]
+
+    It swings by about +-6 km over one revolution in LEO. The other elements
+    are left as given (their short-period terms do not change the period)."""
+    a_mean = np.asarray(a_mean, dtype=float)
+    return a_mean + 1.5 * J2 * R_EARTH ** 2 * _j2_sp_shape(e, i, argp, nu) / a_mean
+
+
+def osculating_to_mean_a(a_osc, e, i, argp, nu):
+    """Inverse of :func:`mean_to_osculating_a`, exactly: with the term written
+    as K / a_mean, a_mean solves a_mean^2 - a_osc a_mean + K = 0."""
+    a_osc = np.asarray(a_osc, dtype=float)
+    k = 1.5 * J2 * R_EARTH ** 2 * _j2_sp_shape(e, i, argp, nu)
+    return 0.5 * (a_osc + np.sqrt(np.maximum(a_osc * a_osc - 4.0 * k, 0.0)))
+
+
 def j2_mean_propagate(r, v, dt, mu: float = MU_EARTH):
-    """Analytic propagation with the J2 secular drifts applied to the
-    osculating elements (treated as mean). Open orbits fall back to Kepler."""
+    """Analytic propagation with the J2 secular drifts. The period comes from
+    the mean semi-major axis (the osculating one minus its short-period term):
+    taking the osculating value as mean puts a LEO satellite hundreds of km
+    off after a day. The output state carries the short-period term again, so
+    re-reading it gives back the same mean value however the run is chunked.
+    Open orbits fall back to Kepler."""
     r = np.atleast_2d(r)
     v = np.atleast_2d(v)
     el = rv2coe(r, v, mu)
@@ -36,16 +73,19 @@ def j2_mean_propagate(r, v, dt, mu: float = MU_EARTH):
     closed = e < 1.0
     r_out, v_out = kepler_propagate(r, v, dt, mu)
     if np.any(closed):
-        a = np.atleast_1d(el.a)[closed]
         ec = e[closed]
         inc = np.atleast_1d(el.i)[closed]
+        argp0 = np.atleast_1d(el.argp)[closed]
+        a = osculating_to_mean_a(np.atleast_1d(el.a)[closed], ec, inc, argp0,
+                                 np.atleast_1d(el.nu)[closed])
         rd, wd, md = j2_secular_rates(a, ec, inc, mu)
         n = np.sqrt(mu / a ** 3)
         M = np.atleast_1d(el.M)[closed] + (n + md) * dt
         raan = np.atleast_1d(el.raan)[closed] + rd * dt
-        argp = np.atleast_1d(el.argp)[closed] + wd * dt
+        argp = argp0 + wd * dt
         nu = np.atleast_1d(mean_to_true(M, ec))
-        rc, vc = coe2rv(a, ec, inc, raan, argp, nu, mu)
+        a_osc = mean_to_osculating_a(a, ec, inc, argp, nu)
+        rc, vc = coe2rv(a_osc, ec, inc, raan, argp, nu, mu)
         r_out[closed] = rc
         v_out[closed] = vc
     return r_out, v_out
@@ -115,5 +155,6 @@ def line_of_sight(r1, r2, radius: float = R_EARTH) -> bool:
     return float(np.linalg.norm(r1 + t * d)) > radius
 
 
-__all__ = ["j2_secular_rates", "j2_mean_propagate", "beta_angle", "coverage_half_angle",
-           "footprint", "classify", "line_of_sight"]
+__all__ = ["j2_secular_rates", "j2_mean_propagate", "mean_to_osculating_a",
+           "osculating_to_mean_a", "beta_angle", "coverage_half_angle", "footprint",
+           "classify", "line_of_sight"]

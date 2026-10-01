@@ -60,9 +60,24 @@ The whole ensemble is one `(N, 6)` state, advanced with one shared step.
   60 s) keeps trails smooth and event detection responsive. Against the exact
   Kepler solution the error after one day is below 1 m.
 - **RK4** fixed step.
-- **Leapfrog** (kick-drift-kick), symplectic: bounded energy error for
-  conservative forces over arbitrarily long runs, as in REBOUND's WHFast
-  family.
+- **Wisdom-Holman** (`wh`), fixed step: kick-drift-kick in which the drift
+  is the exact Kepler orbit (the universal-variable solver below) and only
+  the perturbations - J2-J4, drag, thrust - are kicks, the splitting behind
+  REBOUND's WHFast (Wisdom & Holman 1991). The splitting error scales with
+  the perturbations, about 1e-3 of gravity in LEO, instead of with gravity.
+  Position error after one day, ISS orbit under J2-J4:
+
+  | step | leapfrog | RK4 | Wisdom-Holman |
+  |---|---|---|---|
+  | 60 s | 1,000 km | 2.2 km | 1.2 km |
+  | 120 s | 3,930 km | 65 km | 4.9 km |
+
+  It is symplectic for the conservative forces (bounded energy error);
+  drag and thrust depend on velocity or time, so with them it is only an
+  accurate second-order method.
+- **Leapfrog** (kick-drift-kick with a straight-line drift), symplectic:
+  bounded energy error, but a phase error that grows quickly. It needs steps
+  of a few seconds in LEO; it is kept for comparison.
 
 Integration stops exactly at every scheduled maneuver and burn boundary, and
 restarts whenever a satellite leaves the active set (re-entry, impact,
@@ -85,7 +100,34 @@ plus the secular J2 rates
     dargp/dt =  3/4 n J2 (Re/p)^2 (4 - 5 sin^2 i)
     dM/dt    =  n + 3/4 n J2 (Re/p)^2 sqrt(1-e^2) (2 - 3 sin^2 i)
 
-applied to the osculating elements treated as mean elements).
+applied to mean elements).
+
+The period has to come from the *mean* semi-major axis. J2 makes the
+osculating one swing over each revolution by the first-order short-period
+term (Kozai 1959)
+
+    a_osc - a_mean = 3/2 J2 Re^2 / a [2/3 (1 - 3/2 sin^2 i)((a/r)^3 - (1-e^2)^-3/2)
+                                      + sin^2 i (a/r)^3 cos 2(argp + nu)]
+
+which is about +-6 km in LEO (and over 100 km at a Molniya perigee). Taking
+the osculating value as mean put the ISS 816 km off after a day, farther
+than plain Kepler; with the mean value j2mean stays within 10 km (ISS) to
+50 km (700 km SSO) of a J2 Cowell run over a week, and a Molniya orbit within
+230 km instead of 24,000 km (`tests/test_mean_elements.py`). The other elements
+are taken as given: their short-period terms leave periodic errors of a few
+to a few tens of km but no drift. With the term written as `K / a_mean`, the
+conversion back from osculating to mean is the exact root of a quadratic,
+so re-reading the state every step gives back the same mean value and the
+result does not depend on how the run is chunked.
+
+**Formations.** Walker constellations take their altitude as the mean one,
+and copies spread along one orbit (`count` > 1) share the first copy's mean
+semi-major axis: each member gets the osculating value for its own place in
+the orbit. With equal osculating radii instead, the members' periods differ
+by up to ~0.3 % and a 1584-satellite shell at 550 km shears from 16.4 deg
+in-plane gaps to 4-28 deg within three days under Cowell; with mean values the
+gaps stay within 0.05 deg. A single satellite given by elements is placed
+exactly as given (osculating).
 
 ## Orbital elements
 
@@ -218,3 +260,5 @@ public numbers: performance is realistic in kind, not for mission design.
 - Cannonball drag (no attitude-dependent areas).
 - Without the optional `sgp4` package, TLE mean elements are used as
   osculating elements (a few km of error).
+- Mean elements cover the semi-major axis only (first-order J2); the
+  short-period terms of e, i, RAAN, argp and M are neglected.

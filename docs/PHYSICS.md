@@ -265,7 +265,13 @@ public numbers: performance is realistic in kind, not for mission design.
   (no parking-orbit coast and restart; schedule maneuvers for that), and an
   ambient-pressure model of `exp(-h / 7 km)`.
 - Cannonball drag (no attitude-dependent areas).
-- Without the optional `sgp4` package, TLE mean elements are used as
-  osculating elements (a few km of error).
+- Without the optional `sgp4` package, a TLE is read as J2 mean elements:
+  its mean motion is taken as the mean anomaly's rate under J2 (true to
+  first order, as in SGP4), which fixes the mean semi-major axis; the
+  short-period term above makes it osculating, and j2mean carries the state
+  from the TLE epoch, so the plane regresses. For the ISS that is 0.004 deg
+  of RAAN after 3 days (pure Kepler from the epoch was 15 deg off) and
+  0.13 deg along track after a day of Cowell. Drag (B*) and SGP4's
+  higher-order terms are not applied.
 - Mean elements cover the semi-major axis only (first-order J2); the
   short-period terms of e, i, RAAN, argp and M are neglected.

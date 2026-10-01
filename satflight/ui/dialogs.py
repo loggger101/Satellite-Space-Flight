@@ -61,6 +61,15 @@ AREA_TIP = "Cross-section facing the airflow, for air drag."
 CD_TIP = "Drag coefficient: about 2.2 for a typical satellite."
 
 
+# (orbit-spec key, form field) pairs: the size and shape of each element mode,
+# and a surface launch
+_SHAPE_FIELDS = {"Circular altitude": [("altitude", "alt")],
+                 "Perigee / apogee": [("perigee_alt", "hp"), ("apogee_alt", "ha")],
+                 "Elements (a, e)": [("a", "a"), ("e", "e")]}
+_SURFACE_FIELDS = [("lat", "lat"), ("lon", "lon"), ("alt", "salt"), ("speed", "speed"),
+                   ("azimuth", "azimuth"), ("fpa", "fpa")]
+
+
 def _mode(*names):
     """Visibility predicate: the initial-condition mode is one of ``names``."""
     return lambda raw: raw.get("mode") in names
@@ -69,19 +78,13 @@ def _mode(*names):
 def _orbit_from(v: dict) -> dict:
     """The scenario orbit spec described by the Add-satellite form."""
     mode = v["mode"]
-    if mode in _ELEM_MODES:
-        o = {"type": "elements", "i": v["i"], "raan": v["raan"], "argp": v["argp"], "nu": v["nu"]}
-        if mode == "Circular altitude":
-            o["altitude"] = v["alt"]
-            o["argp"] = 0.0
-        elif mode == "Perigee / apogee":
-            o["perigee_alt"], o["apogee_alt"] = v["hp"], v["ha"]
-        else:
-            o["a"], o["e"] = v["a"], v["e"]
+    if mode in _SHAPE_FIELDS:
+        o = {"type": "elements", "i": v["i"], "raan": v["raan"],
+             "argp": v.get("argp", 0.0), "nu": v["nu"]}         # a circle has no perigee
+        o.update((key, v[field]) for key, field in _SHAPE_FIELDS[mode])
         return o
     if mode == "Surface launch":
-        return {"type": "surface", "lat": v["lat"], "lon": v["lon"], "alt": v["salt"],
-                "speed": v["speed"], "azimuth": v["azimuth"], "fpa": v["fpa"]}
+        return {"type": "surface", **{key: v[field] for key, field in _SURFACE_FIELDS}}
     if mode == "State vector (ECI)":
         return {"type": "state", "r": [v["x"], v["y"], v["z"]], "v": [v["vx"], v["vy"], v["vz"]]}
     if mode == "Geostationary slot":
@@ -92,6 +95,7 @@ def _orbit_from(v: dict) -> dict:
 def add_satellite_dialog(app):
     """Add one satellite (or copies along its orbit) from any initial condition (key A)."""
     sim = app.sim
+    elements, surface = _mode(*_ELEM_MODES), _mode("Surface launch")
     sv = _mode("State vector (ECI)")
     sv_r = "Position component in the Earth-centered inertial frame (x toward the vernal " \
            "equinox, z toward the north pole)."
@@ -117,28 +121,27 @@ def add_satellite_dialog(app):
               "radius is 6,378 km)."),
         F("e", "Eccentricity e", "float", "0.1", visible=_mode("Elements (a, e)"),
           tip="0 is a circle; the nearer to 1, the longer and thinner the ellipse."),
-        F("i", "Inclination (deg or 'sso')", "floatx", "51.6", visible=_mode(*_ELEM_MODES),
-          tip=INC_TIP),
-        F("raan", "RAAN (deg)", "float", "0", visible=_mode(*_ELEM_MODES), tip=RAAN_TIP),
+        F("i", "Inclination (deg or 'sso')", "floatx", "51.6", visible=elements, tip=INC_TIP),
+        F("raan", "RAAN (deg)", "float", "0", visible=elements, tip=RAAN_TIP),
         F("argp", "Arg. of perigee (deg)", "float", "0",
           visible=_mode("Perigee / apogee", "Elements (a, e)"),
           tip="Where the lowest point lies: the angle from the ascending node to the "
               "perigee, in the direction of motion."),
-        F("nu", "True anomaly (deg)", "float", "0", visible=_mode(*_ELEM_MODES),
+        F("nu", "True anomaly (deg)", "float", "0", visible=elements,
           tip="Where on the orbit the satellite starts: the angle from the perigee (from the "
               "ascending node on a circular orbit)."),
-        F("lat", "Latitude (deg)", "float", "28.5", visible=_mode("Surface launch"),
+        F("lat", "Latitude (deg)", "float", "28.5", visible=surface,
           tip="Starting latitude, north positive."),
-        F("lon", "Longitude (deg E)", "float", "-80.6", visible=_mode("Surface launch"),
+        F("lon", "Longitude (deg E)", "float", "-80.6", visible=surface,
           tip="Starting longitude, east positive (west is negative)."),
-        F("salt", "Altitude (km)", "float", "0", visible=_mode("Surface launch"),
+        F("salt", "Altitude (km)", "float", "0", visible=surface,
           tip="Starting height above the surface."),
-        F("speed", "Ground-relative speed (km/s)", "float", "7.5", visible=_mode("Surface launch"),
+        F("speed", "Ground-relative speed (km/s)", "float", "7.5", visible=surface,
           tip="Speed relative to the turning ground. About 7.8 km/s reaches low orbit, "
               "about 11 km/s escapes."),
-        F("azimuth", "Azimuth (deg from N)", "float", "90", visible=_mode("Surface launch"),
+        F("azimuth", "Azimuth (deg from N)", "float", "90", visible=surface,
           tip="Compass heading: 0 north, 90 east (the Earth's spin helps), 180 south."),
-        F("fpa", "Flight-path angle (deg)", "float", "0", visible=_mode("Surface launch"),
+        F("fpa", "Flight-path angle (deg)", "float", "0", visible=surface,
           tip="Angle above the horizontal: 0 flies level, 90 straight up."),
         F("x", "x (km)", "float", "7000", visible=sv, tip=sv_r),
         F("y", "y (km)", "float", "0", visible=sv, tip=sv_r),
@@ -197,24 +200,18 @@ def _apply_preset(dlg):
             dlg.set(k, p[k])
     t = o["type"]
     if t == "elements":
-        if "altitude" in o:
-            dlg.set("mode", "Circular altitude")
-            dlg.set("alt", o["altitude"])
-        elif "perigee_alt" in o:
-            dlg.set("mode", "Perigee / apogee")
-            dlg.set("hp", o["perigee_alt"])
-            dlg.set("ha", o["apogee_alt"])
-        else:
-            dlg.set("mode", "Elements (a, e)")
-            dlg.set("a", o["a"])
-            dlg.set("e", o["e"])
+        # the mode whose first size key the preset has (a and e otherwise)
+        mode = next((m for m, fields in _SHAPE_FIELDS.items() if fields[0][0] in o),
+                    "Elements (a, e)")
+        dlg.set("mode", mode)
+        for key, field in _SHAPE_FIELDS[mode]:
+            dlg.set(field, o[key])
         for k in ("i", "raan", "argp", "nu"):
             dlg.set(k, o.get(k, 0))
     elif t == "surface":
         dlg.set("mode", "Surface launch")
-        for k, key in (("lat", "lat"), ("lon", "lon"), ("alt", "salt"), ("speed", "speed"),
-                       ("azimuth", "azimuth"), ("fpa", "fpa")):
-            dlg.set(key, o.get(k, 0))
+        for key, field in _SURFACE_FIELDS:
+            dlg.set(field, o.get(key, 0))
     elif t == "geo":
         dlg.set("mode", "Geostationary slot")
         dlg.set("geolon", o.get("lon", 0))

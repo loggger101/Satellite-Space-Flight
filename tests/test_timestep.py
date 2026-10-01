@@ -43,10 +43,9 @@ def _same(a: Simulation, b: Simulation):
 def _orbits(propagator: str, method: str) -> Scenario:
     sats = [SatSpec("low", {"type": "elements", "altitude": 300, "i": 51.6}, mass=200, area=3),
             SatSpec("mid", {"type": "elements", "altitude": 1200, "i": 98, "e": 0.02})]
-    sc = Scenario(name="frames", epoch=EPOCH, satellites=sats, propagator=propagator,
-                  forces=ForceModel(j2=True, drag=True),
-                  integrator=IntegratorSettings(method=method))
-    return sc
+    return Scenario(name="frames", epoch=EPOCH, satellites=sats, propagator=propagator,
+                    forces=ForceModel(j2=True, drag=True),
+                    integrator=IntegratorSettings(method=method))
 
 
 @pytest.mark.parametrize("propagator,method", [("cowell", "dopri5"), ("cowell", "rk4"),

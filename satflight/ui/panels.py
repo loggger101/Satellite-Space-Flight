@@ -130,7 +130,7 @@ class TopBar:
         stamp = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         if x + fonts.mono.size(stamp)[0] > room:
             stamp = short                               # narrow window: the time matters most
-        cowell = sim.propagator == "cowell"
+        prop, prop_tip = _propagator_item(sim)
         parts = [
             (stamp, theme.TEXT, f"Simulation date and time (UTC): "
                                 f"{dt.strftime('%A %d %B %Y, %H:%M:%S')}.", ""),
@@ -139,12 +139,7 @@ class TopBar:
             ("PAUSED", theme.WARN, "The simulation is paused.", "Space") if app.paused else
             (f"x{app.warp:g}", theme.GOOD, f"Time warp: {app.warp:g} simulated seconds pass "
                                            "every real second.", ", ."),
-            (sim.propagator + (f"/{sim.integrator.method} h={sim.integrator.stats.last_h:.1f}s"
-                               if cowell else ""), theme.DIM,
-             "Propagator" + (f": Cowell integrates every force numerically with "
-                             f"{sim.integrator.method}; h is its last time step." if cowell
-                             else f" {sim.propagator}: an analytic orbit formula, no "
-                                  "numerical integration.") + " Change it in Physics.", "P"),
+            (prop, theme.DIM, prop_tip, "P"),
             (sim.forces.label(), theme.DIM, "Forces acting: 2B is the Earth's central gravity, "
                                             "J2-J4 its uneven shape, DRAG the upper atmosphere.",
              "P"),
@@ -165,6 +160,17 @@ class TopBar:
             x = r.right + px(16)
         for b in self.buttons:
             b.draw(surf, fonts)
+
+
+def _propagator_item(sim):
+    """The top bar's propagator readout and its tip."""
+    if sim.propagator != "cowell":
+        return sim.propagator, (f"Propagator {sim.propagator}: an analytic orbit formula, no "
+                                "numerical integration. Change it in Physics.")
+    it = sim.integrator
+    return (f"cowell/{it.method} h={it.stats.last_h:.1f}s",
+            f"Propagator: Cowell integrates every force numerically with {it.method}; h is its "
+            "last time step. Change it in Physics.")
 
 
 # --- Left: satellite list -------------------------------------------------------------------------
@@ -273,23 +279,7 @@ class SatList:
                 pygame.draw.rect(surf, theme.ACCENT_DARK, row, border_radius=px(4))
             pygame.draw.circle(surf, s.color if s.status == ACTIVE else (100, 100, 100),
                                (row.x + px(10), row.centery), px(5))
-            asc = sim.ascent_of(k) if sim.ascents else None
-            if asc is not None and asc.phase == "pad":
-                txt, col = f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN
-                what = "a rocket on its pad; the countdown to liftoff"
-            elif asc is not None:
-                alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
-                txt, col = f"{alt:,.0f} km ^", theme.WARN
-                what = "a rocket climbing (^); its altitude"
-            elif s.status == ACTIVE:
-                alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
-                txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
-                col = theme.DIM if s.shadow > 0.5 else (150, 140, 230)
-                what = ("altitude, gray in sunlight" if s.shadow > 0.5
-                        else "altitude, violet while in the Earth's shadow")
-            else:
-                txt, col = s.status, theme.BAD
-                what = f"no longer flying ({s.status})"
+            txt, col, what = _list_value(sim, k)
             r = fonts.draw(surf, txt, (row.right - px(6), row.centery), col, fonts.small,
                            "midright")
             # the name gets whatever the value leaves, so long names never run into it
@@ -303,6 +293,25 @@ class SatList:
         surf.set_clip(clip)
         if sim.n > rows:
             theme.scrollbar(surf, lr.right - px(3), lr, self.scroll, rows, sim.n, 20)
+
+
+def _list_value(sim, k):
+    """The value shown at the right of list row ``k``: (text, color, what it means)."""
+    s = sim.sats[k]
+    asc = sim.ascent_of(k) if sim.ascents else None
+    if asc is not None and asc.phase == "pad":
+        return (f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN,
+                "a rocket on its pad; the countdown to liftoff")
+    if asc is not None:
+        alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
+        return f"{alt:,.0f} km ^", theme.WARN, "a rocket climbing (^); its altitude"
+    if s.status != ACTIVE:
+        return s.status, theme.BAD, f"no longer flying ({s.status})"
+    alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
+    txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
+    if s.shadow > 0.5:
+        return txt, theme.DIM, "altitude, gray in sunlight"
+    return txt, (150, 140, 230), "altitude, violet while in the Earth's shadow"
 
 
 # --- Right: telemetry --------------------------------------------------------------------------
@@ -395,77 +404,14 @@ class InfoPanel:
     def report(self, i):
         """Telemetry tab content for satellite ``i``: [(section title, [(label, value)])]."""
         sim = self.app.sim
-        s = sim.sats[i]
         r, v = sim.y[i, :3], sim.y[i, 3:]
         el = rv2coe(r, v)
-        theta = sim.gmst()
-        r_ecef = eci_to_ecef(r, theta)
-        lat, lon, alt = (float(x) for x in ecef_to_geodetic(r_ecef))
-        rm, vm = float(np.linalg.norm(r)), float(np.linalg.norm(v))
-        v_ground = float(np.linalg.norm(v - np.cross(OMEGA_VEC, r)))
-        fpa = math.degrees(math.asin(np.clip(np.dot(r, v) / (rm * vm), -1, 1)))
-        D = math.degrees
-        sections = [("STATE", [
-            ("Altitude", num(alt, "km", 2)),
-            ("Latitude / Longitude", f"{D(lat):+.3f} / {D(lon):+.3f} deg"),
-            ("Radius", num(rm, "km", 1)),
-            ("Speed (inertial)", num(vm, "km/s", 4)),
-            ("Speed (ground-rel.)", num(v_ground, "km/s", 4)),
-            ("Flight-path angle", num(fpa, "deg", 3)),
-        ])]
-        orbit = [
-            ("Semi-major axis a", num(el.a, "km", 2)),
-            ("Eccentricity e", f"{el.e:.6f}"),
-            ("Inclination i", num(D(el.i), "deg", 4)),
-            ("RAAN", num(D(el.raan), "deg", 4)),
-            ("Arg. of perigee", num(D(el.argp), "deg", 3)),
-            ("True anomaly", num(D(el.nu), "deg", 3)),
-            ("Arg. of latitude", num(D(el.u), "deg", 3)),
-        ]
-        if el.e < 1:
-            orbit += [
-                ("Perigee / apogee alt", f"{el.rp - R_EARTH:,.1f} / {el.ra - R_EARTH:,.1f} km"),
-                ("Period", format_period(el.period)),
-                ("Revs per day", f"{86400 / el.period:.4f}"),
-            ]
-            rd, wd, _ = j2_secular_rates(el.a, el.e, el.i)
-            orbit.append(("J2 dRAAN / dargp",
-                          f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"))
-        else:
-            orbit += [("Perigee alt", num(el.rp - R_EARTH, "km", 1)),
-                      ("Hyperbolic excess v", num(math.sqrt(max(0, 2 * el.energy)), "km/s", 4))]
-        orbit += [("Specific energy", num(el.energy, "km^2/s^2", 4)),
-                  ("Angular momentum", num(el.h, "km^2/s", 1))]
-        sections.append(("ORBIT  (" + classify(el) + ")", orbit))
-
-        jd = sim.jd()
-        sun = sun_position(jd)
-        env = [("Illumination", f"{shadow_state(s.shadow)} ({s.shadow * 100:.0f}%)"),
-               ("Beta angle", num(D(beta_angle(r, v, sun)), "deg", 2))]
-        cd_am = s.cd * s.area / s.mass
-        br = sim.forces.breakdown(r, v, cd_am, sim.gmst())
-        for name, (mag, on) in br.items():
-            env.append((f"  a_{name}" + ("" if on else " (off)"), f"{mag * 1e3:.3e} m/s^2"))
-        e_now = sim.energy(i)
-        if s.energy_ref is None or any(b.man.sat == s.name for b in sim.burns):
-            s.energy_ref = (sim.t, e_now)
-        t_ref, e_ref = s.energy_ref
-        env.append((f"Energy drift (last {format_duration(sim.t - t_ref).split('.')[0]})",
-                    f"{(e_now - e_ref) / abs(e_ref):+.2e}"))
-        sections.append(("ENVIRONMENT", env))
-
         launch = launch_rows(sim, i)
-        if launch:
-            sections.insert(0, ("LAUNCH", launch))
-        craft = [("Mass", num(s.mass, "kg", 2)), ("dV spent", num(s.dv_used * 1000, "m/s", 2)),
-                 ("Cd*A/m", f"{cd_am:.4f} m^2/kg")]
-        pending = [m for m in sim.maneuvers if m.sat == s.name]
-        for m in pending[:3]:
-            craft.append((f"  in {format_duration(m.t - sim.t)}", m.describe()[:26]))
-        for b in sim.burns:
-            if b.man.sat == s.name:
-                craft.append(("  BURNING", f"{b.man.thrust:.0f} N, {b.t1 - sim.t:.0f} s left"))
-        sections.append(("SPACECRAFT", craft))
+        sections = [("LAUNCH", launch)] if launch else []
+        sections += [("STATE", _state_rows(sim, r, v)),
+                     (f"ORBIT  ({classify(el)})", _orbit_rows(el)),
+                     ("ENVIRONMENT", _environment_rows(sim, i, r, v)),
+                     ("SPACECRAFT", _craft_rows(sim, i))]
         if sim.stations:
             contact = [(st.name[:16], f"az {az:5.1f} el {el_:4.1f} {rng:,.0f} km")
                        for st, az, el_, rng in sim.station_visibility(i)]
@@ -487,28 +433,7 @@ class InfoPanel:
             self._closest(surf, x, self.rect.bottom - px(30))
             return
         s = sim.sats[i]
-        pygame.draw.circle(surf, s.color, (x + px(6), y + px(11)), px(6))
-        r = fonts.draw(surf, s.name, (x + px(20), y), theme.TEXT, fonts.title)
-        tips.add(r.union(pygame.Rect(x, y, px(20), r.h)),
-                 "The selected satellite, drawn in its color. Ctrl+E renames it or changes "
-                 "its mass and drag area.", "Ctrl+E")
-        status_col = theme.GOOD if s.status == ACTIVE else theme.BAD
-        r = fonts.draw(surf, s.status.upper(), (self.rect.right - px(12), y + px(4)), status_col,
-                       fonts.small, "topright")
-        tips.add(r, STATUS_TIPS.get(s.status, ""))
-        for k, (name, r) in enumerate(zip(self.TABS, self.tab_rects, strict=True)):
-            on = k == self.tab
-            pygame.draw.rect(surf, theme.ACCENT_DARK if on else theme.FIELD, r,
-                             border_radius=px(5))
-            if on:
-                pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=px(5))
-            fonts.draw(surf, name, r.center, theme.TEXT if on else theme.DIM, fonts.small, "center")
-            tips.add(r, TAB_TIPS[k], "Q")
-            tips.hot(r)
-        q = fonts.draw(surf, "Q", (self.rect.right - px(12), self.tab_rects[0].centery),
-                       theme.FAINT, fonts.small, "midright")
-        tips.add(q.inflate(px(8), px(8)), "Q switches tab; PgUp / PgDn / Home / End or the wheel "
-                                          "scroll it.", "Q")
+        self._draw_header(surf, s, x, y)
         body = self.body
         tips.add(body, f"Details of {s.name}. {TAB_TIPS[self.tab]}\nQ switches tab; the wheel "
                        "or PgUp / PgDn scroll it.", "Q")
@@ -536,6 +461,32 @@ class InfoPanel:
                                                "the wheel and PgUp / PgDn work too.")
         self._closest(surf, x, self.rect.bottom - px(22))
 
+    def _draw_header(self, surf, s, x, y):
+        """Satellite ``s``'s name and status at (x, y), and the tab buttons."""
+        fonts = self.app.fonts
+        pygame.draw.circle(surf, s.color, (x + px(6), y + px(11)), px(6))
+        r = fonts.draw(surf, s.name, (x + px(20), y), theme.TEXT, fonts.title)
+        tips.add(r.union(pygame.Rect(x, y, px(20), r.h)),
+                 "The selected satellite, drawn in its color. Ctrl+E renames it or changes "
+                 "its mass and drag area.", "Ctrl+E")
+        status_col = theme.GOOD if s.status == ACTIVE else theme.BAD
+        r = fonts.draw(surf, s.status.upper(), (self.rect.right - px(12), y + px(4)), status_col,
+                       fonts.small, "topright")
+        tips.add(r, STATUS_TIPS.get(s.status, ""))
+        for k, (name, r) in enumerate(zip(self.TABS, self.tab_rects, strict=True)):
+            on = k == self.tab
+            pygame.draw.rect(surf, theme.ACCENT_DARK if on else theme.FIELD, r,
+                             border_radius=px(5))
+            if on:
+                pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=px(5))
+            fonts.draw(surf, name, r.center, theme.TEXT if on else theme.DIM, fonts.small, "center")
+            tips.add(r, TAB_TIPS[k], "Q")
+            tips.hot(r)
+        q = fonts.draw(surf, "Q", (self.rect.right - px(12), self.tab_rects[0].centery),
+                       theme.FAINT, fonts.small, "midright")
+        tips.add(q.inflate(px(8), px(8)), "Q switches tab; PgUp / PgDn / Home / End or the wheel "
+                                          "scroll it.", "Q")
+
     def _closest(self, surf, x, y):
         """Footer line naming the closest pair of satellites."""
         sim, fonts = self.app.sim, self.app.fonts
@@ -552,6 +503,78 @@ class InfoPanel:
                                     f"{sim.sats[a].name} and {sim.sats[b].name}, {d:,.1f} km "
                                     f"apart. It turns red below the close-approach alert "
                                     f"distance ({sim.conjunction_km:g} km, set in Physics).")
+
+
+def _state_rows(sim, r, v):
+    """Telemetry STATE rows: where the satellite is and how fast it moves."""
+    lat, lon, alt = (float(x) for x in ecef_to_geodetic(eci_to_ecef(r, sim.gmst())))
+    rm, vm = float(np.linalg.norm(r)), float(np.linalg.norm(v))
+    v_ground = float(np.linalg.norm(v - np.cross(OMEGA_VEC, r)))
+    fpa = math.degrees(math.asin(np.clip(np.dot(r, v) / (rm * vm), -1, 1)))
+    return [
+        ("Altitude", num(alt, "km", 2)),
+        ("Latitude / Longitude", f"{math.degrees(lat):+.3f} / {math.degrees(lon):+.3f} deg"),
+        ("Radius", num(rm, "km", 1)),
+        ("Speed (inertial)", num(vm, "km/s", 4)),
+        ("Speed (ground-rel.)", num(v_ground, "km/s", 4)),
+        ("Flight-path angle", num(fpa, "deg", 3)),
+    ]
+
+
+def _orbit_rows(el):
+    """Telemetry ORBIT rows: the osculating elements ``el`` and what follows from them."""
+    D = math.degrees
+    rows = [
+        ("Semi-major axis a", num(el.a, "km", 2)),
+        ("Eccentricity e", f"{el.e:.6f}"),
+        ("Inclination i", num(D(el.i), "deg", 4)),
+        ("RAAN", num(D(el.raan), "deg", 4)),
+        ("Arg. of perigee", num(D(el.argp), "deg", 3)),
+        ("True anomaly", num(D(el.nu), "deg", 3)),
+        ("Arg. of latitude", num(D(el.u), "deg", 3)),
+    ]
+    if el.e < 1:
+        rd, wd, _ = j2_secular_rates(el.a, el.e, el.i)
+        rows += [
+            ("Perigee / apogee alt", f"{el.rp - R_EARTH:,.1f} / {el.ra - R_EARTH:,.1f} km"),
+            ("Period", format_period(el.period)),
+            ("Revs per day", f"{86400 / el.period:.4f}"),
+            ("J2 dRAAN / dargp", f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"),
+        ]
+    else:
+        rows += [("Perigee alt", num(el.rp - R_EARTH, "km", 1)),
+                 ("Hyperbolic excess v", num(math.sqrt(max(0, 2 * el.energy)), "km/s", 4))]
+    return rows + [("Specific energy", num(el.energy, "km^2/s^2", 4)),
+                   ("Angular momentum", num(el.h, "km^2/s", 1))]
+
+
+def _environment_rows(sim, i, r, v):
+    """Telemetry ENVIRONMENT rows: sunlight, the acceleration of each force and the
+    energy drift since the reference (reset by burns and physics changes)."""
+    s = sim.sats[i]
+    rows = [("Illumination", f"{shadow_state(s.shadow)} ({s.shadow * 100:.0f}%)"),
+            ("Beta angle", num(math.degrees(beta_angle(r, v, sun_position(sim.jd()))), "deg", 2))]
+    cd_am = s.cd * s.area / s.mass
+    for name, (mag, on) in sim.forces.breakdown(r, v, cd_am, sim.gmst()).items():
+        rows.append((f"  a_{name}" + ("" if on else " (off)"), f"{mag * 1e3:.3e} m/s^2"))
+    e_now = sim.energy(i)
+    if s.energy_ref is None or any(b.man.sat == s.name for b in sim.burns):
+        s.energy_ref = (sim.t, e_now)
+    t_ref, e_ref = s.energy_ref
+    rows.append((f"Energy drift (last {format_duration(sim.t - t_ref).split('.')[0]})",
+                 f"{(e_now - e_ref) / abs(e_ref):+.2e}"))
+    return rows
+
+
+def _craft_rows(sim, i):
+    """Telemetry SPACECRAFT rows: mass, delta-v, drag, and the next burns."""
+    s = sim.sats[i]
+    pending = [m for m in sim.maneuvers if m.sat == s.name][:3]
+    return ([("Mass", num(s.mass, "kg", 2)), ("dV spent", num(s.dv_used * 1000, "m/s", 2)),
+             ("Cd*A/m", f"{s.cd * s.area / s.mass:.4f} m^2/kg")]
+            + [(f"  in {format_duration(m.t - sim.t)}", m.describe()[:26]) for m in pending]
+            + [("  BURNING", f"{b.man.thrust:.0f} N, {b.t1 - sim.t:.0f} s left")
+               for b in sim.burns if b.man.sat == s.name])
 
 
 # --- Bottom: event log ----------------------------------------------------------------------------

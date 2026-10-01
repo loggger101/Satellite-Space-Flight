@@ -23,8 +23,8 @@ The simulator opens on a start menu that fills the window. Nothing is loaded or
 running until you choose: click a scenario to watch it, launch a rocket, or
 build your own. `Ctrl+N` (or **Start menu** in the left panel) brings the menu
 back and holds the simulation still; `Esc` or **Resume** returns to it where it
-stopped. `H` lists every key. To open a scenario file
-directly, drop it onto the Windows launcher.
+stopped. `H` lists every key. To open a scenario file directly, drop it onto
+the Windows launcher.
 
 <img src="docs/images/start_screen.png" alt="Start screen" width="640">
 
@@ -110,8 +110,10 @@ taking shape and the time to cutoff.
 
 **Dynamics** (all vectorized over the whole satellite ensemble)
 
-- Two-body gravity plus zonal harmonics **J2, J3, J4**
-- **Atmospheric drag** (piecewise-exponential atmosphere, co-rotating with the Earth, solar-activity scale factor)
+- Two-body gravity plus zonal harmonics **J2, J3, J4** and the tesseral **C22/S22** term
+  (the Earth's equatorial ellipticity, which makes geostationary satellites drift)
+- **Atmospheric drag** (piecewise-exponential atmosphere, co-rotating with the Earth,
+  solar-activity scale factor)
 - Impulsive burns and **finite-thrust burns** with propellant use (Tsiolkovsky)
 - **Rocket launches**: multi-stage ascent with altitude-dependent thrust and Isp, drag,
   staging, fairing jettison, an optional g-limit, a gravity turn and closed-loop guidance
@@ -147,15 +149,34 @@ Earth's sphere of influence.
 
 **Displays**
 
-- 3-D view with a ray-traced, textured Earth lit by the true Sun: soft terminator with twilight band, sun glint on the oceans, atmospheric limb and halo that redden at sunset, exact Earth occlusion of orbits
+- 3-D view with a ray-traced, textured Earth lit by the true Sun: soft terminator with
+  twilight band, sun glint on the oceans, atmospheric limb and halo that redden at sunset,
+  exact Earth occlusion of orbits
 - Star field with stellar colors and the Milky Way along the true galactic plane; the Sun
 - Satellites glow in sunlight and dim when they pass into Earth's shadow
 - Inertial (ECI) or Earth-fixed (ECEF) frame; follow-camera on any satellite
-- Osculating orbits, perturbed trails, velocity vectors, apsides and node markers, coverage footprint, ground-station links
+- Osculating orbits, perturbed trails, velocity vectors, apsides and node markers, coverage
+  footprint, ground-station links
 - 2-D ground-track map with day/night shading and the sub-solar point
-- **Orbit inspector** for the clicked satellite. In 3-D: its translucent orbital plane slicing the globe, the equatorial plane, line of nodes (AN/DN), line of apsides with perigee and apogee altitudes, every angle (inclination, RAAN from the vernal equinox, argument of perigee, true anomaly, or argument of latitude for near-circular orbits) as a shaded wedge with an arrow showing which way it is measured, the angular-momentum and velocity vectors and a callout card beside the satellite. Every element is labeled by name and joined to what it marks; points behind the Earth keep a dimmed label, and a key in the corner of the view says what each element spans (click it to fold it away). In the *Orbit* tab: the orbital plane face-on to scale with the Earth's shadow cut through it, an edge-on inclination view, a view from the north pole with RAAN, the Sun and the local time of the ascending node, a timeline of the next revolution (sunlight, eclipse, apsis and node passes), altitude and speed gauges, and a property sheet: shape (a, b, e, p, apsides), orientation, timing (period, nodal period, track shift, time to the next perigee/apogee/node), speeds (perigee, apogee, circular, escape, C3), J2 drift, sun-synchronous inclination, beta angle, shadow fraction and the spacecraft's mass, area-to-mass, ballistic coefficient, and drag at perigee
-- Telemetry tab: geodetic position, osculating elements, J2 drift rates, beta angle, illumination, **acceleration budget per force**, energy conservation check, propellant and delta-v, station look angles
-- Time-history plots (altitude, speed, a, e, i, RAAN, argument of perigee, perigee height, energy drift)
+- **Orbit inspector** for the clicked satellite:
+  - *in 3-D*: its translucent orbital plane slicing the globe, the equatorial plane, the
+    lines of nodes (AN/DN) and apsides (with perigee and apogee altitudes), every angle
+    (inclination, RAAN from the vernal equinox, argument of perigee, true anomaly, or
+    argument of latitude for near-circular orbits) as a shaded wedge with an arrow showing
+    which way it is measured, the angular-momentum and velocity vectors, and a callout
+    card beside the satellite. Every element is labeled and joined to what it marks; a key
+    in the corner says what each one spans (click it to fold it away).
+  - *in the Orbit tab*: the orbital plane face-on to scale with the Earth's shadow cut
+    through it, an edge-on inclination view, a view from the north pole with RAAN, the Sun
+    and the local time of the ascending node, a timeline of the next revolution (sunlight,
+    eclipse, apsis and node passes), altitude and speed gauges, and a property sheet of
+    shape, orientation, timing, speeds, J2 drift, sun-synchronous inclination, beta angle,
+    shadow fraction and the spacecraft's mass and drag figures
+- Telemetry tab: geodetic position, osculating elements, J2 drift rates, beta angle,
+  illumination, **acceleration budget per force**, energy conservation check, propellant
+  and delta-v, station look angles
+- Time-history plots (altitude, speed, a, e, i, RAAN, argument of perigee, perigee height,
+  energy drift)
 
 ## Controls
 
@@ -187,7 +208,6 @@ display scaling (125 %, 150 %, ...) the panels and text are drawn that much
 larger, so they keep the size you chose but stay sharp instead of being
 stretched by Windows. `--ui-scale 1.5` picks another size.
 
-Rest the mouse on any button to see what it does and its keyboard shortcut.
 Every dialog shows a live preview (resulting orbit, transfer delta-v, burn
 duration) before you commit.
 
@@ -241,7 +261,7 @@ sim.advance(86400)
 
 ## Accuracy and validation
 
-The physics is checked by 119 tests (`pytest`), including textbook reference
+The physics is checked by the `pytest` suite, including textbook reference
 cases from Vallado's *Fundamentals of Astrodynamics and Applications*
 (RV to elements, 40-minute Kepler propagation, GMST, Hohmann transfer), the
 numerical integrator against the analytic solution (under 1 m after a day),
@@ -273,7 +293,7 @@ satflight/            physics engine (numpy only)
   timeutil.py         Julian dates, GMST, clock
   frames.py           ECI, ECEF, geodetic, ENU, RSW, VNB
   elements.py         elements <-> state, anomalies, universal Kepler, conics
-  forces.py           gravity, J2-J4, drag
+  forces.py           gravity, J2-J4, C22/S22, drag
   atmosphere.py       exponential atmosphere
   ephemeris.py        Sun position (lighting and eclipses only)
   eclipse.py          umbra / penumbra

@@ -35,6 +35,7 @@ RIM_COLOR = np.array([95, 160, 255], np.float32)
 HALO_COLOR = np.array([105, 170, 255], np.float32)
 TWILIGHT = np.array([255, 120, 50], np.float32)
 GLINT = np.array([255, 238, 205], np.float32)
+_TINTS = np.stack([NIGHT_TINT, TWILIGHT, RIM_COLOR])      # rows weighted in Earth._lighting
 
 OCEAN_DEEP = np.array([5, 24, 66], np.float32)
 OCEAN_SHALLOW = np.array([24, 98, 142], np.float32)
@@ -263,23 +264,27 @@ class EarthRenderer:
         hit &= (-b - np.sqrt(np.where(hit, disc, 0.0))) > 0
         m = np.sqrt(np.maximum(cc - b * b, 0.0))
         halo = ~hit & (b < 0) & (m < R_EARTH * HALO)
-        hit_idx = np.flatnonzero(hit)
-        halo_idx = np.flatnonzero(halo)
+        basis = np.stack([f, r, u])
 
-        def rays(idx):
-            ix, iy = np.divmod(idx, nh)
-            k = inv_len.ravel()[idx][:, None]          # inv_len is (nw, nh)
-            return (f + dx[ix, 0][:, None] * r + dy[0, iy][:, None] * u) * k
+        def rays(mask):
+            """Pixels of ``mask`` as (flat index, (row, col), unit rays): each
+            ray is (k, k dx, k dy) in the camera basis, one matrix product."""
+            ix, iy = np.nonzero(mask)
+            k = inv_len[ix, iy]
+            w = np.column_stack([k, k * dx[ix, 0], k * dy[0, iy]])
+            return ix * nh + iy, (ix, iy), w, w @ basis
 
-        dh = rays(hit_idx)
-        bf, df = b.ravel(), disc.ravel()
-        t = -bf[hit_idx] - np.sqrt(df[hit_idx])
-        n = (c + t[:, None] * dh) / R_EARTH
-        cos_view = np.clip(-np.sum(dh * n, axis=1), 0.0, 1.0)
-        rim = (1.0 - cos_view) ** 3
-        dq = rays(halo_idx)
-        q = c - bf[halo_idx][:, None] * dq
-        mh = m.ravel()[halo_idx]
+        hit_idx, (ix, iy), w, dh = rays(hit)
+        sq = np.sqrt(disc[ix, iy])
+        t = -b[ix, iy] - sq
+        # n = (c + t d) / R, built from the same weights as the ray d
+        n = (w * (t / R_EARTH)[:, None]) @ basis + c / R_EARTH
+        ndv = sq / R_EARTH            # n . view = -(d . c + t) / R = sqrt(disc) / R
+        cos_view = np.clip(ndv, 0.0, 1.0)
+        rim = (1.0 - cos_view) * (1.0 - cos_view) * (1.0 - cos_view)
+        halo_idx, (jx, jy), _, dq = rays(halo)
+        q = c - b[jx, jy][:, None] * dq
+        mh = m[jx, jy]
         qn = q / np.maximum(mh, 1.0)[:, None]
         g = (1.0 - (mh - R_EARTH) / (R_EARTH * (HALO - 1.0))) ** 2
         alpha = np.zeros(nw * nh, np.uint8)
@@ -289,6 +294,7 @@ class EarthRenderer:
         km_per_px = (bw / nw) / cam.focal * max(float(np.linalg.norm(c)) - R_EARTH, 1.0)
         return dict(size=(nw, nh), out=(bw, bh), hit_idx=hit_idx, halo_idx=halo_idx,
                     n=n.astype(np.float32), view=(-dh).astype(np.float32),
+                    ndv=ndv.astype(np.float32),
                     rim=rim.astype(np.float32), qn=qn.astype(np.float32),
                     g=g.astype(np.float32), alpha=alpha.reshape(nw, nh),
                     lat=np.arcsin(np.clip(n[:, 2], -1, 1)), lonw=np.arctan2(n[:, 1], n[:, 0]),
@@ -333,31 +339,34 @@ class EarthRenderer:
         return px[:, :3], px[:, 3] * (1 / 255.0)
 
     def _lighting(self, geo, sun_dir):
-        """Sun-dependent terms so that color = base * A + B + water * C,
-        plus the halo canvas and alpha."""
+        """Sun-dependent terms so that color = base * A + B + water * C GLINT
+        (C per pixel, nonzero only in the glint), plus the halo canvas and alpha.
+        Everything per pixel is a scalar or one (N, 3) x (3, 3) product: this runs
+        on every frame while the camera moves."""
         n = geo["n"]
         ndl = n @ sun_dir
         day = smoothstep(-0.12, 0.10, ndl)
         light = 0.085 + 0.915 * day * (0.28 + 0.72 * np.clip(ndl, 0.0, 1.0) ** 0.85)
         twilight = np.exp(-((ndl - 0.015) / 0.05) ** 2)
         # sun glint (Blinn-Phong); negligible outside n.h > 0.85, so only the
-        # small glint region is evaluated
+        # small glint region is evaluated. With view and Sun unit vectors,
+        # n.h = (n.v + n.s) / |v + s| and |v + s|^2 = 2 + 2 v.s
         spec = np.zeros(len(n), np.float32)
         near = np.flatnonzero(ndl > 0.0)
         if len(near):
-            hv = geo["view"][near] + sun_dir
-            hv /= np.linalg.norm(hv, axis=1, keepdims=True)
-            nh_ = np.sum(n[near] * hv, axis=1)
+            vs = geo["view"][near] @ sun_dir
+            nh_ = (geo["ndv"][near] + ndl[near]) / np.sqrt(np.maximum(2.0 + 2.0 * vs, 1e-12))
             sel = nh_ > 0.85
             idx, x = near[sel], nh_[sel]
             spec[idx] = (0.8 * x ** 600 + 0.07 * x ** 40) * np.clip(ndl[idx] * 5.0, 0.0, 1.0)
         rim = geo["rim"]
         keep = 1.0 - 0.3 * rim
-        glow = RIM_COLOR * (0.12 + 0.88 * day)[:, None] + TWILIGHT * (0.45 * twilight)[:, None]
         A = (light * keep).astype(np.float32)
-        B = ((NIGHT_TINT * (1.0 - day)[:, None] + TWILIGHT * (0.10 * twilight)[:, None])
-             * keep[:, None] + glow * (rim * 0.8)[:, None]).astype(np.float32)
-        C = (GLINT * (spec * keep)[:, None]).astype(np.float32)
+        # night tint, twilight and rim glow as weights of their three colors
+        tw = twilight * (0.10 * keep + 0.36 * rim)
+        w = np.stack([(1.0 - day) * keep, tw, (0.12 + 0.88 * day) * rim * 0.8], axis=1)
+        B = (w.astype(np.float32) @ _TINTS).astype(np.float32)
+        C = (spec * keep).astype(np.float32)
 
         nw, nh = geo["size"]
         canvas = np.zeros((nw * nh, 3), np.uint8)
@@ -378,8 +387,11 @@ class EarthRenderer:
         nw, nh = geo["size"]
         rgb = canvas.copy()
         if len(base):
-            col = base * A[:, None] + B + C * water[:, None]
-            rgb[geo["hit_idx"]] = np.clip(col, 0, 255).astype(np.uint8)
+            col = base * A[:, None] + B
+            g = np.flatnonzero(C)
+            if len(g):
+                col[g] += GLINT * (C[g] * water[g])[:, None]
+            rgb[geo["hit_idx"]] = np.clip(col, 0, 255, out=col).astype(np.uint8)
         surf = pygame.Surface((nw, nh), pygame.SRCALPHA)
         px = pygame.surfarray.pixels3d(surf)
         px[...] = rgb.reshape(nw, nh, 3)

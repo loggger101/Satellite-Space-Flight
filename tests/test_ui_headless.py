@@ -17,7 +17,7 @@ from satflight.analysis import osculating_to_mean_a
 from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.ui import glossary, theme, tips
-from satflight.ui.app import App
+from satflight.ui.app import REST_AFTER, RESTING_FPS, App
 from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
 from satflight.ui.widgets import TextField
@@ -946,3 +946,16 @@ def test_window_icon():
     icon = theme.app_icon()
     assert icon.get_size() == (64, 64) and icon.get_at((0, 0)).a == 0
     assert icon.get_at((32, 32)).a == 255
+
+
+def test_a_still_picture_is_redrawn_less_often(app):
+    now = time.monotonic()
+    app.paused = False
+    assert app.frame_rate(now + 10) == 60                   # the simulation moves
+    app.paused = True
+    assert app.frame_rate(now + 10) == RESTING_FPS          # paused and untouched
+    hover(app, (50, 50))
+    assert app.frame_rate() == 60                           # input: full rate at once
+    assert app.frame_rate(time.monotonic() + REST_AFTER + 0.1) == RESTING_FPS
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.view_rect().center))
+    assert app.frame_rate(time.monotonic() + 10) == 60      # dragging the view

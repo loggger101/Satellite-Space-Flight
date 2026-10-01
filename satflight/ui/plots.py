@@ -23,7 +23,7 @@ def _altitude(sim, t, s):
 
 
 def _energy_drift(sim, t, s):
-    e = conservative_energy(s[:, :3], s[:, 3:], sim.forces)
+    e = conservative_energy(s[:, :3], s[:, 3:], sim.forces, sim.clock.gmst(t))
     return (e - e[0]) / abs(e[0])
 
 

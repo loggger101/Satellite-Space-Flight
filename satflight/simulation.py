@@ -620,11 +620,11 @@ class Simulation:
         cd_am = self._props(idx)
         rows = {int(i): k for k, i in enumerate(idx)}
         burn_rows = [(rows[j], b) for b in burns if (j := self.index_of(b.man.sat)) in rows]
-        forces = self.forces
+        forces, clock = self.forces, self.clock
 
         def f(t, y):
             r, v = y[:, :3], y[:, 3:]
-            a = forces.acceleration(r, v, cd_am)
+            a = forces.acceleration(r, v, cd_am, float(clock.gmst(t)) if forces.c22 else 0.0)
             for k, b in burn_rows:
                 m = b.m0 - b.mdot * (t - b.t0)
                 d = finite_direction(b.man, r[k:k + 1], v[k:k + 1])[0]
@@ -944,7 +944,7 @@ class Simulation:
     def energy(self, i: int) -> float:
         """Specific energy of satellite ``i`` including the enabled zonal terms."""
         r, v = self.y[i:i + 1, :3], self.y[i:i + 1, 3:]
-        return float(conservative_energy(r, v, self.forces)[0])
+        return float(conservative_energy(r, v, self.forces, self.gmst())[0])
 
     def station_visibility(self, i: int):
         """[(station, az deg, el deg, range km)] for stations that see satellite i."""

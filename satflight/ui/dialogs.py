@@ -555,6 +555,10 @@ def physics_dialog(app):
           tip="The Earth's slight pear shape (north-south asymmetry). It slowly changes "
               "eccentricity."),
         F("j4", "J4", "bool", fm.j4, tip="The next, smaller term of the Earth's shape."),
+        F("c22", "C22/S22 (elliptical equator)", "bool", fm.c22,
+          tip="The equator is slightly oval, and the oval turns with the Earth. Small, but "
+              "it is what pulls geostationary satellites off their slots (toward 75 E or "
+              "105 W) over weeks. Cowell only."),
         F("drag", "Atmospheric drag", "bool", fm.drag,
           tip="Air resistance from the upper atmosphere. It makes low orbits decay until the "
               "satellite re-enters."),
@@ -571,8 +575,8 @@ def physics_dialog(app):
     def on_ok(v):
         if v["rtol"] <= 0 or v["atol"] <= 0 or v["h_max"] <= 0 or v["h_fixed"] <= 0:
             return "tolerances and steps must be positive"
-        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], drag=v["drag"],
-                                density_scale=v["density_scale"])
+        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
+                                drag=v["drag"], density_scale=v["density_scale"])
         sim.set_propagator(v["propagator"])
         it.method = v["method"]
         it.rtol, it.atol, it.h_max, it.h_fixed = v["rtol"], v["atol"], v["h_max"], v["h_fixed"]

@@ -16,10 +16,13 @@ import pytest
 from satflight.analysis import osculating_to_mean_a
 from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
+from satflight.scenario import Scenario
+from satflight.simulation import Simulation
 from satflight.ui import glossary, theme, tips
 from satflight.ui.app import REST_AFTER, RESTING_FPS, App
 from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
+from satflight.ui.welcome import scenario_card
 from satflight.ui.widgets import TextField
 
 
@@ -960,3 +963,12 @@ def test_a_still_picture_is_redrawn_less_often(app):
     assert app.frame_rate(time.monotonic() + REST_AFTER + 0.1) == RESTING_FPS
     app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.view_rect().center))
     assert app.frame_rate(time.monotonic() + 10) == 60      # dragging the view
+
+
+def test_start_menu_counts_every_satellite():
+    """Copies along one orbit count (the Molniya card said 2 for 6 satellites)."""
+    root = Path(__file__).resolve().parents[1] / "scenarios"
+    for stem in ("molniya_tundra", "default", "starlink_shell"):
+        tag = scenario_card(root / f"{stem}.json")[2]
+        n = Simulation(Scenario.load(root / f"{stem}.json")).n
+        assert tag.startswith(f"{n:,} satellite"), (stem, tag, n)

@@ -217,7 +217,7 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     """Only the Earth acts on satellites: a scenario asking for Sun/Moon
     gravity or SRP still loads, runs Earth-only and says what it ignored."""
     import json
-    assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "drag"}
+    assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "c22", "drag"}   # Earth only
     assert not {"sun", "moon", "srp"} & {f for f in vars(ForceModel())}
     d = Scenario(name="old", satellites=[]).to_dict()
     d["forces"].update(sun=True, moon=True, srp=False)
@@ -256,3 +256,18 @@ def test_geostationary_preset_holds_its_longitude(propagator, j2):
         return math.degrees(math.atan2(p[1], p[0]))
     sim.advance(30 * 86400.0)
     assert abs(lon() + 75.0) < 0.005
+
+
+@pytest.mark.parametrize("lon0,toward", [(30.0, 75.0), (-60.0, -105.0)])
+def test_c22_pulls_geostationary_satellites_toward_the_stable_longitudes(lon0, toward):
+    """Unattended GEO satellites accelerate toward 75 E or 105 W at ~0.0017 deg/day^2
+    at most: about 3 deg in 60 days from 45 deg away."""
+    sc = Scenario(name="g", satellites=[SatSpec("G", {"type": "geo", "lon": lon0})],
+                  forces=ForceModel(j2=True, c22=True))
+    sc.integrator.h_max = 600.0
+    sim = Simulation(sc)
+    sim.advance(60 * 86400.0)
+    p = eci_to_ecef(sim.y[0, :3], sim.gmst())
+    moved = math.degrees(math.atan2(p[1], p[0])) - lon0
+    assert math.copysign(1.0, moved) == math.copysign(1.0, toward - lon0)
+    assert 2.5 < abs(moved) < 3.6

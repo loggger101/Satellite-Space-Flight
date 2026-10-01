@@ -24,6 +24,7 @@ from satflight.scenario import (  # noqa: E402
     DEFAULT_STATIONS,
     ConstellationSpec,
     GroundStation,
+    IntegratorSettings,
     SatSpec,
     Scenario,
     preset_spec,
@@ -234,10 +235,24 @@ def launch_day():
     return sc
 
 
+def geo_drift():
+    lons = [-165, -120, -75, -30, 15, 60, 105, 150]
+    return Scenario(
+        name="Geostationary drift",
+        description="Eight geostationary satellites 45 deg apart with no station-keeping. "
+                    "The slightly elliptical equator (C22/S22) pulls each one toward 75 E or "
+                    "105 W, where it would rock back and forth. Best in the Earth-fixed frame "
+                    "(E) with the map (M); a day passes every second.",
+        epoch=EPOCH, forces=ForceModel(j2=True, c22=True), warp=86400,
+        integrator=IntegratorSettings(h_max=600.0),
+        satellites=[SatSpec(f"GEO {lon:+d}", {"type": "geo", "lon": lon}, mass=3000, area=30)
+                    for lon in lons])
+
+
 ALL = {"default": default, "hohmann_to_geo": hohmann, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
-       "launches_and_arcs": launches, "launch_day": launch_day}
+       "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift}
 
 
 if __name__ == "__main__":

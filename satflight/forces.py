@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, fields
 import numpy as np
 
 from . import atmosphere
-from .constants import F_EARTH, J2, J3, J4, MU_EARTH, R_EARTH
+from .constants import C22, F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, S22
 from .frames import OMEGA_VEC
 
 # --- Individual terms --------------------------------------------------------------
@@ -64,6 +64,42 @@ def accel_j4(r, mu: float = MU_EARTH, re: float = R_EARTH, j4: float = J4):
     txy = 1.0 - 14.0 * s + 21.0 * s * s
     tz = 5.0 - 70.0 / 3.0 * s + 21.0 * s * s
     return np.stack([k * x * txy, k * y * txy, k * z * tz], axis=-1)
+
+
+def _to_ecef_xy(r, theta):
+    """ECEF x, y (and z) of ECI positions ``r`` with the Earth turned by ``theta``
+    (a scalar, or one angle per row)."""
+    c, s = np.cos(theta), np.sin(theta)
+    x, y, z = r[..., 0], r[..., 1], r[..., 2]
+    return c * x + s * y, -s * x + c * y, z, c, s
+
+
+def accel_c22(r, theta, mu: float = MU_EARTH, re: float = R_EARTH, c22: float = C22,
+              s22: float = S22):
+    """Sectoral C22/S22 term (the equator is slightly elliptical) at ECI ``r``
+    when the Earth has turned by GMST ``theta``: the gradient of
+
+        U22 = 3 mu Re^2 (C22 (x^2 - y^2) + 2 S22 x y) / r^5   (x, y Earth-fixed).
+
+    It fixes the Earth's field to the rotating Earth, so it depends on time.
+    Geostationary satellites drift toward 75 E or 105 W under it."""
+    x, y, z, c, s = _to_ecef_xy(r, theta)
+    r2 = x * x + y * y + z * z
+    k = 3.0 * mu * re * re / (r2 * r2 * np.sqrt(r2))
+    w = c22 * (x * x - y * y) + 2.0 * s22 * x * y
+    q = 5.0 * w / r2
+    gx = k * (2.0 * (c22 * x + s22 * y) - q * x)
+    gy = k * (2.0 * (s22 * x - c22 * y) - q * y)
+    gz = -k * q * z
+    return np.stack([c * gx - s * gy, s * gx + c * gy, gz], axis=-1)
+
+
+def c22_potential(r, theta, mu: float = MU_EARTH, re: float = R_EARTH):
+    """U22 of :func:`accel_c22` (km^2/s^2, the acceleration is its gradient)."""
+    x, y, z, _, _ = _to_ecef_xy(r, theta)
+    r2 = x * x + y * y + z * z
+    w = C22 * (x * x - y * y) + 2.0 * S22 * x * y
+    return 3.0 * mu * re * re * w / (r2 * r2 * np.sqrt(r2))
 
 
 def zonal_potential(r, j2=True, j3=False, j4=False, mu: float = MU_EARTH,
@@ -109,10 +145,11 @@ class ForceModel:
     j2: bool = True
     j3: bool = False
     j4: bool = False
+    c22: bool = False
     drag: bool = False
     density_scale: float = 1.0
 
-    TERMS = ("j2", "j3", "j4", "drag")
+    TERMS = ("j2", "j3", "j4", "c22", "drag")
     OUT_OF_SCOPE = {"sun": "Sun third-body gravity", "moon": "Moon third-body gravity",
                     "srp": "solar radiation pressure"}
 
@@ -136,8 +173,9 @@ class ForceModel:
         on = [t.upper() for t in self.TERMS if getattr(self, t)]
         return "two-body" if not on else "2B+" + "+".join(on)
 
-    def acceleration(self, r, v, cd_a_over_m):
-        """Total acceleration (km/s^2) of the enabled terms for ``(N, 3)`` states."""
+    def acceleration(self, r, v, cd_a_over_m, gmst: float = 0.0):
+        """Total acceleration (km/s^2) of the enabled terms for ``(N, 3)`` states;
+        ``gmst`` (rad) places the Earth-fixed C22/S22 term."""
         a = accel_point_mass(r)
         if self.j2:
             a += accel_j2(r)
@@ -145,11 +183,13 @@ class ForceModel:
             a += accel_j3(r)
         if self.j4:
             a += accel_j4(r)
+        if self.c22:
+            a += accel_c22(r, gmst)
         if self.drag:
             a += accel_drag(r, v, cd_a_over_m, self.density_scale)
         return a
 
-    def breakdown(self, r, v, cd_a_over_m):
+    def breakdown(self, r, v, cd_a_over_m, gmst: float = 0.0):
         """Magnitude (km/s^2) of every term for display, enabled or not."""
         r = np.atleast_2d(r)
         v = np.atleast_2d(v)
@@ -158,14 +198,23 @@ class ForceModel:
             "J2": accel_j2(r),
             "J3": accel_j3(r),
             "J4": accel_j4(r),
+            "C22": accel_c22(r, gmst),
             "drag": accel_drag(r, v, np.atleast_1d(cd_a_over_m), self.density_scale),
         }
-        enabled = {"gravity": True, "J2": self.j2, "J3": self.j3, "J4": self.j4, "drag": self.drag}
+        enabled = {"gravity": True, "J2": self.j2, "J3": self.j3, "J4": self.j4, "C22": self.c22,
+                   "drag": self.drag}
         return {k: (float(np.linalg.norm(val[0])), enabled[k]) for k, val in terms.items()}
 
 
-def conservative_energy(r, v, model: ForceModel):
-    """Specific energy including the enabled zonal terms; conserved exactly
-    when only point mass + zonals act (the field is axisymmetric)."""
+def conservative_energy(r, v, model: ForceModel, gmst=0.0):
+    """The quantity the enabled gravity terms conserve. With zonals only (an
+    axisymmetric field) that is the specific energy. The C22/S22 term turns
+    with the Earth, so energy is no longer conserved; the Jacobi integral
+    E - omega h_z (energy seen from the rotating Earth) is, and is returned
+    instead. ``gmst`` (rad, scalar or one per row) places the C22 term."""
     vm2 = np.sum(v * v, axis=-1)
-    return 0.5 * vm2 - zonal_potential(r, model.j2, model.j3, model.j4)
+    e = 0.5 * vm2 - zonal_potential(r, model.j2, model.j3, model.j4)
+    if model.c22:
+        e = e - c22_potential(r, gmst)
+        e = e - OMEGA_EARTH * (r[..., 0] * v[..., 1] - r[..., 1] * v[..., 0])
+    return e

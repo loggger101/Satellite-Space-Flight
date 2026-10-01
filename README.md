@@ -125,9 +125,9 @@ time. [docs/SCOPE.md](docs/SCOPE.md) lists everything that was removed.
 
 | name | method | use |
 |---|---|---|
-| `cowell` | numerical integration of every enabled force: Dormand-Prince 5(4) adaptive (default), RK4, or symplectic leapfrog | accuracy, perturbation studies |
+| `cowell` | numerical integration of every enabled force: Dormand-Prince 5(4) adaptive (default), RK4, Wisdom-Holman (Kepler drift + perturbation kicks), or leapfrog | accuracy, perturbation studies |
 | `kepler` | exact analytic two-body motion (universal variables) | reference, very long runs |
-| `j2mean` | analytic two-body + J2 secular drift of RAAN, perigee, mean anomaly | thousands of satellites |
+| `j2mean` | analytic two-body + J2 secular drift of RAAN, perigee, mean anomaly, timed by the mean semi-major axis | thousands of satellites |
 
 **Initial conditions** - classical elements (a/e, perigee/apogee, or circular
 altitude; `"i": "sso"` gives the sun-synchronous inclination), ECI state
@@ -258,7 +258,7 @@ This project is standalone but draws on the models and conventions of:
 
 - [astropy](https://www.astropy.org) - time scales and reference frames
 - [skyfield](https://rhodesmill.org/skyfield/) / [sgp4](https://pypi.org/project/sgp4/) - TLE handling and SGP4
-- [REBOUND](https://rebound.readthedocs.io) / REBOUNDx - integrator design (symplectic leapfrog, adaptive schemes) and additional-force structure
+- [REBOUND](https://rebound.readthedocs.io) / REBOUNDx - integrator design (Wisdom-Holman / WHFast splitting, leapfrog, adaptive schemes) and additional-force structure
 - D. A. Vallado, *Fundamentals of Astrodynamics and Applications*, 4th ed.
 - O. Montenbruck & E. Gill, *Satellite Orbits*
 - H. D. Curtis, *Orbital Mechanics for Engineering Students*
@@ -275,7 +275,7 @@ satflight/            physics engine (numpy only)
   atmosphere.py       exponential atmosphere
   ephemeris.py        Sun position (lighting and eclipses only)
   eclipse.py          umbra / penumbra
-  integrators.py      DOPRI5, RK4, leapfrog
+  integrators.py      DOPRI5, RK4, Wisdom-Holman, leapfrog
   maneuvers.py        transfers, Lambert, maneuver objects
   launch.py           launch vehicles, ascent dynamics and guidance, launch windows
   planner.py          turns goals into scheduled burns

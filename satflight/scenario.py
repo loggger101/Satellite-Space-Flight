@@ -17,6 +17,11 @@ the propagator settings. Orbit specs are dicts with a ``type``:
 
 ``count`` > 1 on a satellite spreads copies evenly in mean anomaly.
 
+Copies along one orbit and Walker constellations share one *mean*
+semi-major axis (J2 short-period term removed, Kozai 1959), so they keep
+their spacing: equal osculating ones would give each member a different
+period and a 1584-satellite shell closes its gaps within days.
+
 ``launches`` lists rockets that lift off from a pad during the run (see
 ``satflight.launch.LaunchSpec``): vehicle stages, site, target orbit, timing.
 """
@@ -32,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .analysis import mean_to_osculating_a, osculating_to_mean_a
 from .constants import OMEGA_EARTH, R_EARTH, R_GEO
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
@@ -285,23 +291,28 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0):
 
 
 def spread_along_orbit(r, v, count: int):
-    """``count`` states sharing an orbit, evenly spaced in mean anomaly."""
+    """``count`` states sharing an orbit, evenly spaced in mean anomaly. The
+    first is the given state; the others share its mean semi-major axis."""
     if count <= 1:
         return [(r, v)]
     el = rv2coe(r, v)
     if el.e >= 1.0:
         raise ValueError("cannot spread satellites along an open orbit")
+    a_mean = float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu))
     out = []
     for k in range(count):
         M = el.M + 2 * math.pi * k / count
         nu = mean_to_true(M, el.e)
-        rr, vv = coe2rv(el.a, el.e, el.i, el.raan, el.argp, nu)
+        a = el.a if k == 0 else float(mean_to_osculating_a(a_mean, el.e, el.i, el.argp, nu))
+        rr, vv = coe2rv(a, el.e, el.i, el.raan, el.argp, nu)
         out.append((np.asarray(rr), np.asarray(vv)))
     return out
 
 
 def walker_states(c: ConstellationSpec):
-    """ECI states of a Walker i:t/p/f constellation (circular orbits)."""
+    """ECI states of a Walker i:t/p/f constellation (circular orbits). The
+    altitude is the mean one: each member's osculating semi-major axis carries
+    the J2 short-period term for its place in the orbit."""
     if c.total % c.planes:
         raise ValueError("total satellites must be a multiple of the number of planes")
     per = c.total // c.planes
@@ -313,7 +324,7 @@ def walker_states(c: ConstellationSpec):
         raan = math.radians(c.raan0) + spread * p / c.planes
         for s in range(per):
             u = 2 * math.pi * s / per + 2 * math.pi * c.phasing * p / c.total
-            r, v = coe2rv(a, 0.0, i, raan, 0.0, u)
+            r, v = coe2rv(float(mean_to_osculating_a(a, 0.0, i, 0.0, u)), 0.0, i, raan, 0.0, u)
             out.append((f"{c.name}-{p + 1:02d}{s + 1:02d}", np.asarray(r), np.asarray(v)))
     return out
 

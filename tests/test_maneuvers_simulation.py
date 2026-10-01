@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from satflight.analysis import j2_secular_rates
+from satflight.analysis import j2_secular_rates, osculating_to_mean_a
 from satflight.constants import R_EARTH, R_GEO
 from satflight.elements import coe2rv, kepler_propagate, rv2coe
 from satflight.forces import ForceModel
@@ -130,8 +130,9 @@ def test_walker_and_json_round_trip(tmp_path):
     sc.save(path)
     sim = Simulation(Scenario.load(path))
     assert sim.n == 27
-    rs = np.linalg.norm(sim.y[3:, :3], axis=1)   # satellites first, then Walker
-    assert np.allclose(rs, R_EARTH + 550)
+    el = rv2coe(sim.y[3:, :3], sim.y[3:, 3:])     # satellites first, then Walker
+    a_mean = osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)
+    assert np.allclose(a_mean, R_EARTH + 550)      # osculating radii swing by ~6 km
 
 
 def test_snapshot_reproduces_state():

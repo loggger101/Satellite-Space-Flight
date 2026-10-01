@@ -523,14 +523,19 @@ def physics_dialog(app):
                        "kepler": "kepler: the exact two-body ellipse. Fast, but ignores the "
                                  "Earth's shape and air.",
                        "j2mean": "j2mean: the ellipse plus the average drift caused by the "
-                                 "Earth's bulge (J2). Fast and good for long runs."}),
+                                 "Earth's bulge (J2), timed by the mean orbit. Fast and "
+                                 "good for long runs; no drag or burns."}),
         F("method", "Integrator (Cowell)", "choice", it.method, list(METHODS),
           tip="The numerical method Cowell uses.",
           option_tips={"dopri5": "dopri5: Dormand-Prince 5(4), adapts its step to meet the "
                                  "tolerances. The accurate default.",
                        "rk4": "rk4: classic Runge-Kutta with the fixed step below.",
-                       "leapfrog": "leapfrog: a symplectic fixed-step method. Its energy "
-                                   "error stays bounded over very long runs."}),
+                       "wh": "wh: Wisdom-Holman. Follows the exact ellipse and adds the "
+                             "small forces as kicks, so long fixed steps (60 s or more) "
+                             "stay accurate and the energy does not drift.",
+                       "leapfrog": "leapfrog: a simple symplectic fixed-step method. Its "
+                                   "energy stays bounded, but its timing drifts quickly: "
+                                   "it needs steps of a few seconds."}),
         F("rtol", "Relative tolerance", "float", f"{it.rtol:g}",
           tip="dopri5's allowed error per step, relative to the state. Smaller is more "
               "accurate and slower."),
@@ -538,8 +543,9 @@ def physics_dialog(app):
           tip="dopri5's allowed error per step in km and km/s, for values near zero."),
         F("h_max", "Max step (s)", "float", f"{it.h_max:g}",
           tip="Longest step dopri5 may take, however smooth the motion."),
-        F("h_fixed", "Fixed step rk4/leapfrog (s)", "float", f"{it.h_fixed:g}",
-          tip="Step length of the fixed-step methods. Low orbits need about 30 s or less."),
+        F("h_fixed", "Fixed step (s)", "float", f"{it.h_fixed:g}",
+          tip="Step length of the fixed-step methods rk4, wh and leapfrog. Low orbits need "
+              "about 30 s or less with rk4, 60 s with wh, a few seconds with leapfrog."),
         F("j2", "J2 oblateness", "bool", fm.j2,
           tip="The Earth's equatorial bulge. It turns orbital planes (node drift) and "
               "ellipses (perigee drift): the largest effect after central gravity."),

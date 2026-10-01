@@ -142,6 +142,34 @@ class Fonts:
 
 
 _PANELS = LRU(64)            # panel backgrounds by (size, color, radius)
+_SCRATCH: list = [None]
+
+
+def veil(size, rgba) -> pygame.Surface:
+    """A surface of ``size`` filled with the translucent ``rgba`` (a dialog's
+    shade over the window), made once per size and color."""
+    key = ("veil", tuple(size), tuple(rgba))
+    out = _PANELS.get(key)
+    if out is None:
+        out = _PANELS.put(key, pygame.Surface(size, pygame.SRCALPHA))
+        out.fill(rgba)
+    return out
+
+
+def scratch(size) -> pygame.Surface:
+    """A transparent per-pixel-alpha surface of ``size`` to draw a layer on and
+    blit straight away. It is a view of one shared surface that grows as
+    needed, cleared on every call: no allocation per translucent shape. The
+    previous scratch layer is overwritten, so blit it before asking again."""
+    w, h = max(1, int(size[0])), max(1, int(size[1]))
+    big = _SCRATCH[0]
+    if big is None or big.get_width() < w or big.get_height() < h:
+        bw = w if big is None else max(w, big.get_width())
+        bh = h if big is None else max(h, big.get_height())
+        big = _SCRATCH[0] = pygame.Surface((bw, bh), pygame.SRCALPHA)
+    layer = big.subsurface((0, 0, w, h))
+    layer.fill((0, 0, 0, 0))
+    return layer
 
 
 def panel(surface: pygame.Surface, rect: pygame.Rect, alpha_color=PANEL, edge=PANEL_EDGE,

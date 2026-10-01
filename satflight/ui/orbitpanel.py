@@ -79,7 +79,7 @@ def _alpha_poly(surf, color, alpha, pts, clip: pygame.Rect):
     """Translucent filled polygon, drawn through a layer the size of ``clip``."""
     if len(pts) < 3:
         return
-    layer = pygame.Surface(clip.size, pygame.SRCALPHA)
+    layer = theme.scratch(clip.size)
     pygame.draw.polygon(layer, (*color[:3], alpha), [(x - clip.x, y - clip.y) for x, y in pts])
     surf.blit(layer, clip.topleft)
 

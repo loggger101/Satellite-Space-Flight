@@ -197,6 +197,8 @@ near a pole, and the perigee drag readout is inflated accordingly.
   latitude (`asin(sin i · sin argp)`) rather than `rp - R_eq`.
 - Label the two clearly in the UI and in PHYSICS.md.
 - Add a test that the readouts, the CSV and the batch summary agree.
+- An exact, fast geodetic conversion ([D50](#d50-closed-form-geodetic-conversion))
+  would let every physical "altitude" use the true ellipsoid height cheaply.
 - The 3-D globe is also a sphere of equatorial radius (see `render3d._occluded`
   notes). That is a display issue, but it is the same root cause.
 
@@ -433,7 +435,8 @@ node over a 2-day window search (estimated).
 
 **Fix:** Jettison the fairing at cutoff if it is still on; let the throttle
 go lower or log the overshoot; derive pressure from the same atmosphere table
-as density.
+as density, or from the US Standard Atmosphere
+([D52](#d52-us-standard-atmosphere-1976)).
 
 ### A16. Solver edge cases
 
@@ -445,8 +448,9 @@ as density.
   and a large out-of-plane delta-v appears (seen in the A1 runs).
 
 **Fix:** Return a convergence flag and warn; handle e = 1 with Barker's
-equation; warn near 180 deg. A more robust Lambert solver is a standalone addition:
-[D5](#d5-lambert-solver).
+equation; warn near 180 deg. A more robust Lambert solver and a two-body
+propagator that reports convergence are standalone additions:
+[D5](#d5-lambert-solver) and [D51](#d51-robust-two-body-propagator).
 
 ### A17. SGP4 errors fall back silently
 
@@ -522,31 +526,31 @@ what remains to do in satflight's code.
 | [B3](#b3-propellant-budget) | Spacecraft | **High** | Dry mass and propellant; fixes A8 | D48 |
 | [B4](#b4-mean-elements-in-the-propagator-scenarios-and-readouts) | Elements | Medium | Full mean elements in `j2mean`, orbit specs and readouts; fixes A7 and A11 | D4 |
 | [B5](#b5-rendezvous-targeting-against-the-real-force-model) | Planner | Medium | Differential correction and a terminal approach | D5, D6, D40 |
-| [B6](#b6-launch-vehicle-physics) | Launch | Medium | Mach-dependent drag, separation impulses, tracked fairings, winds, strap-ons | D7, D47 |
+| [B6](#b6-launch-vehicle-physics) | Launch | Medium | Mach-dependent drag, separation impulses, tracked fairings, winds, strap-ons | D7, D47, D52, D63 |
 | [B7](#b7-tle-drag-and-an-sgp4-propagator) | TLE | Medium | B* used for drag; SGP4 as a propagator; `sgp4` as a dependency | D25, D46 |
 | [B8](#b8-import-and-export-j2000-states-and-ccsds-messages) | Interop | Medium | J2000 states and CCSDS messages in and out | D8, D34 |
-| [B9](#b9-smaller-models-plugged-in) | Various | Low | Eclipse geometry, refraction and masks, small forces, Earth orientation, geoid | D8-D12 |
-| [B10](#b10-conjunction-outcomes-and-statistics) | Events | Low | Collision events, per-satellite covariance, probability of collision | D14, D38, D39 |
+| [B9](#b9-smaller-models-plugged-in) | Various | Low | Eclipse geometry, refraction and masks, small forces, Earth orientation, geoid | D8-D12, D50 |
+| [B10](#b10-conjunction-outcomes-and-statistics) | Events | Low | Collision events, per-satellite covariance, probability of collision | D14, D38, D39, D55, D56 |
 | [B11](#b11-additions-that-need-a-scope-decision) | Scope | n/a | Diurnal bulge, albedo, tides, Sun and Moon gravity, SRP | |
-| [B12](#b12-verification-additions) | Tests | **High** | Regression tests for Part A; comparisons against reference data | D15, D36 |
-| [B13](#b13-re-entry-to-the-ground) | Re-entry | Medium | Follow re-entering objects to the ground; impact point on the map | D16, D44 |
+| [B12](#b12-verification-additions) | Tests | **High** | Regression tests for Part A; comparisons against reference data | D15, D36, D58 |
+| [B13](#b13-re-entry-to-the-ground) | Re-entry | Medium | Follow re-entering objects to the ground; impact point on the map | D16, D44, D53, D54, D59 |
 | [B14](#b14-station-keeping-and-orbit-maintenance) | Operations | Medium | Automatic reboosts, GEO east-west control, constellation phasing | D41 |
-| [B15](#b15-low-thrust-burns) | Maneuvers | Medium | Finite burns steered by a law instead of a fixed direction | D17, D48 |
-| [B16](#b16-more-maneuvers-in-the-planner) | Maneuvers | Medium | Phasing, RAAN-only change, combined plane change, deorbit, avoidance | D18, D40 |
-| [B17](#b17-orbit-design-keywords) | Design | Medium | `"repeat"`, `"frozen"` and LTAN keywords in orbit specs | D19, D42 |
+| [B15](#b15-low-thrust-burns) | Maneuvers | Medium | Finite burns steered by a law instead of a fixed direction | D17, D48, D61 |
+| [B16](#b16-more-maneuvers-in-the-planner) | Maneuvers | Medium | Phasing, RAAN-only change, combined plane change, deorbit, avoidance | D18, D40, D56 |
+| [B17](#b17-orbit-design-keywords) | Design | Medium | `"repeat"`, `"frozen"` and LTAN keywords in orbit specs | D19, D42, D62 |
 | [B18](#b18-orbital-lifetime-readout) | Readouts | Medium | Estimated lifetime and a deorbit-rule check in the Orbit tab | D20, D37 |
-| [B19](#b19-coverage-passes-and-link-readouts) | Analysis | Medium | Coverage statistics, GNSS DOP, pass predictions, Doppler, inter-satellite visibility | D21, D22, D42, D45 |
+| [B19](#b19-coverage-passes-and-link-readouts) | Analysis | Medium | Coverage statistics, GNSS DOP, pass predictions, Doppler, inter-satellite visibility | D21, D22, D42, D45, D57, D62 |
 | [B20](#b20-relative-motion-view) | Analysis | Medium | One satellite seen from another in the LVLH frame | D6, D43 |
-| [B21](#b21-orbit-determination-in-the-simulation) | Estimation | Low | Simulated tracking from the stations, fitted and shown against truth | D23, D24, D38, D49 |
-| [B22](#b22-integrators-and-multi-rate-stepping) | Integration | Medium | New integrators and an averaged propagator as options; multi-rate stepping | D26, D27 |
+| [B21](#b21-orbit-determination-in-the-simulation) | Estimation | Low | Simulated tracking from the stations, fitted and shown against truth | D23, D24, D38, D49, D57 |
+| [B22](#b22-integrators-and-multi-rate-stepping) | Integration | Medium | New integrators and an averaged propagator as options; multi-rate stepping | D26, D27, D51 |
 | [B23](#b23-monte-carlo-dispersions) | Uncertainty | Medium | Dispersed copies run as one ensemble | |
-| [B24](#b24-attitude-in-the-ensemble) | Spacecraft | Low | Attitude state, attitude-dependent drag and lift | D28 |
-| [B25](#b25-magnetic-field-and-radiation-overlays) | Environment | Low | South Atlantic Anomaly and belt flags on the map and in the log | D29 |
-| [B26](#b26-power-and-thermal-readouts) | Spacecraft | Low | Power, battery and temperature per satellite | D30 |
-| [B27](#b27-launch-guidance-and-mission-additions) | Launch | Medium | Dogleg ascents, parking orbits with restarts, booster recovery, failures | D45 |
-| [B28](#b28-fragmentation-events-and-catalogue-scale-runs) | Debris | Medium | Breakups as events; tens of thousands of objects | D31, D39 |
+| [B24](#b24-attitude-in-the-ensemble) | Spacecraft | Low | Attitude state, attitude-dependent drag and lift | D28, D60 |
+| [B25](#b25-magnetic-field-and-radiation-overlays) | Environment | Low | South Atlantic Anomaly and belt flags on the map and in the log | D29, D60 |
+| [B26](#b26-power-and-thermal-readouts) | Spacecraft | Low | Power, battery and temperature per satellite | D30, D59 |
+| [B27](#b27-launch-guidance-and-mission-additions) | Launch | Medium | Dogleg ascents, parking orbits with restarts, booster recovery, failures | D45, D63 |
+| [B28](#b28-fragmentation-events-and-catalogue-scale-runs) | Debris | Medium | Breakups as events; tens of thousands of objects | D31, D39, D55 |
 | [B29](#b29-differential-drag-and-formation-control) | Operations | Low | Phasing by switching drag area | D43 |
-| [B30](#b30-aerobraking-and-aerocapture) | Maneuvers | Low | Lowering an orbit with the atmosphere | D16 |
+| [B30](#b30-aerobraking-and-aerocapture) | Maneuvers | Low | Lowering an orbit with the atmosphere | D16, D53 |
 | [B31](#b31-imaging-targets) | Analysis | Medium | Ground targets with imaging windows | D32 |
 | [B32](#b32-observer-visibility) | Analysis | Low | Visible passes and brightness for a ground observer | D33, D49 |
 | [B33](#b33-deployment-docking-and-configuration-changes) | Spacecraft | Medium | Dispenser deployment, docking and undocking, area changes | D43 |
@@ -689,7 +693,7 @@ fragile near 180 deg (A16).
 - Already documented as missing: winds, strap-on boosters burning alongside a
   core, engine-out, and attitude dynamics.
 
-**Uses:** [D7](#d7-launch-aerodynamics-and-vehicle-data). Also [D47](#d47-launch-performance-estimator).
+**Uses:** [D7](#d7-launch-aerodynamics-and-vehicle-data). Also [D47](#d47-launch-performance-estimator). Also [D52](#d52-us-standard-atmosphere-1976), [D63](#d63-optimal-ascent-trajectories).
 
 **Repo work:**
 - Cd(Mach) in `launch._deriv`, keeping the float-only hot path fast (a small
@@ -746,6 +750,8 @@ transform, [D34](#d34-ccsds-message-reader-and-writer) for the formats.
 
 ### B9. Smaller models plugged in
 
+**Uses:** [D50](#d50-closed-form-geodetic-conversion).
+
 **Why:** Several small inaccuracies each have a standalone fix in Part D. In
 satflight they are mostly a swap or a switch:
 
@@ -763,7 +769,7 @@ satflight they are mostly a swap or a switch:
 other. There is no collision or debris outcome, no covariance and no
 probability of collision. The threshold is a fixed 10 km.
 
-**Uses:** [D14](#d14-probability-of-collision). Also [D38](#d38-covariance-propagation), [D39](#d39-catalogue-scale-conjunction-screening).
+**Uses:** [D14](#d14-probability-of-collision). Also [D38](#d38-covariance-propagation), [D39](#d39-catalogue-scale-conjunction-screening). Also [D55](#d55-debris-environment-flux), [D56](#d56-collision-avoidance-optimiser).
 
 **Repo work:**
 - A configurable alert threshold (`Simulation.conjunction_km`) in the UI.
@@ -792,7 +798,7 @@ because it involves the Sun or the Moon in an orbital calculation:
 ### B12. Verification additions
 
 **Uses:** [D15](#d15-reference-data-for-validation),
-[D36](#d36-density-calibration-from-tle-decay).
+[D36](#d36-density-calibration-from-tle-decay). Also [D58](#d58-physics-invariant-property-tests).
 
 **Regression tests for Part A:**
 - Rendezvous with J2 on (A2). `rendezvous.json` runs two-body, which hid the
@@ -820,7 +826,7 @@ because it involves the Sun or the Moon in an orbital calculation:
 ([`simulation.py:64`](../satflight/simulation.py#L64)). Today there is no
 impact point, no peak heating and no peak deceleration.
 
-**Uses:** [D16](#d16-entry-physics). Also [D44](#d44-component-demise-model).
+**Uses:** [D16](#d16-entry-physics). Also [D44](#d44-component-demise-model). Also [D53](#d53-capsule-aerodynamics), [D54](#d54-parachute-descent-and-landing-dispersion), [D59](#d59-materials-dataset).
 
 **Repo work:**
 - Below 80 km, hand the object to D16's entry model instead of removing it,
@@ -859,7 +865,7 @@ modelling them.
 frame. That suits a short chemical burn, but an electric thruster burns for
 days or months, with the direction steered continuously.
 
-**Uses:** [D17](#d17-low-thrust-steering-laws). Also [D48](#d48-thruster-performance-models).
+**Uses:** [D17](#d17-low-thrust-steering-laws). Also [D48](#d48-thruster-performance-models). Also [D61](#d61-electrodynamic-tether-force).
 
 **Repo work:**
 - A `steering` option on finite burns, evaluated inside
@@ -875,7 +881,7 @@ days or months, with the direction steered continuously.
 **Why:** The planners cover Hohmann, bi-elliptic, plane change at a node and
 Lambert rendezvous. Several standard maneuvers are missing.
 
-**Uses:** [D18](#d18-maneuver-calculators). Also [D40](#d40-transfer-grid-search).
+**Uses:** [D18](#d18-maneuver-calculators). Also [D40](#d40-transfer-grid-search). Also [D56](#d56-collision-avoidance-optimiser).
 
 **Repo work:**
 - New entries in the maneuver dialog and `planner.py` for phasing, RAAN-only
@@ -888,7 +894,7 @@ Lambert rendezvous. Several standard maneuvers are missing.
 **Why:** Scenarios accept `"i": "sso"`, but the other classic orbit designs
 have to be worked out by hand.
 
-**Uses:** [D19](#d19-orbit-design-solvers). Also [D42](#d42-constellation-design-calculators).
+**Uses:** [D19](#d19-orbit-design-solvers). Also [D42](#d42-constellation-design-calculators). Also [D62](#d62-analytic-ground-track-predictor).
 
 **Repo work:**
 - `"repeat": "k/d"`, `"frozen": true` and `"ltan": "10:30"` in orbit specs
@@ -920,7 +926,7 @@ at high warp.
 - `analysis.line_of_sight` exists but nothing calls it.
 
 **Uses:** [D21](#d21-coverage-revisit-dop-and-pass-prediction),
-[D22](#d22-link-geometry). Also [D42](#d42-constellation-design-calculators), [D45](#d45-launch-site-and-station-network-data).
+[D22](#d22-link-geometry). Also [D42](#d42-constellation-design-calculators), [D45](#d45-launch-site-and-station-network-data). Also [D57](#d57-onboard-gnss-navigation), [D62](#d62-analytic-ground-track-predictor).
 
 **Repo work:**
 - A coverage view for constellations (percentage covered, revisit gaps)
@@ -952,7 +958,7 @@ them from tracking measurements. Simulating that would show why predictions
 carry uncertainty, and it would feed the covariance B10 needs.
 
 **Uses:** [D23](#d23-orbit-determination),
-[D24](#d24-atmospheric-signal-delays). Also [D38](#d38-covariance-propagation), [D49](#d49-tracking-sensor-models).
+[D24](#d24-atmospheric-signal-delays). Also [D38](#d38-covariance-propagation), [D49](#d49-tracking-sensor-models). Also [D57](#d57-onboard-gnss-navigation).
 
 **Repo work:**
 - Generate measurements from the scenario's ground stations during a run,
@@ -976,7 +982,7 @@ carry uncertainty, and it would feed the covariance B10 needs.
   (measured), so LEO-dominated runs gain nothing.
 
 **Uses:** [D26](#d26-averaged-long-term-propagator),
-[D27](#d27-integrators).
+[D27](#d27-integrators). Also [D51](#d51-robust-two-body-propagator).
 
 **Repo work:**
 - Register D27's methods in `integrators.METHODS` and the Physics dialog.
@@ -1009,7 +1015,7 @@ one decay date, one miss distance. Real numbers come with spread.
 documented) and has no attitude. Area facing the flow depends on attitude,
 and so do pointing, power (B26) and magnetic torques (B25).
 
-**Uses:** [D28](#d28-attitude-dynamics-and-panel-drag).
+**Uses:** [D28](#d28-attitude-dynamics-and-panel-drag). Also [D60](#d60-attitude-control-laws).
 
 **Repo work:**
 - An attitude state (quaternion and rate) beside the `(N, 6)` orbit state,
@@ -1027,7 +1033,7 @@ Earth environment, so they are in scope. They decide radiation dose, the
 South Atlantic Anomaly passes that upset electronics, and the torques
 magnetorquers use.
 
-**Uses:** [D29](#d29-magnetic-field-and-radiation-belts).
+**Uses:** [D29](#d29-magnetic-field-and-radiation-belts). Also [D60](#d60-attitude-control-laws).
 
 **Repo work:**
 - A South Atlantic Anomaly / inner-belt overlay on the ground-track map, and
@@ -1041,7 +1047,7 @@ magnetorquers use.
 beta angle. Those numbers matter mainly for power and temperature, which are
 not shown.
 
-**Uses:** [D30](#d30-power-and-thermal-models).
+**Uses:** [D30](#d30-power-and-thermal-models). Also [D59](#d59-materials-dataset).
 
 **Repo work:**
 - Array area, efficiency, battery capacity and load as satellite properties.
@@ -1055,7 +1061,7 @@ not shown.
 **Why:** B6 covers the vehicle's physics. These are missing mission
 capabilities, all inside `launch.py`'s ascent and planner:
 
-**Uses:** [D45](#d45-launch-site-and-station-network-data).
+**Uses:** [D45](#d45-launch-site-and-station-network-data). Also [D63](#d63-optimal-ascent-trajectories).
 
 **Repo work:**
 - **Dogleg ascents:** today an inclination below the pad's latitude is
@@ -1075,7 +1081,7 @@ capabilities, all inside `launch.py`'s ascent and planner:
 battery explosion or an anti-satellite test, and the cloud that spreads
 around the orbit afterwards.
 
-**Uses:** [D31](#d31-breakup-fragment-generator). Also [D39](#d39-catalogue-scale-conjunction-screening).
+**Uses:** [D31](#d31-breakup-fragment-generator). Also [D39](#d39-catalogue-scale-conjunction-screening). Also [D55](#d55-debris-environment-flux).
 
 **Repo work:**
 - Breakup events (collision from B10, explosion or test scheduled by the
@@ -1112,7 +1118,7 @@ the perigee into the upper atmosphere on each pass lowers the apogee. The
 Japanese probe Hiten demonstrated aerobraking at Earth in 1991.
 
 **Uses:** [D16](#d16-entry-physics) for heating and deceleration limits and
-for lift and bank control.
+for lift and bank control. Also [D53](#d53-capsule-aerodynamics).
 
 **Repo work:**
 - A planner that sets the perigee altitude from a target drag per pass, and
@@ -1219,7 +1225,7 @@ place. The open-loop launch mode has the same problem for sounding rockets.
 # Part C: GitHub repositories that could be integrated
 
 I went through all 98 repositories starred by `loggger101` (as of 2026-10-02).
-20 of them could help with the items in Parts A, B and D. Four well-known
+20 of them could help with the items in Parts A, B and D. Five well-known
 repositories you have not starred are listed separately in
 [C5](#c5-not-starred-but-worth-considering).
 
@@ -1250,12 +1256,12 @@ port from than as run-time dependencies.
 | [skyfielders/python-skyfield](https://github.com/skyfielders/python-skyfield) | MIT | Dependency | A4, A21, B7, D8, D11, D21, D32, D33 |
 | [astropy/astropy](https://github.com/astropy/astropy) | BSD-3 | Test oracle | A4, A21, D8, D11, D15 |
 | [astropy/astroquery](https://github.com/astropy/astroquery) | BSD-3 | Test oracle (data) | D15 |
-| [esa/pykep](https://github.com/esa/pykep) | MPL-2.0 | Dependency or test oracle | A1, A16, D5 |
+| [esa/pykep](https://github.com/esa/pykep) | MPL-2.0 | Dependency or test oracle | A1, A16, D5, D51 |
 | [nyx-space/hifitime](https://github.com/nyx-space/hifitime) | MPL-2.0 | Dependency | A21, D8 |
 | [HIPS/autograd](https://github.com/HIPS/autograd) | MIT | Dependency | B5, B10, D23, D38 |
 | [sympy/sympy](https://github.com/sympy/sympy) | BSD-3 | Dev tool | A13, D1, D4 |
-| [esa/pygmo2](https://github.com/esa/pygmo2) | MPL-2.0 | Dependency (optional) | B6, D17, D18, D40, D42 |
-| [OpenSCvx/OpenSCvx](https://github.com/OpenSCvx/OpenSCvx) | Apache-2.0 | Offline experiments | B5, B6, B27, D17 |
+| [esa/pygmo2](https://github.com/esa/pygmo2) | MPL-2.0 | Dependency (optional) | B6, D17, D18, D40, D42, D63 |
+| [OpenSCvx/OpenSCvx](https://github.com/OpenSCvx/OpenSCvx) | Apache-2.0 | Offline experiments | B5, B6, B27, D17, D63 |
 | [loggger101/spacecost](https://github.com/loggger101/spacecost) | MIT | Data, dependency | B3, D7, D15, D47, D48 |
 | [Karmanplus/prospector](https://github.com/Karmanplus/prospector) | Apache-2.0 | Data | B3, D17, D48 |
 | [juliensimon/space-datasets](https://github.com/juliensimon/space-datasets) | per dataset | Data | B7, B28, B34, D3, D7, D14, D15, D20, D36, D46 |
@@ -1471,6 +1477,7 @@ be read for ideas, or run separately to produce numbers to compare against.
 | [brandon-rhodes/python-sgp4](https://github.com/brandon-rhodes/python-sgp4) | MIT | Already an optional dependency. Making it a required one fixes most of B7 and A17's fallback path, and D25 needs it |
 | [pleiszenburg/hapsira](https://github.com/pleiszenburg/hapsira) | MIT | Maintained fork of poliastro. Pure Python (numba) Izzo Lambert and perturbation models, easier to port from than pykep (D5) |
 | [CS-SI/Orekit](https://github.com/CS-SI/Orekit) | Apache-2.0 | Java, with Python access through `orekit_jpype`. The industry-standard reference propagator for D15 |
+| [HypothesisWorks/hypothesis](https://github.com/HypothesisWorks/hypothesis) | MPL-2.0 (GitHub shows NOASSERTION) | Property-based testing: generates the random valid inputs D58's invariant tests need |
 
 ## C6. Starred repositories that do not help with the physics
 
@@ -1571,6 +1578,20 @@ Following these makes a piece drop into satflight without adapters:
 | [D47](#d47-launch-performance-estimator) | Quick payload-to-orbit estimate for a vehicle | Low | B6 |
 | [D48](#d48-thruster-performance-models) | Chemical and electric thruster performance; real thruster table | Low | B3, B15 |
 | [D49](#d49-tracking-sensor-models) | Radar and optical detection of objects by ground sensors | Low | B21, B32 |
+| [D50](#d50-closed-form-geodetic-conversion) | Exact closed-form ECEF to geodetic conversion | Low | A3, B9 |
+| [D51](#d51-robust-two-body-propagator) | Kepler propagation that reports convergence; e = 1 handled | Low | A16, B22 |
+| [D52](#d52-us-standard-atmosphere-1976) | US Standard Atmosphere 1976: temperature, pressure, density, speed of sound | Medium | A15, B6 |
+| [D53](#d53-capsule-aerodynamics) | Hypersonic Cd and L/D of capsules by modified Newtonian theory | Low | B13, B30 |
+| [D54](#d54-parachute-descent-and-landing-dispersion) | Parachute descent, wind drift and landing dispersion | Low | B13 |
+| [D55](#d55-debris-environment-flux) | Flux of small untracked debris through an orbit | Low | B28, B10 |
+| [D56](#d56-collision-avoidance-optimiser) | Smallest maneuver that brings Pc below a threshold | Low | B10, B16 |
+| [D57](#d57-onboard-gnss-navigation) | GPS pseudoranges and a PVT solution for a LEO satellite | Low | B21, B19 |
+| [D58](#d58-physics-invariant-property-tests) | Property-based tests of physics invariants, reusable on any implementation | Medium | B12 |
+| [D59](#d59-materials-dataset) | Thermal and optical properties of spacecraft materials | Low | B13, B26 |
+| [D60](#d60-attitude-control-laws) | B-dot detumbling, momentum dumping and reaction-wheel pointing | Low | B24, B25 |
+| [D61](#d61-electrodynamic-tether-force) | Lorentz force on an electrodynamic tether | Low | B15 |
+| [D62](#d62-analytic-ground-track-predictor) | Ground tracks and node longitudes from mean elements alone | Low | B17, B19 |
+| [D63](#d63-optimal-ascent-trajectories) | Offline optimal ascents as a benchmark for the guidance | Low | B27, B6 |
 
 ### D1. Spherical-harmonic gravity
 
@@ -2536,6 +2557,259 @@ bool array` (detection when the scaled SNR exceeds the reference);
 **Test on its own:** halving the range lets the radar detect an object 16
 times smaller in cross-section; optical detection never happens with the
 object in shadow or the observer in daylight.
+
+### D50. Closed-form geodetic conversion
+
+**Serves:** [A3](#a3-two-different-altitudes-are-used-side-by-side), [B9](#b9-smaller-models-plugged-in).
+
+**Build:** An exact, non-iterative conversion from Earth-fixed coordinates to
+geodetic latitude, longitude and height (Vermeille 2002, or Zhu 1993),
+vectorised and valid from the Earth's centre region out to beyond GEO,
+including the poles. satflight's `frames.ecef_to_geodetic` uses six
+fixed-point iterations instead, and the drag code uses an approximation
+(`forces.approx_altitude`); one exact, fast routine would give every
+"altitude" the same meaning (A3).
+
+**Interface:** `ecef_to_geodetic(r_ecef, a=..., f=...) -> (lat, lon, h_km)`,
+a drop-in for satflight's function, plus `geodetic_height(r_ecef)` for code
+that needs only the height.
+
+**Test on its own:** round trip with `geodetic_to_ecef` to under 1 mm for
+random points from 0 to 50,000 km altitude, at the poles and on the equator;
+faster than six iterations on 10^6 points.
+
+### D51. Robust two-body propagator
+
+**Serves:** [A16](#a16-solver-edge-cases), [B22](#b22-integrators-and-multi-rate-stepping).
+
+**Build:** A universal-variable Kepler propagator that reports convergence
+per satellite instead of returning the last iterate (A16), handles
+near-parabolic and very long propagations (reducing the time by whole
+periods), and solves Kepler's equation with a guaranteed-convergence
+starter (e.g. Markley's or a bracketed Newton).
+
+**Interface:** `kepler_propagate(r0, v0, dt, mu=...) -> (r, v, ok)`, the same
+as satflight's plus an `(N,)` boolean `ok`; `mean_to_true(M, e)` covering
+e = 1 exactly through Barker's equation.
+
+**Test on its own:** forward then backward propagation returns the start to
+1e-9 relative for e from 0 to 10, including e = 0.999999 and 1.000001; the
+energy and angular momentum are conserved; comparison with pykep's
+propagator.
+
+### D52. US Standard Atmosphere 1976
+
+**Serves:** [A15](#a15-launch-bookkeeping-details), [B6](#b6-launch-vehicle-physics).
+
+**Build:** The full US Standard Atmosphere 1976: temperature, pressure,
+density and speed of sound from sea level to 1000 km, with the geopotential
+altitude conversion and the layer lapse rates below 86 km and the tabulated
+upper atmosphere above.
+
+**Interface:** `us76(alt_km) -> (T_K, p_Pa, rho_kg_m3, a_km_s)`, plain-float
+and array versions (the ascent's hot path uses floats). It replaces the
+launch model's `exp(-h / 7 km)` pressure (A15) and supplies D7's speed of
+sound.
+
+**Test on its own:** the published tables: 288.15 K, 101,325 Pa and
+1.225 kg/m³ at sea level; 216.65 K and 22,632 Pa at 11 km geopotential
+altitude.
+
+### D53. Capsule aerodynamics
+
+**Serves:** [B13](#b13-re-entry-to-the-ground), [B30](#b30-aerobraking-and-aerocapture).
+
+**Build:** Hypersonic force coefficients for blunt entry shapes (sphere-cone
+capsules, spheres, flat plates) by modified Newtonian theory,
+`Cp = Cp_max sin^2(theta)`, with `Cp_max` from the normal-shock relation, and
+the trim angle of attack and lift-to-drag ratio that follow.
+
+**Interface:** `newtonian_coefficients(shape, alpha) -> (cd, cl, cm)` with
+`shape` described by a few parameters (nose radius, cone half-angle, base
+radius); `trim(shape, cg_offset) -> (alpha, cd, cl)`. D16's entry model takes
+the resulting Cd and L/D.
+
+**Test on its own:** `Cp_max` for γ = 1.4 at high Mach is 1.839; a sphere
+gives Cd about 0.92; an Apollo-like capsule at its trim angle gives L/D of
+about 0.3.
+
+### D54. Parachute descent and landing dispersion
+
+**Serves:** [B13](#b13-re-entry-to-the-ground).
+
+**Build:** The last phase of a crewed or sample-return landing: drogue and
+main parachute deployment by altitude or speed, descent at terminal speed
+`sqrt(2 m g / (rho Cd A))`, and drift with a wind profile, giving a landing
+point and a dispersion ellipse.
+
+**Interface:** `descend(state, chutes, density_fn, wind_fn, g=...) ->
+(landing_lat, landing_lon, time_s, touchdown_speed)`, with `chutes` a list of
+`{"cd_area_m2", "deploy_alt_km" | "deploy_speed_km_s"}`; batch over
+dispersed inputs for an ellipse.
+
+**Test on its own:** touchdown speed equals the terminal-speed formula at
+sea-level density; with no wind the landing point lies straight below the
+deployment point.
+
+### D55. Debris environment flux
+
+**Serves:** [B28](#b28-fragmentation-events-and-catalogue-scale-runs), [B10](#b10-conjunction-outcomes-and-statistics).
+
+**Build:** The flux of small, untracked debris through a satellite's orbit as
+a function of altitude, inclination and minimum size, from published
+environment model outputs (ORDEM or MASTER) or a fitted analytic form, and
+the expected number of impacts over a mission.
+
+**Interface:** `debris_flux(alt_km, inc, min_size_m, year) -> impacts per
+m² per year`; `expected_impacts(orbit_mean_elements, area_m2, years,
+min_size_m)`.
+
+**Test on its own:** the spatial density peaks near 800-900 km, as the
+published environment curves show; flux grows steeply as the minimum size
+shrinks.
+
+### D56. Collision avoidance optimiser
+
+**Serves:** [B10](#b10-conjunction-outcomes-and-statistics), [B16](#b16-more-maneuvers-in-the-planner).
+
+**Build:** The smallest maneuver that brings a predicted probability of
+collision below a threshold (1e-4 is a common operator choice), given the
+encounter geometry, the combined covariance and the time before closest
+approach. Along-track burns are the usual answer; the optimiser can also
+consider radial ones.
+
+**Interface:** `avoidance_maneuver(r_rel, v_rel, cov_rel, hard_body_radius,
+lead_time_s, pc_max=1e-4, mu=..., r_sat=..., v_sat=...) -> (dv_vnb, pc_after)`,
+using D14 for Pc and two-body sensitivity of the miss vector to the burn.
+
+**Test on its own:** with no burn the Pc equals D14's; the returned burn
+achieves `pc_after <= pc_max` and is smaller than any burn found by a grid
+search over directions and sizes.
+
+### D57. Onboard GNSS navigation
+
+**Serves:** [B21](#b21-orbit-determination-in-the-simulation), [B19](#b19-coverage-passes-and-link-readouts).
+
+**Build:** A LEO satellite navigating with GPS: pseudoranges from the GPS
+satellites in view (with a receiver clock bias and noise), and the standard
+least-squares position-velocity-time solution, optionally smoothed with a
+filter (D23).
+
+**Interface:** `pseudoranges(r_user, gps_positions, clock_bias_m, sigma_m,
+rng, mask=...) -> (ranges, visible)`; `pvt(ranges, gps_positions, x0) ->
+(r_user, clock_bias_m, dop)`.
+
+**Test on its own:** with the 24-satellite GPS constellation and no noise
+the solution recovers the true position and clock exactly; with noise the
+error scales with PDOP (D21) times the range noise.
+
+### D58. Physics invariant property tests
+
+**Serves:** [B12](#b12-verification-additions).
+
+**Build:** A reusable property-based test suite for orbital code, generating
+random but valid inputs (with the `hypothesis` library) and checking the
+invariants any correct implementation must keep:
+- element ↔ state round trips (`coe2rv(rv2coe(x)) == x`) for every conic;
+- two-body propagation conserving energy and angular momentum, and forward
+  then backward returning to the start;
+- frame round trips (ECI ↔ ECEF, geodetic ↔ ECEF);
+- force terms equal to the gradient of their potential;
+- results that do not depend on how a run is chunked.
+
+**Interface:** test functions that take the implementation as an argument
+(e.g. `check_round_trip(rv2coe, coe2rv)`), so the same suite runs against
+satflight's functions and every Part D replacement.
+
+**Test on its own:** each property must fail on a planted defect (e.g. a sign
+flipped in a J2 term) before it is trusted to pass.
+
+### D59. Materials dataset
+
+**Serves:** [B13](#b13-re-entry-to-the-ground), [B26](#b26-power-and-thermal-readouts).
+
+**Build:** Thermal and optical properties of common spacecraft materials:
+melting point, heat of fusion, specific heat, density, solar absorptivity and
+infrared emissivity, each with its source.
+
+**Interface:** `material(name) -> {"melt_k", "heat_of_fusion_j_kg",
+"specific_heat_j_kg_k", "density_kg_m3", "absorptivity", "emissivity",
+"source"}`. D44 (demise) and D30 (thermal) read it.
+
+**Test on its own:** spot values from handbooks: aluminium melts at about
+933 K, titanium at about 1940 K, stainless steel at about 1700 K.
+
+### D60. Attitude control laws
+
+**Serves:** [B24](#b24-attitude-in-the-ensemble), [B25](#b25-magnetic-field-and-radiation-overlays).
+
+**Build:** The basic control laws for a small satellite: B-dot detumbling
+with magnetorquers (`m = -k dB/dt`), magnetorquer momentum dumping, and
+quaternion-feedback pointing with reaction wheels.
+
+**Interface:** `bdot(b_body, b_body_prev, dt, k, m_max) -> dipole (3,)`;
+`pointing_torque(q, w, q_target, kp, kd, torque_max) -> (3,)`; works with
+D28's dynamics and D29's field.
+
+**Test on its own:** a tumbling satellite under B-dot in a dipole field
+slows to near orbit rate; quaternion feedback settles to the target with the
+damping its gains imply.
+
+### D61. Electrodynamic tether force
+
+**Serves:** [B15](#b15-low-thrust-burns).
+
+**Build:** The Lorentz force on a current-carrying tether in the Earth's
+magnetic field, `F = I L × B`: a propellantless way to lower (or, with power,
+raise) an orbit. It is an Earth-only force.
+
+**Interface:** `tether_force(r_ecef, v_rel_ecef, tether_dir, length_km,
+current_a, field_fn) -> (N, 3)` newtons; a simple current model from the
+induced EMF `(v × B) · L` and a circuit resistance.
+
+**Test on its own:** with 1 A in a 5 km tether in a 3e-5 T field the force is
+about 0.15 N (estimated); the force reverses with the current; drag mode
+(current driven by the EMF) always removes orbital energy.
+
+**Sources:** D29 for the field.
+
+### D62. Analytic ground-track predictor
+
+**Serves:** [B17](#b17-orbit-design-keywords), [B19](#b19-coverage-passes-and-link-readouts).
+
+**Build:** Ground tracks from mean elements alone, with no propagation: the
+sub-satellite latitude from `sin(lat) = sin(i) sin(u)`, the longitude from
+the node's longitude, the argument of latitude and the Earth's rotation, with
+J2's secular rates. It also gives the maximum latitude, the longitude
+shift per revolution and node crossing longitudes.
+
+**Interface:** `ground_track(mean_elements, t, gmst0) -> (lat, lon)` over
+time arrays; `node_longitudes(mean_elements, n_revs, gmst0)`.
+
+**Test on its own:** matches a J2 Cowell ground track to within the
+short-period terms (a few km) over a day; a Landsat 8-like repeat orbit
+returns to the same node longitude after 233 revolutions.
+
+### D63. Optimal ascent trajectories
+
+**Serves:** [B27](#b27-launch-guidance-and-mission-additions), [B6](#b6-launch-vehicle-physics).
+
+**Build:** Offline optimisation of launch ascents: the pitch profile, coast
+lengths and staging that maximise payload (or propellant left) for a vehicle
+and target orbit, with constraints on maximum dynamic pressure and
+acceleration. The result is a reference against which satflight's
+closed-loop guidance can be judged.
+
+**Interface:** `optimal_ascent(vehicle_record, target_orbit, site, q_max_pa,
+a_max_g) -> (pitch_profile, payload_kg, trajectory)`, with vehicle records
+in D7's format and the atmosphere from D52.
+
+**Test on its own:** with drag and limits switched off, the optimum
+approaches the linear-tangent steering law's; payload figures within about
+10 % of published capacities.
+
+**Sources:** OpenSCvx (successive convexification), pygmo (global
+optimisation).
 
 ---
 

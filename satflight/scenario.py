@@ -4,8 +4,8 @@ A scenario lists satellites (each with an *orbit spec*), Walker
 constellations, ground stations, scheduled maneuvers, the force model and
 the propagator settings. Orbit specs are dicts with a ``type``:
 
-``elements``  classical elements. Size by ``a`` (km), ``altitude`` (circular,
-              km), or ``perigee_alt`` + ``apogee_alt`` (km); angles in degrees:
+``elements``  classical elements. Size by exactly one of ``a`` (km), ``altitude``
+              (circular, km), or ``perigee_alt`` + ``apogee_alt`` (km); angles in degrees:
               ``i``, ``raan``, ``argp``, ``nu`` (or ``M``). ``"i": "sso"`` picks
               the sun-synchronous inclination.
 ``state``     ECI ``r`` [km] and ``v`` [km/s].
@@ -24,6 +24,11 @@ period and a 1584-satellite shell closes its gaps within days.
 
 ``launches`` lists rockets that lift off from a pad during the run (see
 ``satflight.launch.LaunchSpec``): vehicle stages, site, target orbit, timing.
+
+Reading is strict (``satflight.strict``): an unknown key, a missing required
+one, an unknown option or a value out of range raises ValueError naming where
+it is. Only out-of-scope forces and properties (Sun, Moon, SRP, ``cr``) are
+let through, and reported in ``Scenario.out_of_scope``.
 """
 
 from __future__ import annotations

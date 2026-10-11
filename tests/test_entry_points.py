@@ -52,7 +52,7 @@ def refused(capsys, fn, *args) -> str:
     (["--size", "big"], "WxH"),
     (["--size", "0x600"], "positive"),
     (["--advance", "3x"], "duration"),
-    (["--advance", "-1h"], "negative"),
+    (["--advance=-1h"], "negative"),       # argparse before 3.14 reads a bare "-1h" as an option
     (["--warp", "0"], "--warp"),
     (["--distance", "-5"], "--distance"),
     (["--frames", "0"], "--frames"),

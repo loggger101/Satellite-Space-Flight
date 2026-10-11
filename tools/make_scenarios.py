@@ -9,6 +9,7 @@ run the planners here and store the results.
 
 from __future__ import annotations
 
+import json
 import math
 import sys
 from datetime import datetime
@@ -253,6 +254,44 @@ ALL = {"default": default, "hohmann_to_geo": hohmann, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
        "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift}
+
+# Planner results differ in the last bits between platforms (libm, numpy SIMD
+# paths): 1e-14 m/s on a 7.5 km/s subtraction. Any edit to a scenario changes
+# a value by far more than this.
+FLOAT_TOL = 1e-9
+
+
+def differences(built, saved, where: str = "") -> list[str]:
+    """Paths at which a generated scenario and a saved one differ; floats
+    within FLOAT_TOL (relative or absolute) count as equal."""
+    if isinstance(built, bool) or isinstance(saved, bool):
+        return [] if built is saved else [where or "/"]
+    if isinstance(built, (int, float)) and isinstance(saved, (int, float)):
+        same = math.isclose(built, saved, rel_tol=FLOAT_TOL, abs_tol=FLOAT_TOL)
+        return [] if same else [f"{where}: {built!r} != {saved!r}"]
+    if isinstance(built, dict) and isinstance(saved, dict):
+        out = [f"{where}/{k}: missing from one side" for k in sorted(built.keys() ^ saved.keys())]
+        for k in built.keys() & saved.keys():
+            out += differences(built[k], saved[k], f"{where}/{k}")
+        return out
+    if isinstance(built, list) and isinstance(saved, list):
+        if len(built) != len(saved):
+            return [f"{where}: {len(built)} items != {len(saved)}"]
+        out = []
+        for i, (a, b) in enumerate(zip(built, saved, strict=True)):
+            out += differences(a, b, f"{where}/{i}")
+        return out
+    return [] if built == saved and type(built) is type(saved) else [
+        f"{where}: {built!r} != {saved!r}"]
+
+
+def stale(name: str) -> list[str]:
+    """How scenarios/<name>.json differs from what the generator makes now."""
+    path = OUT / f"{name}.json"
+    if not path.exists():
+        return [f"{path.name} is missing"]
+    built = json.loads(json.dumps(ALL[name]().to_dict()))
+    return differences(built, json.loads(path.read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

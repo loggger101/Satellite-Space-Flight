@@ -23,7 +23,6 @@ What it checks:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -117,12 +116,8 @@ def scenario_file(path: Path):
 
 def generator():
     import make_scenarios
-    stale = []
-    for name, fn in make_scenarios.ALL.items():
-        built = json.loads(json.dumps(fn().to_dict()))
-        path = ROOT / "scenarios" / f"{name}.json"
-        if not path.exists() or json.loads(path.read_text(encoding="utf-8")) != built:
-            stale.append(name)
+    diffs = {name: make_scenarios.stale(name) for name in make_scenarios.ALL}
+    stale = [f"{name} ({d[0]})" for name, d in diffs.items() if d]
     return not stale, (f"stale: {', '.join(stale)} (run python tools/make_scenarios.py)"
                        if stale else f"{len(make_scenarios.ALL)} scenarios match")
 

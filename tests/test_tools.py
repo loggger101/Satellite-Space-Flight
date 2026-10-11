@@ -31,9 +31,28 @@ from satflight.simulation import Simulation  # noqa: E402
 def test_the_committed_scenarios_are_what_the_generator_makes(name):
     """scenarios/*.json are generated: an edit to one file, or to the generator
     without rerunning it, would otherwise drift apart unnoticed."""
-    built = json.loads(json.dumps(make_scenarios.ALL[name]().to_dict()))
-    saved = json.loads((ROOT / "scenarios" / f"{name}.json").read_text(encoding="utf-8"))
-    assert built == saved, f"rerun: python tools/make_scenarios.py  ({name}.json is stale)"
+    diff = make_scenarios.stale(name)
+    assert not diff, f"rerun: python tools/make_scenarios.py  ({name}.json is stale: {diff})"
+
+
+def test_the_staleness_check_ignores_only_float_noise():
+    """Last-bit differences between platforms pass; any real edit does not."""
+    saved = json.loads((ROOT / "scenarios" / "hohmann_to_geo.json").read_text(encoding="utf-8"))
+    diff = make_scenarios.differences
+    t = saved["maneuvers"][1]["t"]
+    noisy = json.loads(json.dumps(saved))
+    noisy["maneuvers"][1]["t"] = t * (1 + 4e-16)
+    assert diff(noisy, saved) == []
+    for change in (lambda s: s["maneuvers"][1].update(t=t + 1e-3),
+                   lambda s: s["satellites"][0].update(mass=4001),
+                   lambda s: s["forces"].update(drag=True),
+                   lambda s: s["satellites"][0]["orbit"].update(i=1e-6 + 1e-3),
+                   lambda s: s.update(name=s["name"] + " "),
+                   lambda s: s["maneuvers"].pop(),
+                   lambda s: s.update(extra=1)):
+        edited = json.loads(json.dumps(saved))
+        change(edited)
+        assert diff(edited, saved), change
 
 
 def test_every_bundled_scenario_comes_from_the_generator():

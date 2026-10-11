@@ -226,7 +226,8 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     path = tmp_path / "old.json"
     path.write_text(json.dumps(d), encoding="utf-8")
     sc = Scenario.load(path)
-    assert sc.out_of_scope == ["Sun third-body gravity", "Moon third-body gravity"]
+    assert sc.out_of_scope == ["Sun third-body gravity", "Moon third-body gravity",
+                               "Cr reflectivity (solar radiation pressure)"]
     assert "out_of_scope" not in sc.to_dict() and "sun" not in sc.to_dict()["forces"]
     sim = Simulation(sc)
     assert any(e.kind == "warn" and "Moon third-body" in e.text for e in sim.events)

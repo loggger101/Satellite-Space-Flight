@@ -47,7 +47,7 @@ import bisect
 import copy
 import math
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
@@ -55,6 +55,7 @@ from .atmosphere import H0, RHO0, SCALE_H, TOP_KM
 from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH
 from .elements import rv2coe
 from .frames import ecef_to_eci_state, geodetic_to_ecef
+from .strict import build, one_of
 
 G0_M = 9.80665            # m/s^2, standard gravity (defines Isp)
 P_SCALE_H = 7.0           # km, scale height of ambient pressure (thrust vs altitude)
@@ -67,17 +68,12 @@ MIN_PERIGEE = 100.0       # km: lowest target perigee accepted
 MAX_BURN = 3600.0         # s: longest stage burn accepted
 TIMINGS = ("now", "delay", "absolute", "raan", "plane")
 GUIDANCES = ("orbit", "open")
+DIRECTIONS = ("north", "south")
 
 _H0, _RHO0, _SH = H0.tolist(), RHO0.tolist(), SCALE_H.tolist()
 
 
 # --- Vehicle description ---------------------------------------------------------
-
-def _from_dict(cls, d):
-    """Build dataclass ``cls`` from ``d``, ignoring keys it has no field for."""
-    names = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in d.items() if k in names})
-
 
 @dataclass
 class Stage:
@@ -155,8 +151,9 @@ class Vehicle:
     @classmethod
     def from_dict(cls, d):
         """Build from a scenario dict; stages may be dicts or :class:`Stage` objects."""
-        v = _from_dict(cls, d)
-        v.stages = [s if isinstance(s, Stage) else _from_dict(Stage, s) for s in v.stages]
+        v = build(cls, d, f"vehicle {d.get('name', '?')!r}" if isinstance(d, dict) else "vehicle")
+        v.stages = [s if isinstance(s, Stage) else build(Stage, s, f"{v.name} stage {k + 1}")
+                    for k, s in enumerate(v.stages)]
         return v
 
     def copy(self) -> Vehicle:
@@ -187,7 +184,7 @@ VEHICLES = {
 
 def vehicle_preset(name: str) -> Vehicle:
     """An independent copy of ``VEHICLES[name]``."""
-    return VEHICLES[name].copy()
+    return VEHICLES[one_of(name, tuple(VEHICLES), "vehicle")].copy()
 
 
 # Public coordinates of launch complexes (geodetic deg, km).
@@ -248,12 +245,18 @@ class LaunchSpec:
     @classmethod
     def from_dict(cls, d):
         """Build from a scenario dict; ``vehicle`` may be a dict or a ``VEHICLES`` name."""
-        s = _from_dict(cls, d)
+        where = f"launch {d.get('name', '?')!r}" if isinstance(d, dict) else "launch"
+        s = build(cls, d, where)
         v = d.get("vehicle")
         if isinstance(v, str):
             s.vehicle = vehicle_preset(v)
         elif isinstance(v, dict):
             s.vehicle = Vehicle.from_dict(v)
+        elif "vehicle" in d and not isinstance(v, Vehicle):
+            raise ValueError(f"{where}: vehicle must be a preset name or an object")
+        one_of(s.timing, TIMINGS, f"{where} timing")
+        one_of(s.guidance, GUIDANCES, f"{where} guidance")
+        one_of(s.direction, DIRECTIONS, f"{where} direction")
         return s
 
     def copy(self) -> LaunchSpec:
@@ -280,6 +283,8 @@ def validate(spec: LaunchSpec):
         raise ValueError(f"unknown launch timing {spec.timing!r}")
     if spec.guidance not in GUIDANCES:
         raise ValueError(f"unknown guidance {spec.guidance!r}")
+    if spec.direction not in DIRECTIONS:
+        raise ValueError(f"unknown launch direction {spec.direction!r} (north or south)")
     if spec.guidance == "orbit" and min(spec.perigee_alt, spec.apogee_alt) < MIN_PERIGEE:
         raise ValueError(f"target perigee must be at least {MIN_PERIGEE:.0f} km")
     if spec.vertical_time < 0:

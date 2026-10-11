@@ -29,6 +29,7 @@ from .elements import kepler_propagate
 Deriv = Callable[[float, np.ndarray], np.ndarray]
 
 METHODS = ("dopri5", "rk4", "wh", "leapfrog")
+H_MIN = 1e-6        # s; an adaptive step that cannot meet the tolerance above it is an error
 
 # Dormand-Prince 5(4) tableau
 _C = np.array([0.0, 1 / 5, 3 / 10, 4 / 5, 8 / 9, 1.0, 1.0])
@@ -172,7 +173,11 @@ class Propagator:
             self.stats.evaluations += 6
             err_vec = h_try * sum(_E[j] * k[j] for j in range(7) if _E[j])
             err = _error_norm(err_vec, y, y_new, self.rtol, self.atol)
-            if err <= 1.0 or h_try < 1e-6:
+            if not err <= 1.0 and h_try < H_MIN:   # "not <=": a NaN error fails too
+                raise FloatingPointError(
+                    f"dopri5: step size fell below {H_MIN:g} s at t = {t:.3f} s with the error "
+                    f"still {err:.3g} x the tolerance (a singular or non-finite state?)")
+            if err <= 1.0:
                 t = t1 if last else t + h_try
                 y = y_new
                 k[0] = k[6]

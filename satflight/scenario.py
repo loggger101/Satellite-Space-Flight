@@ -38,14 +38,14 @@ from pathlib import Path
 import numpy as np
 
 from .analysis import mean_to_osculating_a, osculating_to_mean_a
-from .constants import J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO
+from .constants import F_EARTH, J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO, SOI_EARTH
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
 from .integrators import METHODS
 from .launch import LaunchSpec
 from .maneuvers import Maneuver, sun_synchronous_inclination
-from .strict import build, check_keys, one_of
+from .strict import build, check_keys, drag_props, finite, one_of, whole, within
 from .timeutil import UTC, Clock, format_epoch, parse_epoch
 from .tle import parse_tle
 
@@ -108,6 +108,7 @@ def check_orbit(orbit, where: str = "orbit"):
         raise ValueError(f"{where}: unknown orbit type {kind!r} "
                          f"(choose from {', '.join(ORBIT_KEYS)})")
     check_keys(orbit, ("type", *ORBIT_KEYS[kind]), where, ORBIT_REQUIRED.get(kind, ()))
+    _check_numbers(orbit, where)
     if kind != "elements":
         return
     given = [k for keys in SIZES for k in keys if k in orbit]
@@ -123,6 +124,52 @@ def check_orbit(orbit, where: str = "orbit"):
         raise ValueError(f"{where}: inclination {inc!r} is neither a number nor \"sso\"")
 
 
+# highest a spec may reach: beyond the sphere of influence the Earth no longer rules
+MAX_ALT = SOI_EARTH - R_EARTH
+R_POLAR = R_EARTH * (1.0 - F_EARTH)     # km; no state may start nearer the centre
+# most satellites one entry may make (copies along an orbit, a Walker shell)
+MAX_GROUP = 5000
+
+
+def _check_numbers(orbit, where: str):
+    """Every number of an orbit spec is finite and physically possible."""
+    kind = orbit.get("type", "elements")
+    for k in ORBIT_KEYS[kind]:
+        if k in orbit and k not in ("r", "v", "line1", "line2") and orbit[k] != "sso":
+            finite(orbit[k], f"{where} {k}")
+    for k in ("altitude", "perigee_alt", "apogee_alt", "alt"):
+        if k in orbit:
+            within(orbit[k], -R_EARTH * 0.999, MAX_ALT, f"{where} {k} (km)")
+    if kind == "elements":
+        e = within(orbit.get("e", 0.0), 0.0, 1e3, f"{where} e")
+        if e == 1.0:
+            raise ValueError(f"{where}: e = 1 (a parabola) has no semi-major axis; "
+                             "use an e a little above or below 1")
+        if "a" in orbit:
+            a = finite(orbit["a"], f"{where} a")
+            if not 0 < abs(a) <= SOI_EARTH or (e < 1 and a < 0):
+                raise ValueError(f"{where}: a = {a:,.6g} km is not an orbit around the Earth")
+            if e < 1 and a * (1 + e) > SOI_EARTH:
+                raise ValueError(f"{where}: apoapsis beyond Earth's sphere of influence")
+        if orbit.get("i", 0.0) != "sso":
+            within(orbit.get("i", 0.0), 0.0, 180.0, f"{where} i (deg)")
+    elif kind == "state":
+        for k in ("r", "v"):
+            vec = orbit[k]
+            if not isinstance(vec, list | tuple) or len(vec) != 3:
+                raise ValueError(f"{where} {k}: expected 3 numbers")
+            for x in vec:
+                finite(x, f"{where} {k}")
+        if not 0 < math.dist(orbit["r"], (0, 0, 0)) <= SOI_EARTH:
+            raise ValueError(f"{where}: r is not a position around the Earth")
+        if math.dist(orbit["v"], (0, 0, 0)) > 100.0:
+            raise ValueError(f"{where}: v is over 100 km/s (v is in km/s)")
+    elif kind == "surface":
+        within(orbit.get("lat", 0.0), -90.0, 90.0, f"{where} lat (deg)")
+        within(orbit.get("speed", 7.8), 0.0, 100.0, f"{where} speed (km/s)")
+        within(orbit.get("fpa", 0.0), -90.0, 90.0, f"{where} fpa (deg)")
+
+
 @dataclass
 class SatSpec:
     """One satellite (or ``count`` copies sharing an orbit) and its drag properties."""
@@ -134,6 +181,10 @@ class SatSpec:
     area: float = 5.0        # m^2 (drag cross-section)
     cd: float = 2.2
     count: int = 1
+
+    def __post_init__(self):
+        drag_props(self.mass, self.area, self.cd, f"satellite {self.name!r}")
+        whole(self.count, 1, MAX_GROUP, f"satellite {self.name!r} count")
 
     def to_dict(self):
         """JSON-ready dict (the color as a list)."""
@@ -160,6 +211,16 @@ class ConstellationSpec:
     cd: float = 2.2
     raan0: float = 0.0
 
+    def __post_init__(self):
+        where = f"constellation {self.name!r}"
+        within(self.altitude, 0.0, MAX_ALT, f"{where} altitude (km)")
+        within(self.inclination, 0.0, 180.0, f"{where} inclination (deg)")
+        whole(self.total, 1, MAX_GROUP, f"{where} total")
+        whole(self.planes, 1, self.total, f"{where} planes")
+        whole(self.phasing, 0, MAX_GROUP, f"{where} phasing")
+        finite(self.raan0, f"{where} raan0")
+        drag_props(self.mass, self.area, self.cd, where)
+
     def to_dict(self):
         """JSON-ready dict of the constellation's fields."""
         return asdict(self)
@@ -175,6 +236,13 @@ class GroundStation:
     alt: float = 0.0      # km
     min_el: float = 10.0  # deg
     color: list | None = None
+
+    def __post_init__(self):
+        where = f"station {self.name!r}"
+        within(self.lat, -90.0, 90.0, f"{where} latitude (deg)")
+        finite(self.lon, f"{where} longitude")
+        within(self.alt, -0.5, 100.0, f"{where} altitude (km)")
+        within(self.min_el, -90.0, 90.0, f"{where} minimum elevation (deg)")
 
     def ecef(self) -> np.ndarray:
         """Site position in ECEF (km)."""
@@ -329,8 +397,18 @@ def geostationary_radius(j2: bool = True) -> float:
 
 def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
     """ECI (r, v) at simulation time ``t`` for an orbit spec. ``j2`` says
-    whether J2 acts in the run (it moves the geostationary radius)."""
+    whether J2 acts in the run (it moves the geostationary radius). ValueError
+    if the spec is malformed or puts the satellite inside the Earth."""
     check_orbit(orbit)
+    r, v = _orbit_state(orbit, clock, t, j2)
+    if float(np.linalg.norm(r)) < R_POLAR - 1.0:
+        raise ValueError(f"the orbit puts the satellite {R_EARTH - float(np.linalg.norm(r)):,.0f} "
+                         "km inside the Earth")
+    return r, v
+
+
+def _orbit_state(orbit: dict, clock: Clock, t: float, j2: bool):
+    """:func:`orbit_state` without the checks."""
     kind = orbit.get("type", "elements")
     if kind == "elements":
         if "perigee_alt" in orbit or "apogee_alt" in orbit:
@@ -393,7 +471,8 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
 def spread_along_orbit(r, v, count: int):
     """``count`` states sharing an orbit, evenly spaced in mean anomaly. The
     first is the given state; the others share its mean semi-major axis."""
-    if count <= 1:
+    count = whole(count, 1, MAX_GROUP, "number of copies")
+    if count == 1:
         return [(r, v)]
     el = rv2coe(r, v)
     if el.e >= 1.0:

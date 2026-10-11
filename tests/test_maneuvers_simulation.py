@@ -239,10 +239,14 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
 
 def test_split_tles_reads_two_and_three_line_files():
     two = "\n".join(ISS_TLE)
-    text = f"ISS (ZARYA)\n{two}\n\n0 OTHER\n{two}\n{two}\n1 broken\n2 broken\n"
-    tles = split_tles(text)
+    typo = two[:-1] + "0"                          # last digit of the checksum is wrong
+    text = (f"ISS (ZARYA)\n{two}\n\n0 OTHER\n{two}\n{two}\n1 broken\n2 broken\n"
+            f"TYPO\n{typo}\n")
+    tles, problems = split_tles(text)
     assert [t.name for t in tles] == ["ISS (ZARYA)", "OTHER", "SAT 25544"]
     assert all(t.checksum_ok for t in tles)
+    assert len(problems) == 2                      # left out, but never without a word
+    assert "too short" in problems[0] and "TYPO" in problems[1] and "checksum" in problems[1]
 
 
 @pytest.mark.parametrize("propagator,j2", [("cowell", True), ("j2mean", True), ("cowell", False)])

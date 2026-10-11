@@ -92,26 +92,66 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _set_up(app, args):
+def _check(ap, args):
+    """Refuse (exit 2 with the reason) any option that cannot be honoured, before
+    a window opens: nothing on the command line is dropped without a word."""
+    from dataclasses import fields
+
+    from .batch import parse_duration
+    from .scenario import Scenario
+    from .ui.app import Options
+
+    if args.scenario:
+        try:
+            Scenario.load(args.scenario)
+        except (OSError, ValueError) as exc:
+            ap.error(f"cannot open {args.scenario}: {exc}")
+    if args.size is not None:
+        try:
+            w, h = (int(x) for x in args.size.lower().split("x"))
+        except ValueError:
+            ap.error(f"--size {args.size!r}: expected WxH, e.g. 1600x900")
+        if w <= 0 or h <= 0:
+            ap.error(f"--size {args.size!r}: both sides must be positive")
+    try:
+        args.advance_s = parse_duration(args.advance)
+    except ValueError as exc:
+        ap.error(f"--advance {args.advance!r}: {exc}")
+    if args.advance_s < 0:
+        ap.error("--advance cannot be negative")
+    for name, value in (("--warp", args.warp), ("--distance", args.distance),
+                        ("--ui-scale", args.ui_scale), ("--frames", args.frames)):
+        if value is not None and not (math.isfinite(value) and value > 0):
+            ap.error(f"{name} must be positive, got {value}")
+    switches = {f.name for f in fields(Options) if isinstance(f.default, bool)}
+    for name in _shown(args):
+        if name not in switches:
+            ap.error(f"--show {name!r}: choose from {', '.join(sorted(switches))}")
+
+
+def _shown(args) -> list[str]:
+    return [s.strip() for s in args.show.split(",") if s.strip()]
+
+
+def _set_up(app, args, ap):
     """Apply the options that act on a built :class:`App`: warp, head start,
     selection, frame, panels and camera."""
-    from .batch import parse_duration
-
-    if args.warp:
+    if args.warp is not None:
         app.warp = args.warp
-    adv = parse_duration(args.advance)
-    if adv > 0:
-        app.sim.advance(adv)
+    if args.advance_s > 0:
+        app.sim.advance(args.advance_s)
     if args.select:
         try:
-            app.select(app.sim.index_of(args.select))
-        except KeyError:
-            print(f"no satellite named {args.select!r}")
+            app.select(app.sim.require(args.select))
+        except ValueError as exc:
+            ap.error(f"--select: {exc} (there are: "
+                     f"{', '.join(s.name for s in app.sim.sats[:12]) or 'none'}"
+                     f"{', ...' if app.sim.n > 12 else ''})")
     if args.frame:
         app.opts.frame = args.frame
-    for name in filter(None, (s.strip() for s in args.show.split(","))):
+    for name in _shown(args):
         setattr(app.opts, name, True)
-    if args.distance:
+    if args.distance is not None:
         app.camera.distance = args.distance
     if args.yaw is not None:
         app.camera.yaw = math.radians(args.yaw)
@@ -119,13 +159,14 @@ def _set_up(app, args):
         app.camera.pitch = math.radians(args.pitch)
     if args.follow:
         app.toggle_follow()
-        if args.distance:                           # following resets the distance
+        if args.distance is not None:               # following resets the distance
             app.camera.distance = args.distance
 
 
 def main(argv=None):
     """Parse the command line, build the :class:`App` and run it."""
-    args = _parser().parse_args(argv)
+    ap = _parser()
+    args = ap.parse_args(argv)
     if args.headless:
         os.environ["SDL_VIDEODRIVER"] = "dummy"     # must precede importing pygame
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -136,6 +177,7 @@ def main(argv=None):
 
     from .ui.app import App
 
+    _check(ap, args)
     if args.headless:
         scale = args.ui_scale or 1.0
         w, h = window_size((1 << 16, 1 << 16), scale=scale)
@@ -148,7 +190,7 @@ def main(argv=None):
         welcome = not (args.scenario or args.headless)
     app = App(Path(args.scenario) if args.scenario else None, size=(w, h), welcome=welcome,
               fullscreen=args.fullscreen, ui_scale=scale)
-    _set_up(app, args)
+    _set_up(app, args, ap)
     app.run(max_frames=args.frames, screenshot=args.screenshot)
 
 

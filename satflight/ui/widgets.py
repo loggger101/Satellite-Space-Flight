@@ -4,6 +4,7 @@ choice cyclers, checkboxes and a declarative modal form dialog."""
 from __future__ import annotations
 
 import contextlib
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -98,7 +99,7 @@ class TextField(Widget):
                 self.value = "" if ev.mod & pygame.KMOD_CTRL else self.value[:-1]
                 return True
             if ev.key == pygame.K_v and ev.mod & pygame.KMOD_CTRL:
-                with contextlib.suppress(Exception):     # no clipboard on this platform
+                with contextlib.suppress(pygame.error):  # no clipboard on this platform
                     pygame.scrap.init()
                     txt = pygame.scrap.get_text() if hasattr(pygame.scrap, "get_text") else ""
                     self.value += (txt or "").strip()
@@ -106,18 +107,25 @@ class TextField(Widget):
         return False
 
     def parsed(self):
-        """The value converted per ``kind``; raises ValueError if it does not parse."""
+        """The value converted per ``kind``; raises ValueError if it does not parse
+        (or is not finite: "nan" and "inf" parse as floats but are no input)."""
         s = self.value.strip()
         if self.kind == "text":
             return s
-        if self.kind == "int":
-            return int(float(s))
         if self.kind == "floatx":        # float or keyword (e.g. "sso")
             try:
-                return float(s)
+                x = float(s)
             except ValueError:
                 return s
-        return float(s)
+        else:
+            x = float(s)
+        if not math.isfinite(x):
+            raise ValueError(f"{s!r} is not a finite number")
+        if self.kind == "int":
+            if x != int(x):
+                raise ValueError(f"{s!r} is not a whole number")
+            return int(x)
+        return x
 
     def draw(self, surf, fonts):
         tips.hot(self.rect, "text")
@@ -304,16 +312,21 @@ class FormDialog:
         return {k: w.value for k, w in self.widgets.items()}
 
     def set(self, key, value):
-        """Set a field's value, whatever kind of widget it is."""
+        """Set a field's value, whatever kind of widget it is (KeyError for a
+        field the form does not have, ValueError for an option a choice lacks)."""
         w = self.widgets.get(key)
         if isinstance(w, TextField):
             w.value = str(value)
         elif isinstance(w, Choice):
+            if value not in w.options:
+                raise ValueError(f"{key}: {value!r} is not one of {w.options}")
             w.set(value)
         elif isinstance(w, Checkbox):
             w.value = bool(value)
         elif key in self.info:
             self.info[key] = str(value)
+        else:
+            raise KeyError(f"the form has no field {key!r}")
 
     def values(self) -> dict:
         """Parsed values of *visible* fields; raises ValueError naming the field."""
@@ -327,9 +340,9 @@ class FormDialog:
                 try:
                     out[s.key] = w.parsed()
                     w.error = False
-                except ValueError:
+                except ValueError as exc:
                     w.error = True
-                    raise ValueError(f"'{s.label}' needs a number") from None
+                    raise ValueError(f"'{s.label}' needs a number ({exc})") from None
             else:
                 out[s.key] = w.value
         return out
@@ -342,7 +355,7 @@ class FormDialog:
         if self.on_change:
             try:
                 self.on_change(self, key)
-            except Exception as exc:  # keep the dialog alive on bad intermediate input
+            except ValueError as exc:  # bad intermediate input: say so, keep the dialog
                 self.error = str(exc)
         self.layout()
 
@@ -351,7 +364,7 @@ class FormDialog:
         try:
             msg = cb(self)
             self.error = msg or ""
-        except Exception as exc:
+        except (ValueError, OSError) as exc:    # bad input, or a file that cannot be used
             self.error = str(exc)
 
     # --- layout -----------------------------------------------------------------------
@@ -412,7 +425,7 @@ class FormDialog:
         try:
             vals = self.values()
             msg = self.on_ok(vals)
-        except Exception as exc:
+        except (ValueError, OSError) as exc:    # bad input or an unusable file; else a bug
             self.error = str(exc)
             return
         if msg:

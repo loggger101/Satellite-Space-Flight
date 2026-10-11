@@ -56,7 +56,7 @@ from .scenario import (
     palette_color,
     spread_along_orbit,
 )
-from .strict import one_of
+from .strict import drag_props, one_of
 from .timeutil import Clock, format_duration
 
 ACTIVE, DECAYED, IMPACTED, ESCAPED = "active", "re-entered", "impacted", "escaped"
@@ -289,6 +289,14 @@ class Simulation:
                 return i
         raise KeyError(name)
 
+    def require(self, name: str) -> int:
+        """Index of the satellite called ``name``; ValueError (a message for the
+        user) if there is none."""
+        for i, s in enumerate(self.sats):
+            if s.name == name:
+                return i
+        raise ValueError(f"no satellite named {name!r}")
+
     def unique_name(self, name: str) -> str:
         """``name``, or ``name 2``, ``name 3`` ... if it is taken."""
         names = {s.name for s in self.sats}
@@ -299,8 +307,25 @@ class Simulation:
             k += 1
         return f"{name} {k}"
 
+    def rename(self, i: int, name: str) -> str:
+        """Rename satellite ``i`` (made unique); its queued maneuvers, burns
+        under way and maneuvers aimed at it follow. Returns the name given."""
+        old = self.sats[i].name
+        if name == old:
+            return old
+        new = self.unique_name(name)
+        for m in [*self.maneuvers, *(b.man for b in self.burns)]:
+            if m.sat == old:
+                m.sat = new
+            if m.target == old:
+                m.target = new
+        self.sats[i].name = new
+        self.log(f"{old} renamed {new}")
+        return new
+
     def _append(self, name, color, props, r, v):
         sat = Satellite(self.unique_name(name), tuple(color), **props)
+        drag_props(sat.mass, sat.area, sat.cd, sat.name)
         self.sats.append(sat)
         self.y = np.vstack([self.y, np.concatenate([r, v])[None, :]])
         return sat
@@ -413,7 +438,7 @@ class Simulation:
     def plane_of(self, name: str):
         """(inclination deg, normal_at(t)) of a satellite's orbit plane, with
         its J2 nodal regression - the target of a launch window."""
-        i = self.index_of(name)
+        i = self.require(name)
         el = rv2coe(self.y[i, :3], self.y[i, 3:])
         if el.e >= 1.0:
             raise ValueError(f"{name} is not on a closed orbit")
@@ -522,10 +547,9 @@ class Simulation:
     def schedule(self, m: Maneuver) -> Maneuver:
         """Resolve ``m``'s execution time and queue it (ValueError if it cannot fly)."""
         m.check()
-        for name in filter(None, (m.sat, m.target if m.kind == "match_velocity" else "")):
-            if name not in {s.name for s in self.sats}:
-                raise ValueError(f"maneuver: no satellite named {name!r}")
-        i = self.index_of(m.sat)
+        i = self.require(m.sat)
+        if m.kind == "match_velocity":
+            self.require(m.target)
         if self.ascent_of(i) is not None:
             raise ValueError(f"{m.sat} is still on its launch vehicle; "
                              "maneuver it after separation")

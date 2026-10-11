@@ -82,6 +82,18 @@ def test_a_removed_satellite_takes_its_maneuvers_and_burns_along():
     sim.advance(900)                    # nothing left that names A
 
 
+def test_renaming_mid_burn_keeps_the_burn():
+    """The edit dialog renamed queued maneuvers only: a burn under way kept the
+    old name, so its burnout was never booked (mass and delta-v unchanged)."""
+    sim = sim_of(leo("A"), leo("B", 700))
+    sim.schedule(Maneuver("A", "finite", dv=(1, 0, 0), thrust=400, duration=300))
+    sim.advance(60)
+    m0 = sim.sats[0].mass
+    assert sim.rename(0, "B") == "B 2"
+    sim.advance(600)
+    assert not sim.burns and sim.sats[0].mass < m0 and sim.sats[0].dv_used > 0
+
+
 def test_rocket_equation_refuses_a_zero_isp():
     with pytest.raises(ValueError, match="Isp"):
         propellant_after(100.0, 0.1, 0.0)

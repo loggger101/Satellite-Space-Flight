@@ -92,10 +92,10 @@ def load_font(kind: str, size: int, bold: bool = False) -> pygame.font.Font:
     if os.environ.get("SATFLIGHT_FONTS") != "bundled" and pygame.font.match_font(name):
         return pygame.font.SysFont(name, size, bold=bold)
     path = FONT_DIR / BUNDLED_FONTS[kind, bold]
-    if path.exists():
-        return pygame.font.Font(str(path), size)
-    return pygame.font.SysFont("dejavusansmono,menlo,couriernew" if kind == "mono"
-                               else "dejavusans,helvetica,arial", size, bold=bold)
+    if not path.exists():       # the layout is measured with these fonts: no stand-in
+        raise FileNotFoundError(f"bundled font missing: {path} (restore it from the "
+                                "repository)")
+    return pygame.font.Font(str(path), size)
 
 
 class Fonts:

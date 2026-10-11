@@ -16,7 +16,7 @@ import numpy as np
 from .constants import J2, MU_EARTH, R_EARTH
 from .elements import rv2coe, stumpff, time_to_true_anomaly
 from .frames import local_to_eci, rsw_basis, unit, vnb_basis
-from .strict import build, one_of
+from .strict import MAX_SPAN, build, finite, one_of
 
 G0 = 9.80665e-3   # km/s^2
 
@@ -160,10 +160,16 @@ class Maneuver:
         one_of(self.frame, FRAMES, "maneuver frame")
         if len(self.dv) != 3:
             raise ValueError(f"maneuver dv needs 3 components, got {len(self.dv)}")
+        for x in (*self.dv, self.delta_i, self.thrust, self.duration, self.delay, self.isp):
+            finite(x, f"maneuver for {self.sat!r}: every number")
+        if math.hypot(*self.dv) > 50.0 and self.kind == "impulse":
+            raise ValueError(f"a {math.hypot(*self.dv):,.6g} km/s burn is beyond any rocket "
+                             "(dv is in km/s)")
         if self.isp <= 0:
             raise ValueError(f"maneuver Isp must be positive, got {self.isp:g} s")
-        if self.timing == "delay" and self.delay < 0:
-            raise ValueError(f"maneuver delay cannot be negative ({self.delay:g} s)")
+        if self.timing == "delay" and not 0 <= self.delay <= MAX_SPAN:
+            raise ValueError(f"maneuver delay must be between 0 s and 100 years, "
+                             f"got {self.delay:g} s")
         if self.kind == "finite":
             if not any(self.dv):
                 raise ValueError("a finite burn needs a thrust direction (a nonzero dv)")

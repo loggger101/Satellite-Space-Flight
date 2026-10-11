@@ -16,13 +16,15 @@ import numpy as np
 from .constants import MU_EARTH, R_EARTH
 from .elements import kepler_propagate
 from .maneuvers import Maneuver, hohmann, lambert, plane_change_dv, resolve_time
+from .scenario import MAX_ALT
+from .strict import within
 
 SAFE_PERIGEE_ALT = 150.0   # km; lower transfer arcs would re-enter
 
 
 def _burn_state(sim, sat: str, timing: str, delay: float = 0.0):
     """Time of the first burn and the two-body state ``sat`` will have then."""
-    i = sim.index_of(sat)
+    i = sim.require(sat)
     r, v = sim.y[i, :3], sim.y[i, 3:]
     t_b = resolve_time(Maneuver(sat, timing=timing, delay=delay), sim.t, r, v)
     rb, vb = kepler_propagate(r, v, t_b - sim.t) if t_b > sim.t else (r.copy(), v.copy())
@@ -33,7 +35,7 @@ def plan_hohmann(sim, sat: str, target_alt: float, timing: str = "now", delay: f
     """Raise or lower ``sat`` to a circular orbit at ``target_alt`` km. Returns (burns, summary)."""
     t_b, r, v = _burn_state(sim, sat, timing, delay)
     r1 = float(np.linalg.norm(r))
-    r2 = R_EARTH + target_alt
+    r2 = R_EARTH + within(target_alt, 0.0, MAX_ALT, "target altitude (km)")
     speed = float(np.linalg.norm(v))
     v_needed = math.sqrt(MU_EARTH * (2 / r1 - 2 / (r1 + r2)))
     dv1 = v_needed - speed
@@ -56,8 +58,8 @@ def plan_bielliptic(sim, sat: str, rb_alt: float, target_alt: float, timing: str
     Returns (burns, summary)."""
     t_b, r, v = _burn_state(sim, sat, timing, delay)
     r1 = float(np.linalg.norm(r))
-    rb = R_EARTH + rb_alt
-    r2 = R_EARTH + target_alt
+    rb = R_EARTH + within(rb_alt, 0.0, MAX_ALT, "intermediate apoapsis (km)")
+    r2 = R_EARTH + within(target_alt, 0.0, MAX_ALT, "target altitude (km)")
     if rb < max(r1, r2):
         raise ValueError("intermediate apoapsis must be above both orbits")
     speed = float(np.linalg.norm(v))
@@ -89,7 +91,7 @@ def plan_rendezvous(sim, sat: str, target: str, tof: float, timing: str = "now",
     if sat == target:
         raise ValueError("choose a different target satellite")
     t_b, r1, v1 = _burn_state(sim, sat, timing, delay)
-    j = sim.index_of(target)
+    j = sim.require(target)
     r2, v2t = kepler_propagate(sim.y[j, :3], sim.y[j, 3:], t_b + tof - sim.t)
     prograde = np.cross(r1, v1)[2] >= 0
     lv1, lv2 = lambert(r1, r2, tof, prograde=prograde)
@@ -123,7 +125,7 @@ def scan_rendezvous(sim, sat: str, target: str, tof_min: float = 600.0, tof_max:
     """Cheapest total delta-v time of flight whose arc stays above
     ``SAFE_PERIGEE_ALT``. Returns (tof_seconds, total_dv_km_s)."""
     t_b, r1, v1 = _burn_state(sim, sat, timing, delay)
-    j = sim.index_of(target)
+    j = sim.require(target)
     prograde = np.cross(r1, v1)[2] >= 0
     best = (None, math.inf)
     for tof in np.linspace(tof_min, tof_max, steps):

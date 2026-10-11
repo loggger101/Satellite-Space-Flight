@@ -4,7 +4,6 @@ simulation stands still behind it (see ``App.in_menu``)."""
 
 from __future__ import annotations
 
-import json
 import math
 import random
 from pathlib import Path
@@ -39,28 +38,20 @@ def _count(n: int, one: str, many: str) -> str:
     return f"{n:,} {one if n == 1 else many}"
 
 
-def scenario_card(path: Path) -> tuple[str, str, str] | None:
-    """(title, blurb, size tag) for a scenario file, or None if it cannot be read."""
-    try:
-        d = json.loads(path.read_text(encoding="utf-8"))
-        sats = (sum(int(s.get("count", 1)) for s in d.get("satellites", []))   # copies count
-                + sum(int(c.get("total", 0)) for c in d.get("constellations", [])))
-        launches = len(d.get("launches", []))
-    except (OSError, ValueError, AttributeError, TypeError):
-        return None
+def scenario_card(path: Path) -> tuple[str, str, str, str]:
+    """(title, blurb, size tag, description) for a scenario file; OSError or
+    ValueError if it cannot be read or is not a valid scenario."""
+    sc = Scenario.load(path)
+    sats = sum(int(s.count) for s in sc.satellites) + sum(c.total for c in sc.constellations)
+    launches = len(sc.launches)
     tag = " · ".join(filter(None, (_count(sats, "satellite", "satellites") if sats else "",
                                    _count(launches, "launch", "launches") if launches else "")))
-    blurb = BLURBS.get(path.stem) or d.get("description", "")
-    return d.get("name", path.stem), blurb, tag
+    return sc.name, BLURBS.get(path.stem) or sc.description, tag, sc.description
 
 
-def describe(path: Path) -> str:
-    """The scenario file's own description ('' if it has none or cannot be read)."""
-    try:
-        d = json.loads(path.read_text(encoding="utf-8"))
-        return str(d.get("description", ""))
-    except (OSError, ValueError, AttributeError):
-        return ""
+def unreadable_card(path: Path, exc: Exception) -> tuple[str, str, str, str]:
+    """The card of a file in scenarios/ that cannot be used: it says why."""
+    return path.stem, f"Cannot be opened: {exc}", "unreadable", str(exc)
 
 
 def wrap(text: str, font, width: int, max_lines: int) -> list[str]:
@@ -128,9 +119,16 @@ class StartScreen:
         a = app
         known = [a.scenario_dir / f"{stem}.json" for stem, _ in CARDS]
         extra = sorted(p for p in a.scenario_dir.glob("*.json") if p.stem not in BLURBS)
-        self.cards = [(p, *info) for p in known + extra
-                      if p.exists() and (info := scenario_card(p)) is not None]
-        self.descriptions = {p: describe(p) for p, *_ in self.cards}    # the fuller hover text
+        # the bundled scenarios are part of the program: a broken one raises here;
+        # other files someone put in scenarios/ get a card that says what is wrong
+        cards = [(p, *scenario_card(p)) for p in known]
+        for p in extra:
+            try:
+                cards.append((p, *scenario_card(p)))
+            except (OSError, ValueError) as exc:
+                cards.append((p, *unreadable_card(p, exc)))
+        self.cards = [c[:4] for c in cards]
+        self.descriptions = {c[0]: c[4] for c in cards}     # the fuller hover text
         cur = a.scenario_path
         self.focus = next((k for k, c in enumerate(self.cards)
                            if cur is not None and c[0] == cur), 0)
@@ -156,9 +154,14 @@ class StartScreen:
 
     # --- actions ----------------------------------------------------------------------
     def choose(self, k: int):
-        """Load card ``k``'s scenario and close."""
+        """Load card ``k``'s scenario and close (or say why it cannot be loaded)."""
+        path = self.cards[k][0]
+        try:
+            self.app.load_scenario(path)
+        except (OSError, ValueError) as exc:
+            self.app.toast(f"Could not open {path.name}: {exc}")
+            return
         self.close()
-        self.app.load_scenario(self.cards[k][0])
 
     def build_your_own(self):
         """Start from an empty scenario with the Add-satellite dialog open."""

@@ -4,8 +4,8 @@ A scenario lists satellites (each with an *orbit spec*), Walker
 constellations, ground stations, scheduled maneuvers, the force model and
 the propagator settings. Orbit specs are dicts with a ``type``:
 
-``elements``  classical elements. Size by ``a`` (km), ``altitude`` (circular,
-              km), or ``perigee_alt`` + ``apogee_alt`` (km); angles in degrees:
+``elements``  classical elements. Size by exactly one of ``a`` (km), ``altitude``
+              (circular, km), or ``perigee_alt`` + ``apogee_alt`` (km); angles in degrees:
               ``i``, ``raan``, ``argp``, ``nu`` (or ``M``). ``"i": "sso"`` picks
               the sun-synchronous inclination.
 ``state``     ECI ``r`` [km] and ``v`` [km/s].
@@ -24,6 +24,11 @@ period and a 1584-satellite shell closes its gaps within days.
 
 ``launches`` lists rockets that lift off from a pad during the run (see
 ``satflight.launch.LaunchSpec``): vehicle stages, site, target orbit, timing.
+
+Reading is strict (``satflight.strict``): an unknown key, a missing required
+one, an unknown option or a value out of range raises ValueError naming where
+it is. Only out-of-scope forces and properties (Sun, Moon, SRP, ``cr``) are
+let through, and reported in ``Scenario.out_of_scope``.
 """
 
 from __future__ import annotations
@@ -31,19 +36,21 @@ from __future__ import annotations
 import copy
 import json
 import math
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
 from .analysis import mean_to_osculating_a, osculating_to_mean_a
-from .constants import J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO
+from .constants import F_EARTH, J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO, SOI_EARTH
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
+from .integrators import METHODS
 from .launch import LaunchSpec
 from .maneuvers import Maneuver, sun_synchronous_inclination
+from .strict import build, check_keys, drag_props, finite, one_of, whole, within
 from .timeutil import UTC, Clock, format_epoch, parse_epoch
 from .tle import parse_tle
 
@@ -63,10 +70,109 @@ def palette_color(i: int):
 
 # --- Specs -----------------------------------------------------------------------
 
-def _from_dict(cls, d):
-    """Build dataclass ``cls`` from ``d``, ignoring keys it has no field for."""
-    names = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in d.items() if k in names})
+PROPAGATORS = ("cowell", "kepler", "j2mean")
+PATTERNS = ("delta", "star")
+
+# the keys an orbit spec of each type may carry ("type" itself aside)
+ORBIT_KEYS = {
+    "elements": ("a", "e", "altitude", "perigee_alt", "apogee_alt", "i", "raan", "argp", "nu",
+                 "M"),
+    "state": ("r", "v"),
+    "surface": ("lat", "lon", "alt", "speed", "azimuth", "fpa"),
+    "geo": ("lon",),
+    "tle": ("line1", "line2"),
+}
+ORBIT_REQUIRED = {"state": ("r", "v"), "tle": ("line1", "line2")}
+# how an "elements" orbit gives its size: exactly one of these sets of keys
+SIZES = (("a",), ("altitude",), ("perigee_alt", "apogee_alt"))
+
+
+# satellite properties of forces that are out of scope (see docs/SCOPE.md):
+# older files carry them; they are reported like the forces, never refused
+OUT_OF_SCOPE_PROPS = {"cr": "Cr reflectivity (solar radiation pressure)"}
+
+
+def _out_of_scope_props(d, ignored: list):
+    """``d`` without out-of-scope properties, each noted once in ``ignored``."""
+    if not isinstance(d, dict):
+        return d
+    for key, label in OUT_OF_SCOPE_PROPS.items():
+        if key in d and label not in ignored:
+            ignored.append(label)
+    return {k: v for k, v in d.items() if k not in OUT_OF_SCOPE_PROPS}
+
+
+def check_orbit(orbit, where: str = "orbit"):
+    """Raise ValueError unless ``orbit`` is a well-formed orbit spec: a known
+    type, only that type's keys, and for elements exactly one size and at most
+    one of ``nu`` / ``M``."""
+    if not isinstance(orbit, dict):
+        raise ValueError(f"{where}: expected an object, got {type(orbit).__name__}")
+    kind = orbit.get("type", "elements")
+    if kind not in ORBIT_KEYS:
+        raise ValueError(f"{where}: unknown orbit type {kind!r} "
+                         f"(choose from {', '.join(ORBIT_KEYS)})")
+    check_keys(orbit, ("type", *ORBIT_KEYS[kind]), where, ORBIT_REQUIRED.get(kind, ()))
+    _check_numbers(orbit, where)
+    if kind != "elements":
+        return
+    given = [k for keys in SIZES for k in keys if k in orbit]
+    if len({keys for keys in SIZES if any(k in orbit for k in keys)}) != 1:
+        raise ValueError(f"{where}: give the size one way: 'a', 'altitude', or "
+                         f"'perigee_alt' + 'apogee_alt' (found {', '.join(given) or 'none'})")
+    if "e" in orbit and ("perigee_alt" in orbit or "apogee_alt" in orbit):
+        raise ValueError(f"{where}: 'e' follows from 'perigee_alt' and 'apogee_alt'; drop it")
+    if "nu" in orbit and "M" in orbit:
+        raise ValueError(f"{where}: give the position as 'nu' or 'M', not both")
+    inc = orbit.get("i", 0.0)
+    if isinstance(inc, str) and inc.lower() != "sso":
+        raise ValueError(f"{where}: inclination {inc!r} is neither a number nor \"sso\"")
+
+
+# highest a spec may reach: beyond the sphere of influence the Earth no longer rules
+MAX_ALT = SOI_EARTH - R_EARTH
+R_POLAR = R_EARTH * (1.0 - F_EARTH)     # km; no state may start nearer the centre
+# most satellites one entry may make (copies along an orbit, a Walker shell)
+MAX_GROUP = 5000
+
+
+def _check_numbers(orbit, where: str):
+    """Every number of an orbit spec is finite and physically possible."""
+    kind = orbit.get("type", "elements")
+    for k in ORBIT_KEYS[kind]:
+        if k in orbit and k not in ("r", "v", "line1", "line2") and orbit[k] != "sso":
+            finite(orbit[k], f"{where} {k}")
+    for k in ("altitude", "perigee_alt", "apogee_alt", "alt"):
+        if k in orbit:
+            within(orbit[k], -R_EARTH * 0.999, MAX_ALT, f"{where} {k} (km)")
+    if kind == "elements":
+        e = within(orbit.get("e", 0.0), 0.0, 1e3, f"{where} e")
+        if e == 1.0:
+            raise ValueError(f"{where}: e = 1 (a parabola) has no semi-major axis; "
+                             "use an e a little above or below 1")
+        if "a" in orbit:
+            a = finite(orbit["a"], f"{where} a")
+            if not 0 < abs(a) <= SOI_EARTH or (e < 1 and a < 0):
+                raise ValueError(f"{where}: a = {a:,.6g} km is not an orbit around the Earth")
+            if e < 1 and a * (1 + e) > SOI_EARTH:
+                raise ValueError(f"{where}: apoapsis beyond Earth's sphere of influence")
+        if orbit.get("i", 0.0) != "sso":
+            within(orbit.get("i", 0.0), 0.0, 180.0, f"{where} i (deg)")
+    elif kind == "state":
+        for k in ("r", "v"):
+            vec = orbit[k]
+            if not isinstance(vec, list | tuple) or len(vec) != 3:
+                raise ValueError(f"{where} {k}: expected 3 numbers")
+            for x in vec:
+                finite(x, f"{where} {k}")
+        if not 0 < math.dist(orbit["r"], (0, 0, 0)) <= SOI_EARTH:
+            raise ValueError(f"{where}: r is not a position around the Earth")
+        if math.dist(orbit["v"], (0, 0, 0)) > 100.0:
+            raise ValueError(f"{where}: v is over 100 km/s (v is in km/s)")
+    elif kind == "surface":
+        within(orbit.get("lat", 0.0), -90.0, 90.0, f"{where} lat (deg)")
+        within(orbit.get("speed", 7.8), 0.0, 100.0, f"{where} speed (km/s)")
+        within(orbit.get("fpa", 0.0), -90.0, 90.0, f"{where} fpa (deg)")
 
 
 @dataclass
@@ -80,6 +186,10 @@ class SatSpec:
     area: float = 5.0        # m^2 (drag cross-section)
     cd: float = 2.2
     count: int = 1
+
+    def __post_init__(self):
+        drag_props(self.mass, self.area, self.cd, f"satellite {self.name!r}")
+        whole(self.count, 1, MAX_GROUP, f"satellite {self.name!r} count")
 
     def to_dict(self):
         """JSON-ready dict (the color as a list)."""
@@ -106,6 +216,16 @@ class ConstellationSpec:
     cd: float = 2.2
     raan0: float = 0.0
 
+    def __post_init__(self):
+        where = f"constellation {self.name!r}"
+        within(self.altitude, 0.0, MAX_ALT, f"{where} altitude (km)")
+        within(self.inclination, 0.0, 180.0, f"{where} inclination (deg)")
+        whole(self.total, 1, MAX_GROUP, f"{where} total")
+        whole(self.planes, 1, self.total, f"{where} planes")
+        whole(self.phasing, 0, MAX_GROUP, f"{where} phasing")
+        finite(self.raan0, f"{where} raan0")
+        drag_props(self.mass, self.area, self.cd, where)
+
     def to_dict(self):
         """JSON-ready dict of the constellation's fields."""
         return asdict(self)
@@ -121,6 +241,13 @@ class GroundStation:
     alt: float = 0.0      # km
     min_el: float = 10.0  # deg
     color: list | None = None
+
+    def __post_init__(self):
+        where = f"station {self.name!r}"
+        within(self.lat, -90.0, 90.0, f"{where} latitude (deg)")
+        finite(self.lon, f"{where} longitude")
+        within(self.alt, -0.5, 100.0, f"{where} altitude (km)")
+        within(self.min_el, -90.0, 90.0, f"{where} minimum elevation (deg)")
 
     def ecef(self) -> np.ndarray:
         """Site position in ECEF (km)."""
@@ -193,24 +320,42 @@ class Scenario:
             "launches": [s.to_dict() for s in self.launches],
         }
 
+    KEYS = ("name", "description", "epoch", "propagator", "integrator", "forces", "record_dt",
+            "warp", "satellites", "constellations", "stations", "maneuvers", "launches")
+
     @classmethod
     def from_dict(cls, d: dict) -> Scenario:
-        """Build from the JSON form; missing keys take their defaults."""
+        """Build from the JSON form; missing keys take their defaults, and an
+        unknown key or value raises ValueError naming it."""
+        check_keys(d, cls.KEYS, "scenario")
+        ignored = ForceModel.ignored_terms(d.get("forces", {}))
+        sats = []
+        for k, s in enumerate(d.get("satellites", [])):
+            where = f"satellite {s.get('name', k + 1)!r}" if isinstance(s, dict) else "satellite"
+            sats.append(build(SatSpec, _out_of_scope_props(s, ignored), where))
+            check_orbit(s["orbit"], where + " orbit")
+        cons = [build(ConstellationSpec, _out_of_scope_props(c, ignored), f"constellation {k + 1}")
+                for k, c in enumerate(d.get("constellations", []))]
+        for c in cons:
+            one_of(c.pattern, PATTERNS, f"constellation {c.name!r} pattern")
+        integrator = build(IntegratorSettings, d.get("integrator", {}), "integrator")
+        one_of(integrator.method, METHODS, "integrator")
         return cls(
             name=d.get("name", "Untitled"),
             description=d.get("description", ""),
             epoch=parse_epoch(d["epoch"]) if "epoch" in d else DEFAULT_EPOCH,
-            propagator=d.get("propagator", "cowell"),
-            integrator=_from_dict(IntegratorSettings, d.get("integrator", {})),
+            propagator=one_of(d.get("propagator", "cowell"), PROPAGATORS, "propagator"),
+            integrator=integrator,
             forces=ForceModel.from_dict(d.get("forces", {})),
             record_dt=float(d.get("record_dt", 20.0)),
             warp=float(d.get("warp", 60.0)),
-            satellites=[_from_dict(SatSpec, s) for s in d.get("satellites", [])],
-            constellations=[_from_dict(ConstellationSpec, c) for c in d.get("constellations", [])],
-            stations=[_from_dict(GroundStation, g) for g in d.get("stations", [])],
+            satellites=sats,
+            constellations=cons,
+            stations=[build(GroundStation, g, f"station {k + 1}")
+                      for k, g in enumerate(d.get("stations", []))],
             maneuvers=[Maneuver.from_dict(m) for m in d.get("maneuvers", [])],
             launches=[LaunchSpec.from_dict(s) for s in d.get("launches", [])],
-            out_of_scope=ForceModel.ignored_terms(d.get("forces", {})),
+            out_of_scope=ignored,
         )
 
     @classmethod
@@ -257,7 +402,18 @@ def geostationary_radius(j2: bool = True) -> float:
 
 def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
     """ECI (r, v) at simulation time ``t`` for an orbit spec. ``j2`` says
-    whether J2 acts in the run (it moves the geostationary radius)."""
+    whether J2 acts in the run (it moves the geostationary radius). ValueError
+    if the spec is malformed or puts the satellite inside the Earth."""
+    check_orbit(orbit)
+    r, v = _orbit_state(orbit, clock, t, j2)
+    if float(np.linalg.norm(r)) < R_POLAR - 1.0:
+        raise ValueError(f"the orbit puts the satellite {R_EARTH - float(np.linalg.norm(r)):,.0f} "
+                         "km inside the Earth")
+    return r, v
+
+
+def _orbit_state(orbit: dict, clock: Clock, t: float, j2: bool):
+    """:func:`orbit_state` without the checks."""
     kind = orbit.get("type", "elements")
     if kind == "elements":
         if "perigee_alt" in orbit or "apogee_alt" in orbit:
@@ -311,14 +467,17 @@ def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
         return r, v
     if kind == "tle":
         tle = parse_tle(orbit["line1"] + "\n" + orbit["line2"])
+        if not tle.checksum_ok:
+            raise ValueError(f"TLE {tle.satnum}: checksum mismatch (a mistyped digit?)")
         return tle.state_at(clock.datetime(t))
-    raise ValueError(f"unknown orbit type {kind!r}")
+    raise AssertionError(kind)          # check_orbit lets only the types above through
 
 
 def spread_along_orbit(r, v, count: int):
     """``count`` states sharing an orbit, evenly spaced in mean anomaly. The
     first is the given state; the others share its mean semi-major axis."""
-    if count <= 1:
+    count = whole(count, 1, MAX_GROUP, "number of copies")
+    if count == 1:
         return [(r, v)]
     el = rv2coe(r, v)
     if el.e >= 1.0:
@@ -341,7 +500,7 @@ def walker_states(c: ConstellationSpec):
     if c.total % c.planes:
         raise ValueError("total satellites must be a multiple of the number of planes")
     per = c.total // c.planes
-    spread = 2 * math.pi if c.pattern == "delta" else math.pi
+    spread = 2 * math.pi if one_of(c.pattern, PATTERNS, "Walker pattern") == "delta" else math.pi
     a = R_EARTH + c.altitude
     i = math.radians(c.inclination)
     out = []

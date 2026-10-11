@@ -98,12 +98,11 @@ class PlotView:
             return
         t = np.append(t, sim.t)
         s = np.vstack([s, sim.y[i]])
-        try:
-            y = np.asarray(fn(sim, t, s), dtype=float)
-        except Exception:        # degenerate states (e.g. at impact): skip the frame
-            return
-        ok = np.isfinite(y)
+        y = np.asarray(fn(sim, t, s), dtype=float)
+        ok = np.isfinite(y)          # elements undefined at an instant (e.g. argp of a circle)
         if ok.sum() < 2:
+            fonts.draw(surf, f"{name} is not defined for this orbit", rect.center, theme.FAINT,
+                       fonts.small, "center")
             return
         t, y = t[ok], y[ok]
         pr = pygame.Rect(rect.x + px(70), rect.y + px(24), rect.w - px(84), rect.h - px(44))

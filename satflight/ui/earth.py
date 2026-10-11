@@ -67,6 +67,7 @@ class EarthRenderer:
         self.ocean = None                          # (W, H) float32, 1 = water
         self.has_image = False
         self.coastlines: list[np.ndarray] = []     # unit ECEF polylines
+        self.missing: list[str] = []               # optional asset files not found
         self._geom_key = None
         self._geom = None
         self._tex = self._light = self._final = None
@@ -81,29 +82,37 @@ class EarthRenderer:
 
     # --- assets -------------------------------------------------------------------
     def load_assets(self, asset_dir: Path):
-        """Load ``earth.jpg``/``earth.png`` and ``coastlines.json`` when present."""
+        """Load ``earth.jpg``/``earth.png`` and ``coastlines.json``. They are
+        optional (``tools/fetch_assets.py``): an absent one is listed in
+        ``missing``; one that is there but unreadable raises, naming the file."""
         for name in ("earth.jpg", "earth.png"):
             p = asset_dir / name
             if p.exists():
                 try:
                     img = pygame.image.load(str(p))
-                    self.texture, self.ocean = self._prepare(pygame.surfarray.array3d(img))
-                    self.has_image = True
-                except pygame.error:
-                    self.texture = None
+                except pygame.error as exc:
+                    raise RuntimeError(f"{p} is not a readable image: {exc} "
+                                       "(delete it or run tools/fetch_assets.py)") from exc
+                self.texture, self.ocean = self._prepare(pygame.surfarray.array3d(img))
+                self.has_image = True
                 break
+        else:
+            self.missing.append("earth.jpg")
         p = asset_dir / "coastlines.json"
-        if p.exists():
-            try:
-                lines = json.loads(p.read_text(encoding="utf-8"))
-                for line in lines:
-                    ll = np.radians(np.asarray(line, dtype=float))
-                    lon, lat = ll[:, 0], ll[:, 1]
-                    self.coastlines.append(np.stack([np.cos(lat) * np.cos(lon),
-                                                     np.cos(lat) * np.sin(lon),
-                                                     np.sin(lat)], axis=1))
-            except (ValueError, OSError):
-                self.coastlines = []
+        if not p.exists():
+            self.missing.append("coastlines.json")
+            return
+        try:
+            lines = json.loads(p.read_text(encoding="utf-8"))
+            for line in lines:
+                ll = np.radians(np.asarray(line, dtype=float))
+                lon, lat = ll[:, 0], ll[:, 1]
+                self.coastlines.append(np.stack([np.cos(lat) * np.cos(lon),
+                                                 np.cos(lat) * np.sin(lon),
+                                                 np.sin(lat)], axis=1))
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(f"{p} is not a list of [lon, lat] polylines: {exc} "
+                               "(delete it or run tools/fetch_assets.py)") from exc
 
     @staticmethod
     def _prepare(tex: np.ndarray):

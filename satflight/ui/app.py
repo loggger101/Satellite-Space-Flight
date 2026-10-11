@@ -105,6 +105,7 @@ class App:
         self.renderer = SceneRenderer(self.root / "assets")
         # vector coastlines are redundant over a real texture; K toggles them
         self.opts.coastlines = not self.renderer.earth.has_image
+        missing = self.renderer.earth.missing
         self.topbar = TopBar(self)
         self.satlist = SatList(self)
         self.info = InfoPanel(self)
@@ -141,6 +142,9 @@ class App:
                                else self.scenario_dir / "default.json")
         if welcome:
             self.open("start")
+        if missing:             # after the menu, which clears the toasts
+            self.toast(f"No {' or '.join(missing)} in assets: a plain Earth is drawn "
+                       "(tools/fetch_assets.py downloads them)")
         if fullscreen:
             self.toggle_fullscreen()
 
@@ -151,15 +155,17 @@ class App:
                 + sorted(self.user_scenario_dir.glob("*.json")))
 
     def load_scenario(self, src):
-        """Start a new simulation from a :class:`Scenario` or a JSON path (a missing
-        file gives an empty scenario), leaving the start menu if it is open."""
-        self.dialogs = [d for d in self.dialogs if not isinstance(d, welcome.StartScreen)]
+        """Start a new simulation from a :class:`Scenario` or a JSON path, leaving the
+        start menu if it is open. OSError / ValueError if the file cannot be used;
+        then nothing has changed."""
         if isinstance(src, Scenario):
             sc, path = src, None
         else:
             path = Path(src)
-            sc = Scenario.load(path) if path.exists() else Scenario(name="Empty")
-        self.sim = Simulation(sc)
+            sc = Scenario.load(path)
+        sim = Simulation(sc)
+        self.dialogs = [d for d in self.dialogs if not isinstance(d, welcome.StartScreen)]
+        self.sim = sim
         self.scenario_path = path
         self.warp = sc.warp
         self.follow = False
@@ -181,9 +187,9 @@ class App:
                 self.dialogs = [d for d in self.dialogs if isinstance(d, welcome.StartScreen)]
                 self.load_scenario(path)
                 return
-            tles = split_tles(path.read_text(encoding="utf-8", errors="replace"))
+            tles, problems = split_tles(path.read_text(encoding="utf-8", errors="replace"))
             if not tles:
-                raise ValueError("no TLEs found")
+                raise ValueError("no TLEs found" + (f" ({problems[0]})" if problems else ""))
             if self.in_menu:
                 self.load_scenario(Scenario(name=path.stem))
             rows = []
@@ -192,23 +198,34 @@ class App:
                                    self.sim.clock, self.sim.t)
                 rows.append((t.name, palette_color(self.sim.n + k), {}, r, v))
             self.sim.add_many(rows)
+            left_out = (f" (the first {len(rows):,} of {len(tles):,}; at most {MAX_DROPPED:,} "
+                        "per file)" if len(tles) > len(rows) else "")
+            skipped = (f"; {len(problems)} unreadable left out (see the event log)"
+                       if problems else "")
+            for p in problems:
+                self.sim.log(f"{path.name}: {p}", "warn")
             self.toast(f"Added {len(rows)} satellite{'s' if len(rows) != 1 else ''} "
-                       f"from {path.name}")
-        except Exception as exc:          # a bad file must not end the session
+                       f"from {path.name}{left_out}{skipped}")
+        except (OSError, ValueError) as exc:     # unreadable or not usable: say why
             self.toast(f"Could not open {path.name}: {exc}")
 
     def reset(self):
         """Reload the current scenario from its file (or its in-memory original)."""
-        if self.scenario_path is not None:
-            self.load_scenario(self.scenario_path)
-        else:
-            self.load_scenario(self.sim.scenario)
+        try:
+            self.load_scenario(self.scenario_path if self.scenario_path is not None
+                               else self.sim.scenario)
+        except (OSError, ValueError) as exc:     # the file changed or went away
+            self.toast(f"Could not reload {self.scenario_path.name}: {exc}")
 
     def quick_save(self):
         """Save the current state to ``scenarios/user/snapshot_<time>.json``."""
         name = datetime.now().strftime("snapshot_%Y%m%d_%H%M%S")
         path = self.user_scenario_dir / f"{name}.json"
-        self.sim.snapshot_scenario(name).save(path)
+        try:
+            self.sim.snapshot_scenario(name).save(path)
+        except OSError as exc:
+            self.toast(f"Could not save {path.name}: {exc}")
+            return
         self.toast(f"Saved scenarios/user/{path.name}")
 
     # --- selection / commands -------------------------------------------------------------

@@ -46,6 +46,7 @@ from .integrators import Propagator
 from .launch import Ascent, AscentEnv, LaunchSpec, coast, plan_launch, plane_normal
 from .maneuvers import G0, Maneuver, finite_direction, impulse_eci, propellant_after, resolve_time
 from .scenario import (
+    PROPAGATORS,
     GroundStation,
     SatSpec,
     Scenario,
@@ -55,9 +56,9 @@ from .scenario import (
     palette_color,
     spread_along_orbit,
 )
+from .strict import drag_props, one_of
 from .timeutil import Clock, format_duration
 
-PROPAGATORS = ("cowell", "kepler", "j2mean")
 ACTIVE, DECAYED, IMPACTED, ESCAPED = "active", "re-entered", "impacted", "escaped"
 SCRUBBED = "scrubbed"     # a launch that never left the pad
 
@@ -233,7 +234,7 @@ class Simulation:
         self.clock = Clock(scenario.epoch)
         self.t = 0.0
         self.forces: ForceModel = scenario.forces
-        self.propagator = scenario.propagator
+        self.propagator = one_of(scenario.propagator, PROPAGATORS, "propagator")
         s = scenario.integrator
         self.integrator = Propagator(s.method, s.rtol, s.atol, s.h_max, s.h_fixed)
         self.record_dt = scenario.record_dt
@@ -288,6 +289,14 @@ class Simulation:
                 return i
         raise KeyError(name)
 
+    def require(self, name: str) -> int:
+        """Index of the satellite called ``name``; ValueError (a message for the
+        user) if there is none."""
+        for i, s in enumerate(self.sats):
+            if s.name == name:
+                return i
+        raise ValueError(f"no satellite named {name!r}")
+
     def unique_name(self, name: str) -> str:
         """``name``, or ``name 2``, ``name 3`` ... if it is taken."""
         names = {s.name for s in self.sats}
@@ -298,8 +307,25 @@ class Simulation:
             k += 1
         return f"{name} {k}"
 
+    def rename(self, i: int, name: str) -> str:
+        """Rename satellite ``i`` (made unique); its queued maneuvers, burns
+        under way and maneuvers aimed at it follow. Returns the name given."""
+        old = self.sats[i].name
+        if name == old:
+            return old
+        new = self.unique_name(name)
+        for m in [*self.maneuvers, *(b.man for b in self.burns)]:
+            if m.sat == old:
+                m.sat = new
+            if m.target == old:
+                m.target = new
+        self.sats[i].name = new
+        self.log(f"{old} renamed {new}")
+        return new
+
     def _append(self, name, color, props, r, v):
         sat = Satellite(self.unique_name(name), tuple(color), **props)
+        drag_props(sat.mass, sat.area, sat.cd, sat.name)
         self.sats.append(sat)
         self.y = np.vstack([self.y, np.concatenate([r, v])[None, :]])
         return sat
@@ -412,7 +438,7 @@ class Simulation:
     def plane_of(self, name: str):
         """(inclination deg, normal_at(t)) of a satellite's orbit plane, with
         its J2 nodal regression - the target of a launch window."""
-        i = self.index_of(name)
+        i = self.require(name)
         el = rv2coe(self.y[i, :3], self.y[i, 3:])
         if el.e >= 1.0:
             raise ValueError(f"{name} is not on a closed orbit")
@@ -519,8 +545,11 @@ class Simulation:
 
     # --- maneuvers ---------------------------------------------------------------------
     def schedule(self, m: Maneuver) -> Maneuver:
-        """Resolve ``m``'s execution time and queue it."""
-        i = self.index_of(m.sat)
+        """Resolve ``m``'s execution time and queue it (ValueError if it cannot fly)."""
+        m.check()
+        i = self.require(m.sat)
+        if m.kind == "match_velocity":
+            self.require(m.target)
         if self.ascent_of(i) is not None:
             raise ValueError(f"{m.sat} is still on its launch vehicle; "
                              "maneuver it after separation")
@@ -540,25 +569,23 @@ class Simulation:
         for m in due:
             m.done = True
             self.maneuvers.remove(m)
-            try:
-                i = self.index_of(m.sat)
-            except KeyError:
-                continue
+            i = self.index_of(m.sat)
             sat = self.sats[i]
             if sat.status != ACTIVE:
+                self.log(f"{m.sat}: {m.describe()} skipped ({sat.status})", "warn")
                 continue
             r, v = self.y[i, :3].copy(), self.y[i, 3:].copy()
             if m.kind == "finite":
                 self._start_finite(m, i)
                 continue
-            try:
-                tv = None
-                if m.kind == "match_velocity":
-                    tv = self.y[self.index_of(m.target), 3:]
-                dv = impulse_eci(m, r, v, tv)
-            except (ValueError, KeyError) as exc:
-                self.log(f"{m.sat}: maneuver skipped ({exc})", "warn")
-                continue
+            tv = None
+            if m.kind == "match_velocity":
+                if m.target not in {s.name for s in self.sats}:
+                    self.log(f"{m.sat}: {m.describe()} skipped ({m.target} no longer exists)",
+                             "warn")
+                    continue
+                tv = self.y[self.index_of(m.target), 3:]
+            dv = impulse_eci(m, r, v, tv)
             dvm = float(np.linalg.norm(dv))
             self.y[i, 3:] = v + dv
             sat.dv_used += dvm
@@ -598,10 +625,7 @@ class Simulation:
         """Book the delta-v and mass of every burn that has ended."""
         for b in [b for b in self.burns if b.t1 <= self.t + 1e-6]:
             self.burns.remove(b)
-            try:
-                sat = self.sats[self.index_of(b.man.sat)]
-            except KeyError:
-                continue
+            sat = self.sats[self.index_of(b.man.sat)]       # remove() drops its burns
             mf = b.m0 - b.mdot * (b.t1 - b.t0)
             dvm = b.man.isp * G0 * math.log(b.m0 / mf) if mf > 0 else 0.0
             sat.mass = mf
@@ -654,12 +678,18 @@ class Simulation:
     def advance(self, dt: float):
         """Advance the simulation by ``dt`` seconds of simulated time (see the
         module notes: the physics keeps its own steps, whatever ``dt`` is)."""
+        if not math.isfinite(dt) or dt < 0:
+            raise ValueError(f"cannot advance by {dt!r} s")
         t_end = self.t + dt
         self._resume()
-        guard = 0
+        self._check_finite(self.t, self._free_idx())     # before an integrator trips on it
+        stuck, t_seen = 0, self.t
         self._execute_due()
-        while guard < 10000:
-            guard += 1
+        while True:
+            stuck = stuck + 1 if self.t == t_seen else 0
+            t_seen = self.t
+            if stuck > 1000:
+                raise RuntimeError(f"advance made no progress at t = {self.t:.3f} s")
             tb = self._next_boundary()
             land = tb <= t_end
             idx = self._free_idx()
@@ -759,6 +789,14 @@ class Simulation:
         return left
 
     # --- per-step checks ------------------------------------------------------------------
+    def _check_finite(self, t: float, idx: np.ndarray):
+        """Raise FloatingPointError naming the satellites ``idx`` whose state is
+        not finite: a NaN is never a result to draw or carry on from."""
+        bad = ~np.isfinite(self.y[idx]).all(axis=1)
+        if bad.any():
+            names = ", ".join(self.sats[i].name for i in idx[bad])
+            raise FloatingPointError(f"non-finite state at t = {t:.3f} s for {names}")
+
     def _post_step(self, t: float, idx=None, force_record: bool = False) -> bool:
         """Record history and detect events. Returns True if a satellite left
         the active set (the integrator must restart with the new set)."""
@@ -769,6 +807,7 @@ class Simulation:
                 self.y[self.sats.index(a.sat)] = a.pad_state(t)
         changed = False
         if idx.size:
+            self._check_finite(t, idx)
             r = self.y[idx, :3]
             v = self.y[idx, 3:]
             rm = np.linalg.norm(r, axis=1)
@@ -789,6 +828,10 @@ class Simulation:
                     sat.status = DECAYED
                     self.log(f"{sat.name} re-entered (below {REENTRY_ALT:.0f} km, "
                              f"{speed:.2f} km/s)", "alert")
+                dropped = [m for m in self.maneuvers if m.sat == sat.name]
+                if dropped:
+                    self.log(f"{sat.name}: {len(dropped)} pending maneuver"
+                             f"{'s' if len(dropped) != 1 else ''} cancelled", "warn")
                 self.maneuvers = [m for m in self.maneuvers if m.sat != sat.name]
                 self.burns = [b for b in self.burns if b.man.sat != sat.name]
                 changed = True

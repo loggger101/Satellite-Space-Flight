@@ -9,13 +9,14 @@ mass flow T / (Isp g0)) and are integrated like any other force.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
 from .constants import J2, MU_EARTH, R_EARTH
 from .elements import rv2coe, stumpff, time_to_true_anomaly
 from .frames import local_to_eci, rsw_basis, unit, vnb_basis
+from .strict import MAX_SPAN, build, finite, one_of
 
 G0 = 9.80665e-3   # km/s^2
 
@@ -145,11 +146,37 @@ class Maneuver:
 
     @classmethod
     def from_dict(cls, d):
-        """Build from a scenario dict, ignoring unknown keys."""
-        names = {f.name for f in fields(cls)}
-        m = cls(**{k: v for k, v in d.items() if k in names})
+        """Build from a scenario dict; unknown keys or values raise ValueError."""
+        m = build(cls, d, f"maneuver for {d.get('sat', '?')!r}" if isinstance(d, dict)
+                  else "maneuver")
         m.dv = tuple(float(x) for x in m.dv)
+        m.check()
         return m
+
+    def check(self):
+        """Raise ValueError if the maneuver cannot be flown as written."""
+        one_of(self.kind, KINDS, "maneuver kind")
+        one_of(self.timing, TIMINGS, "maneuver timing")
+        one_of(self.frame, FRAMES, "maneuver frame")
+        if len(self.dv) != 3:
+            raise ValueError(f"maneuver dv needs 3 components, got {len(self.dv)}")
+        for x in (*self.dv, self.delta_i, self.thrust, self.duration, self.delay, self.isp):
+            finite(x, f"maneuver for {self.sat!r}: every number")
+        if math.hypot(*self.dv) > 50.0 and self.kind == "impulse":
+            raise ValueError(f"a {math.hypot(*self.dv):,.6g} km/s burn is beyond any rocket "
+                             "(dv is in km/s)")
+        if self.isp <= 0:
+            raise ValueError(f"maneuver Isp must be positive, got {self.isp:g} s")
+        if self.timing == "delay" and not 0 <= self.delay <= MAX_SPAN:
+            raise ValueError(f"maneuver delay must be between 0 s and 100 years, "
+                             f"got {self.delay:g} s")
+        if self.kind == "finite":
+            if not any(self.dv):
+                raise ValueError("a finite burn needs a thrust direction (a nonzero dv)")
+            if self.thrust <= 0 or self.duration <= 0:
+                raise ValueError("a finite burn needs positive thrust and duration")
+        if self.kind == "match_velocity" and not self.target:
+            raise ValueError("match velocity needs a target satellite")
 
     def describe(self) -> str:
         """One-line label for the maneuver list."""
@@ -173,7 +200,7 @@ def resolve_time(m: Maneuver, t_now: float, r, v, mu: float = MU_EARTH) -> float
     if m.timing == "now":
         return t_now
     if m.timing == "delay":
-        return t_now + max(0.0, m.delay)
+        return t_now + m.delay
     el = rv2coe(r, v, mu)
     if m.timing == "periapsis":
         nu = 0.0
@@ -203,7 +230,9 @@ def impulse_eci(m: Maneuver, r, v, target_v=None) -> np.ndarray:
             return local_to_eci(dv, vnb_basis(r, v))
         if m.frame == "RSW":
             return local_to_eci(dv, rsw_basis(r, v))
-        return dv
+        if m.frame == "ECI":
+            return dv
+        raise ValueError(f"unknown maneuver frame {m.frame!r}")
     if m.kind == "circularize":
         rh = unit(r)
         h = unit(np.cross(r, v))
@@ -232,16 +261,21 @@ def impulse_eci(m: Maneuver, r, v, target_v=None) -> np.ndarray:
 def finite_direction(m: Maneuver, r, v) -> np.ndarray:
     """Unit thrust directions ``(N, 3)`` in ECI for a finite burn at states r, v."""
     d = np.asarray(m.dv, dtype=float)
-    d = d / (np.linalg.norm(d) or 1.0)
+    size = np.linalg.norm(d)
+    if not size:
+        raise ValueError("a finite burn needs a thrust direction (a nonzero dv)")
+    d = d / size
     if m.frame == "VNB":
         return local_to_eci(d, vnb_basis(r, v))
     if m.frame == "RSW":
         return local_to_eci(d, rsw_basis(r, v))
-    return np.broadcast_to(d, np.shape(r))
+    if m.frame == "ECI":
+        return np.broadcast_to(d, np.shape(r))
+    raise ValueError(f"unknown maneuver frame {m.frame!r}")
 
 
 def propellant_after(mass: float, dv: float, isp: float) -> float:
     """Mass remaining after a burn of ``dv`` km/s (Tsiolkovsky)."""
     if isp <= 0:
-        return mass
+        raise ValueError(f"Isp must be positive, got {isp:g} s")
     return mass * math.exp(-dv / (isp * G0))

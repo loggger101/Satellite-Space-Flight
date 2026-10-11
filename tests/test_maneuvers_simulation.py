@@ -226,7 +226,8 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
     path = tmp_path / "old.json"
     path.write_text(json.dumps(d), encoding="utf-8")
     sc = Scenario.load(path)
-    assert sc.out_of_scope == ["Sun third-body gravity", "Moon third-body gravity"]
+    assert sc.out_of_scope == ["Sun third-body gravity", "Moon third-body gravity",
+                               "Cr reflectivity (solar radiation pressure)"]
     assert "out_of_scope" not in sc.to_dict() and "sun" not in sc.to_dict()["forces"]
     sim = Simulation(sc)
     assert any(e.kind == "warn" and "Moon third-body" in e.text for e in sim.events)
@@ -238,10 +239,14 @@ def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
 
 def test_split_tles_reads_two_and_three_line_files():
     two = "\n".join(ISS_TLE)
-    text = f"ISS (ZARYA)\n{two}\n\n0 OTHER\n{two}\n{two}\n1 broken\n2 broken\n"
-    tles = split_tles(text)
+    typo = two[:-1] + "0"                          # last digit of the checksum is wrong
+    text = (f"ISS (ZARYA)\n{two}\n\n0 OTHER\n{two}\n{two}\n1 broken\n2 broken\n"
+            f"TYPO\n{typo}\n")
+    tles, problems = split_tles(text)
     assert [t.name for t in tles] == ["ISS (ZARYA)", "OTHER", "SAT 25544"]
     assert all(t.checksum_ok for t in tles)
+    assert len(problems) == 2                      # left out, but never without a word
+    assert "too short" in problems[0] and "TYPO" in problems[1] and "checksum" in problems[1]
 
 
 @pytest.mark.parametrize("propagator,j2", [("cowell", True), ("j2mean", True), ("cowell", False)])

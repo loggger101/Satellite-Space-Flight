@@ -34,6 +34,7 @@ from ..launch import (
     vehicle_preset,
 )
 from ..simulation import ACTIVE
+from ..strict import finite, within
 from . import glossary, theme, tips
 from .background import Latest
 from .groundtrack import GroundTrackView
@@ -124,7 +125,7 @@ class LaunchPreview:
                 self._orbit_track = None
             self.spec = spec
             self.error = ""
-        except Exception as exc:     # keep the dialog alive on any bad input
+        except ValueError as exc:    # bad input: shown in the preview, the dialog stays
             self.plan, self.key, self.error = None, None, str(exc)
 
     def request(self, dlg):
@@ -140,7 +141,7 @@ class LaunchPreview:
             sim = self.app.sim
             env, t_now = sim.ascent_env(), sim.t
             plane = sim.plane_of(spec.target) if spec.target else None
-        except Exception as exc:
+        except ValueError as exc:
             self.plan, self.key, self._pending, self.error = None, None, None, str(exc)
             return
         self._pending = key
@@ -154,6 +155,8 @@ class LaunchPreview:
             return
         key, result, error = done
         self._pending = None
+        if error is not None and not isinstance(error, ValueError):
+            raise error                     # a bug in the planner, not bad input
         if error is not None:
             self.plan, self.key, self.error = None, None, str(error)
         else:
@@ -239,7 +242,8 @@ class LaunchPreview:
                 self.map.polyline(surf, TRACK, lat, lon, box, px(2))
         try:
             v = dlg.values()
-            sx, sy = self.map.xy(v["lat"], v["lon"], box)
+            lat = within(v["lat"], -90.0, 90.0, "latitude")
+            sx, sy = self.map.xy(lat, finite(v["lon"], "longitude"), box)
             sx, sy = int(sx), int(sy)
             pygame.draw.polygon(surf, (255, 255, 255),
                                 [(sx, sy - px(7)), (sx - px(5), sy + px(4)),
@@ -247,8 +251,8 @@ class LaunchPreview:
             pygame.draw.polygon(surf, (255, 90, 60),
                                 [(sx, sy - px(5)), (sx - px(3), sy + px(3)),
                                  (sx + px(3), sy + px(3))])
-        except (ValueError, KeyError):
-            pass                # the pad coordinates do not parse yet
+        except ValueError:
+            pass                # the pad coordinates do not parse yet (the field says so)
         surf.set_clip(clip)
         pygame.draw.rect(surf, theme.PANEL_EDGE, r, 1)
 
@@ -280,8 +284,8 @@ class LaunchPreview:
             out.append((f"{veh.name}: {n} stage{'s' if n != 1 else ''}, liftoff "
                         f"{veh.liftoff_mass(payload) / 1000:,.1f} t, T/W {summary[0][3]:.2f}, "
                         f"ideal dV {sum(s[1] for s in summary):.2f} km/s", theme.DIM))
-        except (ValueError, ZeroDivisionError, IndexError):
-            pass                # an incomplete vehicle has no summary
+        except ValueError as exc:   # a vehicle that cannot fly has no summary
+            out.append((f"vehicle: {exc}", theme.BAD))
         if self.error:
             out.append((self.error, theme.BAD))
             return out
@@ -531,10 +535,7 @@ def launch_dialog(app):
         return None
 
     def edit_vehicle(dlg):
-        try:
-            payload = float(dlg.widgets["payload_mass"].value)
-        except ValueError:
-            payload = 0.0
+        payload = dlg.values()["payload_mass"]   # ValueError (shown) if it is not a number
 
         def done(vehicle):
             preview.vehicle = vehicle
@@ -657,7 +658,7 @@ def vehicle_dialog(app, vehicle: Vehicle, payload: float, on_done):
                                            f"with {payload:,.0f} kg payload "
                                            "(orbit needs ~9.3-9.8)")
             dlg.error = ""
-        except (ValueError, ZeroDivisionError) as exc:
+        except ValueError as exc:
             dlg.error = str(exc)
         for k in range(MAX_STAGES + 1):
             shown[k] = dlg.info[f"sum{k}"]

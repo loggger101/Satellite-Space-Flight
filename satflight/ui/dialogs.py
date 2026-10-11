@@ -3,7 +3,6 @@ maneuvers, ground stations, physics settings and scenario files."""
 
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from ..scenario import (
     PRESETS,
     ConstellationSpec,
     GroundStation,
+    Scenario,
     j2_acts,
     orbit_state,
     palette_color,
@@ -176,7 +176,7 @@ def add_satellite_dialog(app):
         props = dict(mass=v["mass"], area=v["area"], cd=v["cd"])
         if min(props.values()) <= 0:
             return "mass, area and coefficients must be positive"
-        added = sim.add_satellites(orbit, v["name"] or "Sat", count=max(1, v["count"]), **props)
+        added = sim.add_satellites(orbit, v["name"] or "Sat", count=v["count"], **props)
         app.select(sim.n - len(added))
         return None
 
@@ -190,7 +190,7 @@ def add_satellite_dialog(app):
 def _apply_preset(dlg):
     """Fill the form from the chosen entry of ``PRESETS``."""
     name = dlg.widgets["preset"].value
-    if name not in PRESETS:
+    if name not in PRESETS:     # the "custom" entry: the form keeps what was typed
         return
     p = PRESETS[name]
     o = p["orbit"]
@@ -232,8 +232,8 @@ def _preview(dlg):
             vinf = math.sqrt(max(0.0, 2 * el.energy))
             txt = f"open orbit: e {el.e:.3f}, v_inf {vinf:.2f} km/s, hp {el.rp - R_EARTH:,.0f} km"
         dlg.info["preview"] = txt
-    except Exception:           # incomplete or invalid input
-        dlg.info["preview"] = ""
+    except ValueError as exc:   # incomplete or invalid input: say what
+        dlg.info["preview"] = f"({exc})"
 
 
 # --- Walker constellation ------------------------------------------------------------------
@@ -270,24 +270,28 @@ def walker_dialog(app):
               "the orbital period."),
     ]
 
-    def on_change(dlg, key):
-        try:
-            v = dlg.values()
-            per = v["total"] / max(1, v["planes"])
-            period = format_period(float(period_of(R_EARTH + v["altitude"])))
-            dlg.info["preview"] = (f"{v['pattern']} {v['inclination']:.1f}: "
-                                   f"{v['total']}/{v['planes']}/{v['phasing']} - "
-                                   f"{per:g} per plane, T {period}")
-        except Exception:       # incomplete or invalid input
-            dlg.info["preview"] = ""
-
-    def on_ok(v):
+    def spec(v) -> ConstellationSpec:
+        """The constellation the form describes (ValueError saying what is wrong)."""
         c = ConstellationSpec(name=v["name"] or "Walker", altitude=v["altitude"],
                               inclination=v["inclination"], total=v["total"], planes=v["planes"],
                               phasing=v["phasing"], pattern=v["pattern"], raan0=v["raan0"],
                               mass=v["mass"])
-        if c.total <= 0 or c.planes <= 0:
-            return "need at least one satellite and one plane"
+        if c.total % c.planes:
+            raise ValueError("total satellites must be a multiple of the number of planes")
+        return c
+
+    def on_change(dlg, key):
+        try:
+            c = spec(dlg.values())
+            period = format_period(float(period_of(R_EARTH + c.altitude)))
+            dlg.info["preview"] = (f"{c.pattern} {c.inclination:.1f}: "
+                                   f"{c.total}/{c.planes}/{c.phasing} - "
+                                   f"{c.total // c.planes} per plane, T {period}")
+        except ValueError as exc:   # incomplete or invalid input: say what
+            dlg.info["preview"] = f"({exc})"
+
+    def on_ok(v):
+        c = spec(v)
         states = walker_states(c)
         color = palette_color(sim.n)
         props = dict(mass=c.mass, area=c.area, cd=c.cd)
@@ -416,7 +420,7 @@ def maneuver_dialog(app):
         try:
             _, summary = _plan_maneuver(sim, dlg.values(), scan_cache)
             dlg.info["preview"] = summary
-        except Exception as exc:
+        except ValueError as exc:
             dlg.info["preview"] = f"({exc})"
 
     def on_ok(v):
@@ -461,6 +465,7 @@ def _plan_maneuver(sim, v: dict, scan_cache: dict):
     elif kind == "impulse":
         dv = (v["dv_v"] / 1000, v["dv_n"] / 1000, v["dv_b"] / 1000)      # m/s -> km/s
         burns = [Maneuver(sat, "impulse", dv=dv, frame=v["frame"], **common)]
+        burns[0].check()
         summary = f"|dV| {np.linalg.norm(dv) * 1000:.1f} m/s"
     elif kind == "circularize":
         burns = [Maneuver(sat, "circularize", **common)]
@@ -471,8 +476,9 @@ def _plan_maneuver(sim, v: dict, scan_cache: dict):
     else:
         burns = [Maneuver(sat, "finite", thrust=v["thrust"], duration=v["duration"],
                           dv=DIRECTIONS[v["direction"]], frame="VNB", **common)]
+        burns[0].check()
         # rocket equation for the preview: m_final = m - mdot * t, mdot = F / (Isp g0)
-        m = sim.sats[sim.index_of(sat)].mass
+        m = sim.sats[sim.require(sat)].mass
         mf = m - v["thrust"] / (v["isp"] * G0_M) * v["duration"]
         dvm = v["isp"] * G0_M * math.log(m / mf) if mf > 0 else float("inf")
         summary = f"dV ~{dvm:.1f} m/s, accel {v['thrust'] / m * 1000:.2f} mm/s^2"
@@ -616,10 +622,10 @@ def scenario_dialog(app):
         p = lookup.get(dlg.widgets["file"].value)
         if p:
             try:
-                d = json.loads(Path(p).read_text(encoding="utf-8"))
-                dlg.info["desc"] = (d.get("description") or d.get("name", ""))[:88]
-            except (OSError, ValueError, AttributeError):     # unreadable or not a scenario
-                dlg.info["desc"] = ""
+                sc = Scenario.load(p)
+                dlg.info["desc"] = (sc.description or sc.name)[:88]
+            except (OSError, ValueError) as exc:     # unusable: say why
+                dlg.info["desc"] = f"cannot be opened: {exc}"[:88]
 
     def on_ok(v):
         p = lookup.get(v["file"])
@@ -684,15 +690,7 @@ def edit_satellite_dialog(app):
     def on_ok(v):
         if min(v["mass"], v["area"], v["cd"]) <= 0:
             return "values must be positive"
-        new = v["name"] or s.name
-        if new != s.name:
-            new = sim.unique_name(new)
-            for m in sim.maneuvers:
-                if m.sat == s.name:
-                    m.sat = new
-                if m.target == s.name:
-                    m.target = new
-            s.name = new
+        sim.rename(sim.sats.index(s), v["name"] or s.name)
         s.mass, s.area, s.cd = v["mass"], v["area"], v["cd"]
         return None
 

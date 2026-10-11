@@ -56,17 +56,25 @@ def export_history_csv(sim: Simulation, path) -> int:
 
 
 def parse_duration(text: str) -> float:
-    """Seconds from ``90``, ``90s``, ``15m``, ``12h`` or ``3d``."""
+    """Seconds from ``90``, ``90s``, ``15m``, ``12h`` or ``3d`` (ValueError otherwise)."""
     text = str(text).strip().lower()
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-    if text and text[-1] in units:
-        return float(text[:-1]) * units[text[-1]]
-    return float(text)
+    try:
+        x = float(text[:-1]) * units[text[-1]] if text and text[-1] in units else float(text)
+    except ValueError:
+        raise ValueError(f"{text!r} is not a duration such as 90, 90s, 15m, 12h or 3d") from None
+    if not math.isfinite(x):
+        raise ValueError(f"{text!r} is not a finite duration")
+    return x
 
 
 def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool = False):
     """Propagate ``scenario`` for ``duration`` s, writing every ``step`` s to CSV ``out``
     (if given), then print a summary unless ``quiet``. Returns the finished simulation."""
+    if not duration >= 0:
+        raise ValueError(f"duration must be zero or more seconds, got {duration}")
+    if not step > 0:
+        raise ValueError(f"step must be a positive number of seconds, got {step}")
     sim = Simulation(scenario)
     if out:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
@@ -86,8 +94,10 @@ def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool 
     return sim
 
 
-def summary(sim: Simulation, out=sys.stdout):
-    """Print a per-satellite table and the key events."""
+def summary(sim: Simulation, out=None):
+    """Print a per-satellite table and the key events (to ``out``, default the
+    standard output at call time)."""
+    out = out or sys.stdout
     print(f"Scenario: {sim.scenario.name}   elapsed {format_duration(sim.t)}   "
           f"({sim.forces.label()}, {sim.propagator})", file=out)
     print(f"{'name':<28}{'status':<12}{'alt km':>11}{'a km':>12}{'e':>10}{'i deg':>9}"
@@ -114,10 +124,21 @@ def main(argv=None):
     ap.add_argument("--out", help="CSV file for the ephemeris")
     ap.add_argument("--propagator", choices=("cowell", "kepler", "j2mean"))
     args = ap.parse_args(argv)
-    sc = Scenario.load(args.scenario)
+    try:                                 # input the run cannot use: exit 2 saying which
+        sc = Scenario.load(args.scenario)
+    except (OSError, ValueError) as exc:
+        ap.error(f"{args.scenario}: {exc}")
+    try:
+        duration, step = parse_duration(args.duration), parse_duration(args.step)
+    except ValueError as exc:
+        ap.error(str(exc))
+    if duration < 0:
+        ap.error(f"--duration cannot be negative ({args.duration})")
+    if step <= 0:
+        ap.error(f"--step must be positive ({args.step})")
     if args.propagator:
         sc.propagator = args.propagator
-    run(sc, parse_duration(args.duration), parse_duration(args.step), args.out)
+    run(sc, duration, step, args.out)
     if args.out:
         print(f"\nWrote {args.out}")
 

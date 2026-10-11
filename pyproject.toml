@@ -23,6 +23,8 @@ include = ["satflight*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# a warning (numpy divide-by-zero, invalid value, ...) is a failure, not noise
+filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 100

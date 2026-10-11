@@ -118,14 +118,15 @@ SCENES = {f.__name__: f for f in (overview, hohmann, starlink, molniya_ecef_map,
                                   start_screen)}
 
 
-def render(name: str, frames: int = 10):
-    """Build scene ``name``, draw it with the clock stopped and save the picture."""
+def render(name: str, frames: int = 10, out: Path = OUT):
+    """Build scene ``name``, draw it with the clock stopped and save the picture
+    in ``out``."""
     app = SCENES[name]()
     app.toasts.clear()                  # no "Loaded ..." banner over the scene
     for _ in range(frames):             # a fresh App's first frames draw a coarser Earth
         app.update(0.0)
         app.draw()
-    path = OUT / f"{name}.png"
+    path = out / f"{name}.png"
     pygame.image.save(app.screen, str(path))
     pygame.quit()
     return path
@@ -134,6 +135,9 @@ def render(name: str, frames: int = 10):
 def main(argv=None):
     """Render the named scenes (all of them by default)."""
     names = (argv if argv is not None else sys.argv[1:]) or list(SCENES)
+    unknown = [n for n in names if n not in SCENES]
+    if unknown:
+        sys.exit(f"unknown scene {', '.join(unknown)}; choose from {', '.join(SCENES)}")
     OUT.mkdir(parents=True, exist_ok=True)
     for name in names:
         print(f"wrote {render(name).relative_to(ROOT)}")

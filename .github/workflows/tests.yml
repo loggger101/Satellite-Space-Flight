@@ -6,10 +6,15 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false          # one red job must not hide what the others found
       matrix:
-        python-version: ["3.10", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.12", "3.13", "3.14"]
+        include:
+          - os: windows-latest  # the platform it is played on (Segoe UI / Consolas)
+            python-version: "3.14"
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
@@ -21,3 +26,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m ruff check .
       - run: python -m pytest -q
+      - run: python tools/selfcheck.py --quick

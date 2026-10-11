@@ -13,7 +13,6 @@ and the higher-order SGP4 terms are left out: tens of km over days.
 
 from __future__ import annotations
 
-import contextlib
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -105,21 +104,30 @@ class TLE:
         return np.asarray(r), np.asarray(v)
 
 
-def split_tles(text: str) -> list[TLE]:
+def split_tles(text: str) -> tuple[list[TLE], list[str]]:
     """Every TLE in ``text`` (a Celestrak-style file): pairs of lines starting
     with "1 " and "2 ", each named by the line just before it if that is not
-    part of a pair. Pairs that do not parse are skipped."""
+    part of a pair. Returns (TLEs, problems): a pair that does not parse, or
+    whose checksum fails, is left out and described in ``problems``."""
     lines = [ln.rstrip() for ln in text.splitlines()]
-    out, prev, k = [], "", 0
+    out, problems, prev, k = [], [], "", 0
     while k < len(lines):
         ln = lines[k]
         if ln.startswith("1 ") and k + 1 < len(lines) and lines[k + 1].startswith("2 "):
-            with contextlib.suppress(ValueError):
-                out.append(parse_tle(ln + "\n" + lines[k + 1], prev.lstrip("0 ").strip()))
+            name = prev.lstrip("0 ").strip()
+            try:
+                tle = parse_tle(ln + "\n" + lines[k + 1], name)
+            except ValueError as exc:
+                problems.append(f"line {k + 1} ({name or 'unnamed'}): {exc}")
+            else:
+                if tle.checksum_ok:
+                    out.append(tle)
+                else:
+                    problems.append(f"line {k + 1} ({tle.name}): checksum mismatch")
             prev, k = "", k + 2
             continue
         prev, k = ln.strip(), k + 1
-    return out
+    return out, problems
 
 
 def parse_tle(text: str, name: str = "") -> TLE:

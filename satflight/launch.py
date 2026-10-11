@@ -52,9 +52,10 @@ from dataclasses import asdict, dataclass, field, fields
 import numpy as np
 
 from .atmosphere import H0, RHO0, SCALE_H, TOP_KM
-from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH
+from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, SOI_EARTH
 from .elements import rv2coe
 from .frames import ecef_to_eci_state, geodetic_to_ecef
+from .strict import MAX_CDA_OVER_M, MAX_SPAN, build, drag_props, finite, one_of, within
 
 G0_M = 9.80665            # m/s^2, standard gravity (defines Isp)
 P_SCALE_H = 7.0           # km, scale height of ambient pressure (thrust vs altitude)
@@ -67,17 +68,12 @@ MIN_PERIGEE = 100.0       # km: lowest target perigee accepted
 MAX_BURN = 3600.0         # s: longest stage burn accepted
 TIMINGS = ("now", "delay", "absolute", "raan", "plane")
 GUIDANCES = ("orbit", "open")
+DIRECTIONS = ("north", "south")
 
 _H0, _RHO0, _SH = H0.tolist(), RHO0.tolist(), SCALE_H.tolist()
 
 
 # --- Vehicle description ---------------------------------------------------------
-
-def _from_dict(cls, d):
-    """Build dataclass ``cls`` from ``d``, ignoring keys it has no field for."""
-    names = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in d.items() if k in names})
-
 
 @dataclass
 class Stage:
@@ -132,14 +128,31 @@ class Vehicle:
         """Total mass (kg) on the pad with ``payload`` kg aboard."""
         return payload + self.fairing + sum(s.propellant + s.dry for s in self.stages)
 
+    def check(self):
+        """Raise ValueError with a readable reason if the vehicle cannot fly."""
+        if not self.stages:
+            raise ValueError("the vehicle has no stages")
+        for s in self.stages:
+            if min(s.thrust, s.isp_vac, s.propellant) <= 0 or s.dry < 0 or s.isp_sl < 0:
+                raise ValueError(f"{s.name}: thrust, Isp and propellant must be positive")
+        if self.fairing < 0 or self.diameter < 0 or self.cd < 0:
+            raise ValueError("masses, diameter and Cd cannot be negative")
+
     def stage_summary(self, payload: float):
         """Per stage: (mass at ignition kg, ideal vacuum dV km/s, burn time s,
-        thrust/weight at ignition). The fairing is counted on the first stage."""
+        thrust/weight at ignition). The fairing is counted on the first stage.
+        ValueError if the vehicle cannot fly."""
+        self.check()
+        if payload < 0:
+            raise ValueError("the payload mass cannot be negative")
         out = []
         m = self.liftoff_mass(payload)
         for k, s in enumerate(self.stages):
             m0 = m
             m1 = m0 - s.propellant
+            if m1 <= 0:
+                raise ValueError(f"{s.name} would burn out at zero mass: give the last stage "
+                                 "a dry mass or carry a payload")
             dv = s.isp_vac * G0_M * math.log(m0 / m1) / 1000.0 if m1 > 0 else math.inf
             thrust = s.thrust * (s.isp_sl or s.isp_vac) / s.isp_vac if k == 0 else s.thrust
             out.append((m0, dv, s.burn_time, thrust * 1e3 / (m0 * G0_M)))
@@ -155,8 +168,9 @@ class Vehicle:
     @classmethod
     def from_dict(cls, d):
         """Build from a scenario dict; stages may be dicts or :class:`Stage` objects."""
-        v = _from_dict(cls, d)
-        v.stages = [s if isinstance(s, Stage) else _from_dict(Stage, s) for s in v.stages]
+        v = build(cls, d, f"vehicle {d.get('name', '?')!r}" if isinstance(d, dict) else "vehicle")
+        v.stages = [s if isinstance(s, Stage) else build(Stage, s, f"{v.name} stage {k + 1}")
+                    for k, s in enumerate(v.stages)]
         return v
 
     def copy(self) -> Vehicle:
@@ -187,7 +201,7 @@ VEHICLES = {
 
 def vehicle_preset(name: str) -> Vehicle:
     """An independent copy of ``VEHICLES[name]``."""
-    return VEHICLES[name].copy()
+    return VEHICLES[one_of(name, tuple(VEHICLES), "vehicle")].copy()
 
 
 # Public coordinates of launch complexes (geodetic deg, km).
@@ -248,12 +262,18 @@ class LaunchSpec:
     @classmethod
     def from_dict(cls, d):
         """Build from a scenario dict; ``vehicle`` may be a dict or a ``VEHICLES`` name."""
-        s = _from_dict(cls, d)
+        where = f"launch {d.get('name', '?')!r}" if isinstance(d, dict) else "launch"
+        s = build(cls, d, where)
         v = d.get("vehicle")
         if isinstance(v, str):
             s.vehicle = vehicle_preset(v)
         elif isinstance(v, dict):
             s.vehicle = Vehicle.from_dict(v)
+        elif "vehicle" in d and not isinstance(v, Vehicle):
+            raise ValueError(f"{where}: vehicle must be a preset name or an object")
+        one_of(s.timing, TIMINGS, f"{where} timing")
+        one_of(s.guidance, GUIDANCES, f"{where} guidance")
+        one_of(s.direction, DIRECTIONS, f"{where} direction")
         return s
 
     def copy(self) -> LaunchSpec:
@@ -264,15 +284,31 @@ class LaunchSpec:
 def validate(spec: LaunchSpec):
     """Raise ValueError with a readable reason if the spec cannot fly."""
     v = spec.vehicle
-    if not v.stages:
-        raise ValueError("the vehicle has no stages")
+    v.check()
+    v.stage_summary(spec.payload_mass)       # burnout masses must stay positive
+    for f in fields(spec):
+        x = getattr(spec, f.name)
+        if isinstance(x, float | int) and not isinstance(x, bool):
+            finite(x, f"launch {f.name}")
+    for name in ("perigee_alt", "apogee_alt"):
+        within(getattr(spec, name), -R_EARTH, SOI_EARTH - R_EARTH, f"target {name} (km)")
+    within(spec.inclination, 0.0, 180.0, "target inclination (deg)")
+    within(spec.alt, -0.5, 100.0, "pad altitude (km)")
+    within(spec.delay, 0.0, MAX_SPAN, "launch delay (s)")
     for s in v.stages:
-        if min(s.thrust, s.isp_vac, s.propellant) <= 0 or s.dry < 0 or s.isp_sl < 0:
-            raise ValueError(f"{s.name}: thrust, Isp and propellant must be positive")
         if s.burn_time > MAX_BURN:
             raise ValueError(f"{s.name} would burn {s.burn_time / 60:.0f} min; the ascent model "
                              f"allows {MAX_BURN / 60:.0f} (use a finite-burn maneuver instead)")
-    if spec.payload_mass < 0 or v.fairing < 0 or v.diameter < 0 or v.cd < 0:
+    drag_props(spec.payload_mass, spec.payload_area, spec.payload_cd, "payload")
+    if spec.track_stages:
+        # each dropped part flies on as an object with the body's drag area
+        least = v.cd * v.area / MAX_CDA_OVER_M
+        for name, m in [*((s.name, s.dry) for s in v.stages), ("fairing", v.fairing)]:
+            if 0 < m < least:
+                raise ValueError(f"{name}: {m:g} kg is too light to track with a "
+                                 f"{v.diameter:g} m body (at least {least:.3g} kg, or untick "
+                                 "keeping spent stages)")
+    if v.fairing < 0 or v.diameter < 0 or v.cd < 0:
         raise ValueError("masses, diameter and Cd cannot be negative")
     if not -90.0 <= spec.lat <= 90.0:
         raise ValueError("latitude must be within +/-90 deg")
@@ -280,6 +316,8 @@ def validate(spec: LaunchSpec):
         raise ValueError(f"unknown launch timing {spec.timing!r}")
     if spec.guidance not in GUIDANCES:
         raise ValueError(f"unknown guidance {spec.guidance!r}")
+    if spec.direction not in DIRECTIONS:
+        raise ValueError(f"unknown launch direction {spec.direction!r} (north or south)")
     if spec.guidance == "orbit" and min(spec.perigee_alt, spec.apogee_alt) < MIN_PERIGEE:
         raise ValueError(f"target perigee must be at least {MIN_PERIGEE:.0f} km")
     if spec.vertical_time < 0:
@@ -725,10 +763,12 @@ class Ascent:
             self.t = self.t0
             self.y = self.pad_state(self.t0)
             self._liftoff()
-        guard = 0
-        while not self.released and self.t < t_end - 1e-9 and guard < 200000:
-            guard += 1
+        while not self.released and self.t < t_end - 1e-9:
+            t0 = self.t
             self._step(min(H_POWERED, t_end - self.t))
+            if not self.released and self.t <= t0:
+                raise RuntimeError(f"ascent of {self.spec.name} made no progress at "
+                                   f"MET {self.met:.1f} s")
         if self.released and math.isfinite(t_end) and self.t < t_end - 1e-9:
             cd_a = self.spec.payload_cd * self.spec.payload_area
             self.y = coast(self.y, self.t, t_end, self.mass, cd_a, self.env)

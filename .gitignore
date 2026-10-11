@@ -10,3 +10,5 @@ venv/
 screenshots/
 scenarios/user/
 *-DESKTOP-PJS73RO.*
+.coverage
+htmlcov/

@@ -24,6 +24,7 @@ import numpy as np
 from . import atmosphere
 from .constants import C22, F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, S22
 from .frames import OMEGA_VEC
+from .strict import check_keys
 
 # --- Individual terms --------------------------------------------------------------
 
@@ -159,8 +160,10 @@ class ForceModel:
 
     @classmethod
     def from_dict(cls, d):
-        """Build from a scenario dict, ignoring unknown (e.g. out-of-scope) keys."""
+        """Build from a scenario dict. Out-of-scope terms are left out here (see
+        :meth:`ignored_terms`); any other unknown key raises ValueError."""
         names = {f.name for f in fields(cls)}
+        check_keys(d or {}, names | set(cls.OUT_OF_SCOPE), "forces")
         return cls(**{k: v for k, v in (d or {}).items() if k in names})
 
     @classmethod

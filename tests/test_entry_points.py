@@ -175,7 +175,7 @@ def test_a_failed_load_keeps_the_start_menu_open(app, tmp_path):
     assert app.in_menu
 
 
-def test_an_unreadable_file_in_scenarios_gets_a_card_that_says_why(tmp_path):
+def test_an_unreadable_file_in_scenarios_gets_a_line_that_says_why(tmp_path):
     shutil.copytree(ROOT / "scenarios", tmp_path / "scenarios",
                     ignore=shutil.ignore_patterns("user"))
     (tmp_path / "scenarios" / "zz_broken.json").write_text("{not json", encoding="utf-8")
@@ -184,10 +184,12 @@ def test_an_unreadable_file_in_scenarios_gets_a_card_that_says_why(tmp_path):
     try:
         menu = a.dialogs[-1]
         assert isinstance(menu, StartScreen)
-        k = next(k for k, c in enumerate(menu.cards) if c[0].stem == "zz_broken")
-        assert menu.cards[k][3] == "unreadable" and "Cannot be opened" in menu.cards[k][2]
-        menu.choose(k)
-        assert a.in_menu and any("Could not open zz_broken.json" in m for _, m in a.toasts)
+        k = next(k for k, f in enumerate(menu.files) if f[0].stem == "zz_broken")
+        assert menu.files[k][3] == "unreadable" and "Cannot be opened" in menu.files[k][2]
+        a.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1,
+                                    pos=menu.file_rects[k].center))
+        assert a.in_menu and "Could not open zz_broken.json" in menu.error
+        a.draw()
     finally:
         pygame.quit()
 

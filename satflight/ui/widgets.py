@@ -257,6 +257,55 @@ class FieldSpec:
 CHOICE_HELP = "Click or scroll to change it; right-click goes back."
 
 
+def make_widget(s: FieldSpec, changed: Callable[[str], Any]) -> Widget | None:
+    """The widget for field ``s`` (None for an info row). Choices and checkboxes
+    call ``changed(key)`` when they change; text fields leave that to their owner."""
+    if s.kind == "choice":
+        opts = list(s.options)
+        idx = opts.index(s.default) if s.default in opts else 0
+        return Choice(opts, idx, on_change=lambda v, k=s.key: changed(k))
+    if s.kind == "bool":
+        return Checkbox(bool(s.default), on_change=lambda v, k=s.key: changed(k))
+    if s.kind == "info":
+        return None
+    return TextField(s.default, s.kind)
+
+
+def is_visible(s: FieldSpec, raw: dict) -> bool:
+    """Whether field ``s`` shows, given the unparsed values ``raw``."""
+    return s.visible is None or bool(s.visible(raw))
+
+
+def parse_fields(specs: list[FieldSpec], widgets: dict[str, Widget]) -> dict:
+    """Parsed values of the *visible* fields; raises ValueError naming the first
+    text field that does not parse (and marks it red)."""
+    raw = {k: w.value for k, w in widgets.items()}
+    out = {}
+    for s in specs:
+        if s.kind == "info" or not is_visible(s, raw):
+            continue
+        w = widgets[s.key]
+        if isinstance(w, TextField):
+            try:
+                out[s.key] = w.parsed()
+                w.error = False
+            except ValueError as exc:
+                w.error = True
+                raise ValueError(f"'{s.label}' needs a number ({exc})") from None
+        else:
+            out[s.key] = w.value
+    return out
+
+
+def field_tip(s: FieldSpec, raw: dict) -> str:
+    """The hover tip of field ``s``: its ``tip``, what the chosen option means,
+    and how to change a choice."""
+    parts = [s.tip]
+    if s.kind == "choice":
+        parts += [s.option_tips.get(raw.get(s.key), ""), CHOICE_HELP]
+    return "\n".join(p for p in parts if p)
+
+
 class FormDialog:
     """A modal form. ``side`` is an optional panel drawn to the right of the
     fields: any object with ``width``, ``min_height``, ``draw(surf, rect,
@@ -284,18 +333,11 @@ class FormDialog:
         self.info: dict[str, str] = {}
         self.widgets: dict[str, Widget] = {}
         for s in specs:
-            if s.kind == "choice":
-                opts = list(s.options)
-                idx = opts.index(s.default) if s.default in opts else 0
-                self.widgets[s.key] = Choice(opts, idx,
-                                             on_change=lambda v, k=s.key: self.changed(k))
-            elif s.kind == "bool":
-                self.widgets[s.key] = Checkbox(bool(s.default),
-                                               on_change=lambda v, k=s.key: self.changed(k))
-            elif s.kind == "info":
+            w = make_widget(s, self.changed)
+            if w is None:
                 self.info[s.key] = str(s.default)
             else:
-                self.widgets[s.key] = TextField(s.default, s.kind)
+                self.widgets[s.key] = w
         self.buttons = [Button(ok_text, self.submit, accent=True, tooltip="Enter",
                                hint=ok_hint or f"{ok_text} with these settings"),
                         Button("Cancel", self.close, tooltip="Esc",
@@ -330,25 +372,10 @@ class FormDialog:
 
     def values(self) -> dict:
         """Parsed values of *visible* fields; raises ValueError naming the field."""
-        raw = self.raw()
-        out = {}
-        for s in self.specs:
-            if s.kind == "info" or not self._visible(s, raw):
-                continue
-            w = self.widgets[s.key]
-            if isinstance(w, TextField):
-                try:
-                    out[s.key] = w.parsed()
-                    w.error = False
-                except ValueError as exc:
-                    w.error = True
-                    raise ValueError(f"'{s.label}' needs a number ({exc})") from None
-            else:
-                out[s.key] = w.value
-        return out
+        return parse_fields(self.specs, self.widgets)
 
     def _visible(self, s: FieldSpec, raw) -> bool:
-        return s.visible is None or bool(s.visible(raw))
+        return is_visible(s, raw)
 
     def changed(self, key):
         """A field changed: tell ``on_change`` and re-layout (visibility may change)."""
@@ -481,12 +508,8 @@ class FormDialog:
         return True    # modal: swallow everything
 
     def field_tip(self, s: FieldSpec, raw: dict) -> str:
-        """The hover tip of field ``s``: its ``tip``, what the chosen option means,
-        and how to change a choice."""
-        parts = [s.tip]
-        if s.kind == "choice":
-            parts += [s.option_tips.get(raw.get(s.key), ""), CHOICE_HELP]
-        return "\n".join(p for p in parts if p)
+        """The hover tip of field ``s`` (see :func:`field_tip`)."""
+        return field_tip(s, raw)
 
     def draw(self, surf):
         """Shade the window, then draw the frame, rows, side panel, buttons and error."""

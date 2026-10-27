@@ -134,6 +134,7 @@ class App:
         self.cursor = None           # mouse cursor kind shown (see tips.hot), None the arrow
         self._cursor_ok = True       # False where SDL has no system cursors (dummy driver)
         self.started = False    # a scenario was chosen: the start menu can go back to it
+        self.last_setup: dict | None = None   # the start menu's form as last started (raw)
         if welcome and scenario is None:
             self.load_scenario(Scenario(name="Empty"))    # a placeholder the menu replaces
             self.started = False
@@ -178,36 +179,47 @@ class App:
         self.toast(f"Loaded '{sc.name}'")
 
     def open_file(self, path):
-        """Open a file dropped on the window: a scenario (``.json``) replaces the
-        run; any other file is read for TLEs, whose satellites are added."""
-        path = Path(path)
+        """Open a file dropped on the window (see :meth:`open_path`); a file that
+        cannot be used is reported in a toast."""
         try:
-            if path.suffix.lower() == ".json":
-                # open dialogs hold on to the simulation being replaced
-                self.dialogs = [d for d in self.dialogs if isinstance(d, welcome.StartScreen)]
-                self.load_scenario(path)
-                return
-            tles, problems = split_tles(path.read_text(encoding="utf-8", errors="replace"))
-            if not tles:
-                raise ValueError("no TLEs found" + (f" ({problems[0]})" if problems else ""))
-            if self.in_menu:
-                self.load_scenario(Scenario(name=path.stem))
-            rows = []
-            for k, t in enumerate(tles[:MAX_DROPPED]):
-                r, v = orbit_state({"type": "tle", "line1": t.line1, "line2": t.line2},
-                                   self.sim.clock, self.sim.t)
-                rows.append((t.name, palette_color(self.sim.n + k), {}, r, v))
-            self.sim.add_many(rows)
-            left_out = (f" (the first {len(rows):,} of {len(tles):,}; at most {MAX_DROPPED:,} "
-                        "per file)" if len(tles) > len(rows) else "")
-            skipped = (f"; {len(problems)} unreadable left out (see the event log)"
-                       if problems else "")
-            for p in problems:
-                self.sim.log(f"{path.name}: {p}", "warn")
-            self.toast(f"Added {len(rows)} satellite{'s' if len(rows) != 1 else ''} "
-                       f"from {path.name}{left_out}{skipped}")
+            self.open_path(path)
         except (OSError, ValueError) as exc:     # unreadable or not usable: say why
-            self.toast(f"Could not open {path.name}: {exc}")
+            self.toast(f"Could not open {Path(path).name}: {exc}")
+
+    def open_path(self, path):
+        """Open a file: a scenario (``.json``) replaces the run; any other file is
+        read for TLEs, whose satellites are added (to a new, empty run when the
+        start menu is open). OSError / ValueError if it cannot be used; then
+        nothing has changed."""
+        path = Path(path)
+        if path.suffix.lower() == ".json":
+            sc = Scenario.load(path)
+            # open dialogs hold on to the simulation being replaced
+            self.dialogs = [d for d in self.dialogs if isinstance(d, welcome.StartScreen)]
+            self.load_scenario(sc)
+            self.scenario_path = path
+            return
+        tles, problems = split_tles(path.read_text(encoding="utf-8", errors="replace"))
+        if not tles:
+            raise ValueError("no TLEs found" + (f" ({problems[0]})" if problems else ""))
+        sim = self.sim if not self.in_menu else Simulation(Scenario(name=path.stem))
+        rows = []
+        for k, t in enumerate(tles[:MAX_DROPPED]):
+            r, v = orbit_state({"type": "tle", "line1": t.line1, "line2": t.line2},
+                               sim.clock, sim.t)
+            rows.append((t.name, palette_color(sim.n + k), {}, r, v))
+        if sim is not self.sim:
+            self.load_scenario(sim.scenario)
+            sim = self.sim
+        sim.add_many(rows)
+        left_out = (f" (the first {len(rows):,} of {len(tles):,}; at most {MAX_DROPPED:,} "
+                    "per file)" if len(tles) > len(rows) else "")
+        skipped = (f"; {len(problems)} unreadable left out (see the event log)"
+                   if problems else "")
+        for p in problems:
+            sim.log(f"{path.name}: {p}", "warn")
+        self.toast(f"Added {len(rows)} satellite{'s' if len(rows) != 1 else ''} "
+                   f"from {path.name}{left_out}{skipped}")
 
     def reset(self):
         """Reload the current scenario from its file (or its in-memory original)."""
@@ -347,8 +359,7 @@ class App:
             self.dialogs.append(dlg)
             if name == "start":
                 self.toasts.clear()             # "Loaded ..." would sit on top of the menu
-            else:                               # the start menu has no text fields
-                pygame.key.start_text_input()
+            pygame.key.start_text_input()
 
     @property
     def in_menu(self) -> bool:
@@ -582,8 +593,11 @@ class App:
     def update(self, dt_real: float):
         """Advance the simulation by ``warp`` times the real frame time and move the camera.
         The frame only sets how far; the physics keeps its own time steps. Nothing
-        moves while the start menu is open."""
+        moves while the start menu is open (it only collects its file picker's answer)."""
         if self.in_menu:
+            for d in list(self.dialogs):
+                if isinstance(d, welcome.StartScreen):
+                    d.poll()
             return
         if not self.paused:
             t0 = time.perf_counter()

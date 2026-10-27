@@ -515,6 +515,40 @@ def station_dialog(app):
 
 # --- Physics settings -----------------------------------------------------------------------
 
+# what each propagator and Cowell integrator does (the Physics dialog and the start menu)
+PROPAGATOR_TIPS = {"cowell": "cowell: integrate every enabled force numerically. The "
+                             "most complete, and the only one with drag and burns.",
+                   "kepler": "kepler: the exact two-body ellipse. Fast, but ignores the "
+                             "Earth's shape and air.",
+                   "j2mean": "j2mean: the ellipse plus the average drift caused by the "
+                             "Earth's bulge (J2), timed by the mean orbit. Fast and "
+                             "good for long runs; no drag or burns."}
+METHOD_TIPS = {"dopri5": "dopri5: Dormand-Prince 5(4), adapts its step to meet the "
+                         "tolerances. The accurate default.",
+               "rk4": "rk4: classic Runge-Kutta with a fixed step.",
+               "wh": "wh: Wisdom-Holman. Follows the exact ellipse and adds the "
+                     "small forces as kicks, so long fixed steps (60 s or more) "
+                     "stay accurate and the energy does not drift.",
+               "leapfrog": "leapfrog: a simple symplectic fixed-step method. Its "
+                           "energy stays bounded, but its timing drifts quickly: "
+                           "it needs steps of a few seconds."}
+# what each force-model switch does
+FORCE_TIPS = {
+    "j2": "The Earth's equatorial bulge. It turns orbital planes (node drift) and "
+          "ellipses (perigee drift): the largest effect after central gravity.",
+    "j3": "The Earth's slight pear shape (north-south asymmetry). It slowly changes "
+          "eccentricity.",
+    "j4": "The next, smaller term of the Earth's shape.",
+    "c22": "The equator is slightly oval, and the oval turns with the Earth. Small, but "
+           "it is what pulls geostationary satellites off their slots (toward 75 E or "
+           "105 W) over weeks. Cowell only.",
+    "drag": "Air resistance from the upper atmosphere. It makes low orbits decay until the "
+            "satellite re-enters.",
+}
+DENSITY_TIP = ("Multiplies the air density: about 0.3 at solar minimum, 1 on average, 3 at "
+               "solar maximum (when the Sun heats and puffs up the upper atmosphere).")
+
+
 def physics_dialog(app):
     """Force model, propagator and integrator settings (key P)."""
     sim = app.sim
@@ -523,24 +557,10 @@ def physics_dialog(app):
     specs = [
         F("propagator", "Propagator", "choice", sim.propagator, list(PROPAGATORS),
           tip="How orbits are moved forward in time.",
-          option_tips={"cowell": "cowell: integrate every enabled force numerically. The "
-                                 "most complete, and the only one with drag and burns.",
-                       "kepler": "kepler: the exact two-body ellipse. Fast, but ignores the "
-                                 "Earth's shape and air.",
-                       "j2mean": "j2mean: the ellipse plus the average drift caused by the "
-                                 "Earth's bulge (J2), timed by the mean orbit. Fast and "
-                                 "good for long runs; no drag or burns."}),
+          option_tips=PROPAGATOR_TIPS),
         F("method", "Integrator (Cowell)", "choice", it.method, list(METHODS),
           tip="The numerical method Cowell uses.",
-          option_tips={"dopri5": "dopri5: Dormand-Prince 5(4), adapts its step to meet the "
-                                 "tolerances. The accurate default.",
-                       "rk4": "rk4: classic Runge-Kutta with the fixed step below.",
-                       "wh": "wh: Wisdom-Holman. Follows the exact ellipse and adds the "
-                             "small forces as kicks, so long fixed steps (60 s or more) "
-                             "stay accurate and the energy does not drift.",
-                       "leapfrog": "leapfrog: a simple symplectic fixed-step method. Its "
-                                   "energy stays bounded, but its timing drifts quickly: "
-                                   "it needs steps of a few seconds."}),
+          option_tips=METHOD_TIPS),
         F("rtol", "Relative tolerance", "float", f"{it.rtol:g}",
           tip="dopri5's allowed error per step, relative to the state. Smaller is more "
               "accurate and slower."),
@@ -551,23 +571,13 @@ def physics_dialog(app):
         F("h_fixed", "Fixed step (s)", "float", f"{it.h_fixed:g}",
           tip="Step length of the fixed-step methods rk4, wh and leapfrog. Low orbits need "
               "about 30 s or less with rk4, 60 s with wh, a few seconds with leapfrog."),
-        F("j2", "J2 oblateness", "bool", fm.j2,
-          tip="The Earth's equatorial bulge. It turns orbital planes (node drift) and "
-              "ellipses (perigee drift): the largest effect after central gravity."),
-        F("j3", "J3", "bool", fm.j3,
-          tip="The Earth's slight pear shape (north-south asymmetry). It slowly changes "
-              "eccentricity."),
-        F("j4", "J4", "bool", fm.j4, tip="The next, smaller term of the Earth's shape."),
-        F("c22", "C22/S22 (elliptical equator)", "bool", fm.c22,
-          tip="The equator is slightly oval, and the oval turns with the Earth. Small, but "
-              "it is what pulls geostationary satellites off their slots (toward 75 E or "
-              "105 W) over weeks. Cowell only."),
-        F("drag", "Atmospheric drag", "bool", fm.drag,
-          tip="Air resistance from the upper atmosphere. It makes low orbits decay until the "
-              "satellite re-enters."),
+        F("j2", "J2 oblateness", "bool", fm.j2, tip=FORCE_TIPS["j2"]),
+        F("j3", "J3", "bool", fm.j3, tip=FORCE_TIPS["j3"]),
+        F("j4", "J4", "bool", fm.j4, tip=FORCE_TIPS["j4"]),
+        F("c22", "C22/S22 (elliptical equator)", "bool", fm.c22, tip=FORCE_TIPS["c22"]),
+        F("drag", "Atmospheric drag", "bool", fm.drag, tip=FORCE_TIPS["drag"]),
         F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}",
-          tip="Multiplies the air density: about 0.3 at solar minimum, 1 on average, 3 at "
-              "solar maximum (when the Sun heats and puffs up the upper atmosphere)."),
+          tip=DENSITY_TIP),
         F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}",
           tip="Seconds of simulated time between the points stored for trails, the map "
               "tracks and the plot."),

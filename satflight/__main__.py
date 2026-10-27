@@ -1,6 +1,6 @@
 """Launch the interactive simulator.
 
-    python -m satflight                                  # start menu, then pick a scenario
+    python -m satflight                                  # start menu: set up a run or open a file
     python -m satflight scenarios/walker_constellation.json
     python -m satflight --headless --frames 120 --screenshot out.png   # render offscreen
 """

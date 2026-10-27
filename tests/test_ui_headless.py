@@ -23,7 +23,7 @@ from satflight.ui.app import REST_AFTER, RESTING_FPS, App
 from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
 from satflight.ui.welcome import scenario_card
-from satflight.ui.widgets import TextField
+from satflight.ui.widgets import TextField, field_tip
 
 
 @pytest.fixture
@@ -571,47 +571,228 @@ def test_start_screen_opens_on_request_and_covers_every_bundled_scenario(tmp_pat
         assert not a.toasts                              # nothing drawn over it
         frame(a, 2)
         bundled = {p.stem for p in a.scenario_dir.glob("*.json")}
-        assert bundled == {stem for stem, _ in CARDS}    # a new scenario needs a blurb
+        assert bundled == {stem for stem, *_ in CARDS}   # a new scenario needs a label and blurb
         assert len(a.dialogs[-1].cards) == len(bundled)
     finally:
         pygame.quit()
 
 
-def test_start_screen_fits_the_smallest_window_without_cutting_text(scaled_app):
+def test_start_screen_fits_the_smallest_window_without_cutting_text(scaled_app, tmp_path):
+    from satflight.ui.welcome import SETUP_FIELDS
+    from satflight.ui.widgets import Choice
     app = scaled_app
+    for k in range(30):                                  # more saved files than there is room for
+        Scenario(name=f"Saved run {k}").save(app.user_scenario_dir / f"run_{k}.json")
     app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))
     app.open("start")
     scr = app.dialogs[-1]
+    scr.widgets["drag"].value = True                     # every row of the form showing
+    scr.changed("drag")
+    assert len(scr.form_rows) == len(SETUP_FIELDS)
     assert app.screen.get_rect().contains(scr.rect)
-    assert all(scr.rect.contains(r) for r in scr.card_rects + [b.rect for b in scr.buttons])
+    inside = [scr.setup_rect, scr.file_rect, scr.examples_rect, scr.path.rect,
+              *scr.card_rects, *scr.file_rects, *(b.rect for b in scr.buttons)]
+    assert all(scr.rect.contains(r) for r in inside)
+    assert all(scr.setup_rect.contains(row) and scr.setup_rect.contains(w.rect)
+               for _, row, w in scr.form_rows)
+    assert all(scr.file_rect.contains(r) for r in scr.file_rects)
+    assert 0 < len(scr.file_rects) < 30                  # as many as fit
+    fonts = app.fonts
+    for s, _, w in scr.form_rows:
+        assert fonts.ui.size(s.label)[0] <= scr.label_w - px(8), s.label
+        if isinstance(w, Choice):                        # the arrows take the right 26 px
+            for opt in w.options:
+                assert fonts.ui.size(opt)[0] <= w.rect.w - px(34), opt
     for k in range(len(scr.cards)):
-        assert not scr.blurb_lines(k)[-1].endswith("..."), scr.cards[k][1]
+        assert not scr.chip_label(k).endswith("..."), scr.chip_label(k)
     frame(app)
 
 
-def test_start_screen_keys_clicks_and_buttons(app):
+def test_start_screen_sets_up_a_new_simulation(app):
     key(app, pygame.K_n, pygame.KMOD_CTRL)
     scr = app.dialogs[-1]
-    assert scr.cards[scr.focus][0] == app.scenario_path          # starts on the loaded one
-    key(app, pygame.K_RIGHT)
+    fill(scr, "name", "Long look")
+    fill(scr, "date", "2027-03-20")
+    fill(scr, "time", "12:30")
+    scr.widgets["start_with"].set("Empty Earth")
+    scr.widgets["speed"].set("600x")
+    scr.widgets["stations"].value = False
+    scr.widgets["method"].set("wh")
+    scr.widgets["j3"].value = scr.widgets["drag"].value = True
+    scr.widgets["solar"].set("Active x3")
     key(app, pygame.K_RETURN)
-    assert not app.dialogs and app.sim.scenario.name == "Launch day"
+    assert not app.in_menu and not app.dialogs
+    sim, sc = app.sim, app.sim.scenario
+    assert sc.name == "Long look" and sim.n == 0 and not sim.stations
+    assert (sc.epoch.year, sc.epoch.month, sc.epoch.day, sc.epoch.hour, sc.epoch.minute) == \
+        (2027, 3, 20, 12, 30)
+    assert app.warp == 600.0 and sim.propagator == "cowell" and sc.integrator.method == "wh"
+    assert sim.forces.j2 and sim.forces.j3 and sim.forces.drag and sim.forces.density_scale == 3
+    assert app.scenario_path is None
+    frame(app, 2)
+    app.open("start")                                    # the form remembers what was started
+    scr = app.dialogs[-1]
+    assert scr.widgets["name"].value == "Long look" and scr.widgets["method"].value == "wh"
+    for begin, title in (("One satellite", "Add satellite"), ("Constellation",
+                         "Walker constellation"), ("Launch", "Launch")):
+        app.open("start")
+        app.dialogs[-1].widgets["start_with"].set(begin)
+        button(app.dialogs[-1], "Start simulation").callback()
+        assert not app.in_menu and [d.title for d in app.dialogs] == [title]
+        app.dialogs.clear()
+    app.open("start")                                    # the default: stations and one satellite
+    app.last_setup = None
+    app.dialogs.clear()
+    app.open("start")
+    key(app, pygame.K_RETURN)
+    assert len(app.sim.stations) == 5 and app.dialogs[-1].title == "Add satellite"
+    app.dialogs[-1].submit()
+    assert app.sim.n == 1
+    frame(app, 2)
+
+
+def test_every_physics_choice_on_the_start_screen_runs(app):
+    from satflight.integrators import METHODS
+    from satflight.scenario import PROPAGATORS
+    for prop in PROPAGATORS:
+        for method in METHODS:
+            app.open("start")
+            scr = app.dialogs[-1]
+            scr.widgets["start_with"].set("Empty Earth")
+            scr.widgets["propagator"].set(prop)
+            scr.widgets["method"].set(method)
+            scr.widgets["drag"].value = scr.widgets["c22"].value = True
+            scr.changed("drag")
+            scr.start()
+            assert not app.in_menu, (prop, method, scr.error)
+            assert app.sim.propagator == prop and app.sim.integrator.method == method
+            app.sim.add_satellites({"type": "elements", "altitude": 400, "i": 51.6}, "Probe")
+            app.sim.advance(3600)
+            assert app.sim.t >= 3600
+            frame(app)
+
+
+def test_start_screen_says_what_is_wrong_with_the_setup(app):
     app.open("start")
     scr = app.dialogs[-1]
-    pos = scr.card_rects[2].center
+    for field, text, words in (("date", "2026-13-01", "not a date"),
+                               ("time", "25:00", "not a date"),
+                               ("date", "1850-01-01", "1900"),
+                               ("date", "tomorrow", "YYYY-MM-DD")):
+        fill(scr, field, text)
+        key(app, pygame.K_RETURN)
+        assert app.in_menu and words in scr.error, (text, scr.error)
+        lines = scr.error_lines(px(200))
+        assert 1 <= len(lines) <= 2
+        frame(app)
+        fill(scr, "date", "2026-01-01")
+        fill(scr, "time", "00:00:00")
+    scr.widgets["propagator"].set("kepler")              # only the propagator choice remains
+    scr.changed("propagator")
+    assert [s.key for s, _, _ in scr.form_rows if s.key in ("method", "j2", "drag")] == []
+    fill(scr, "name", "  ")
+    scr.widgets["start_with"].set("Empty Earth")
+    key(app, pygame.K_RETURN)
+    assert app.sim.propagator == "kepler" and app.sim.scenario.name == "New simulation"
+
+
+def test_start_screen_typing_tab_and_escape(app):
+    app.open("start")
+    scr = app.dialogs[-1]
+    key(app, pygame.K_TAB)
+    name = scr.widgets["name"]
+    assert name.focused
+    key(app, pygame.K_BACKSPACE, pygame.KMOD_CTRL)
+    for ch in "Hx":                                      # letters type; H opens no help
+        app.handle(pygame.event.Event(pygame.KEYDOWN, key=ord(ch.lower()), mod=0, unicode=ch))
+        app.handle(pygame.event.Event(pygame.TEXTINPUT, text=ch))
+    assert name.value == "Hx" and not app.opts.help
+    key(app, pygame.K_TAB, pygame.KMOD_SHIFT)            # back around to the path field
+    assert scr.path.focused and not name.focused
+    key(app, pygame.K_ESCAPE)                            # leaves the field, not the menu
+    assert not scr.path.focused and app.in_menu
+    key(app, pygame.K_h)
+    assert app.opts.help
+    key(app, pygame.K_ESCAPE)
+    assert not app.opts.help and app.in_menu
+    key(app, pygame.K_ESCAPE)                            # back to the simulation
+    assert not app.in_menu
+
+
+def test_start_screen_opens_files_and_examples(app, tmp_path, monkeypatch):
+    from satflight.ui import welcome
+    app.open("start")
+    scr = app.dialogs[-1]
+    pos = scr.card_rects[2].center                       # an example
     app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
     assert not app.dialogs and app.scenario_path.stem == scr.cards[2][0].stem
+    saved = app.user_scenario_dir / "mine.json"
+    Scenario.load(app.scenario_dir / "rendezvous.json").save(saved)
     app.open("start")
-    key(app, pygame.K_ESCAPE)                                     # keeps the scenario
-    assert not app.dialogs and app.scenario_path.stem == scr.cards[2][0].stem
+    scr = app.dialogs[-1]
+    assert [f[0] for f in scr.files] == [saved]
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=scr.file_rects[0].center))
+    assert not app.in_menu and app.scenario_path == saved and app.sim.n == 2
+    app.open("start")                                    # a typed path, quotes and all
+    scr = app.dialogs[-1]
+    scr.path.value = f'"{saved}"'
+    scr.path.focused = True
+    key(app, pygame.K_RETURN)
+    assert not app.in_menu and app.scenario_path == saved
+    tle = tmp_path / "iss.txt"                           # a TLE file starts an empty run
+    tle.write_text(ISS_3LE, encoding="utf-8")
     app.open("start")
-    key(app, pygame.K_a)                                          # build your own
-    assert app.sim.n == 0 and app.dialogs[-1].title == "Add satellite"
-    app.dialogs[-1].close()
+    scr = app.dialogs[-1]
+    scr.path.value = str(tle)
+    scr.open_button.callback()
+    assert not app.in_menu and app.sim.n == 1 and app.sim.scenario.name == "iss", scr.error
+    app.open("start")                                    # what cannot be opened is said
+    scr = app.dialogs[-1]
+    for text, words in (("", "Type a file's path"), (str(tmp_path / "nope.json"), "no file"),
+                        (str(tmp_path), "no file")):
+        scr.path.value = text
+        scr.open_typed()
+        assert app.in_menu and words in scr.error, (text, scr.error)
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"satelites": []}', encoding="utf-8")
+    scr.path.value = str(bad)
+    scr.open_typed()
+    assert app.in_menu and "Could not open bad.json" in scr.error and "satelites" in scr.error
+    picked = []                                          # Browse (Ctrl+O): the dialog's answer
+    monkeypatch.setattr(welcome, "pick_file", lambda start: picked.append(start) or None)
+    key(app, pygame.K_o, pygame.KMOD_CTRL)
+    _wait_for_picker(app, scr)
+    assert picked == [app.user_scenario_dir] and app.in_menu and not scr.error   # cancelled
+
+    def no_dialog(start):
+        raise OSError("no display name and no $DISPLAY environment variable")
+    monkeypatch.setattr(welcome, "pick_file", no_dialog)
+    button(scr, "Browse...").callback()
+    _wait_for_picker(app, scr)
+    assert app.in_menu and "no $DISPLAY" in scr.error and "Type the path" in scr.error
+    monkeypatch.setattr(welcome, "pick_file", lambda start: saved)
+    button(scr, "Browse...").callback()
+    _wait_for_picker(app, scr)
+    assert not app.in_menu and app.scenario_path == saved
+
+
+def test_a_bug_in_the_file_picker_is_not_taken_for_a_missing_dialog(app, monkeypatch):
+    from satflight.ui import welcome
     app.open("start")
-    button(app.dialogs[-1], "Launch a rocket").callback()
-    assert len(app.dialogs) == 1 and app.dialogs[0].title == "Launch"
-    frame(app)
+    scr = app.dialogs[-1]
+    monkeypatch.setattr(welcome, "pick_file", lambda start: 1 / 0)
+    scr.browse()
+    with pytest.raises(ZeroDivisionError):
+        _wait_for_picker(app, scr)
+
+
+def _wait_for_picker(app, scr):
+    """Run frames until the start screen's file picker has answered."""
+    deadline = time.monotonic() + 10
+    while scr.picker.busy or scr.picker._done is not None:
+        assert time.monotonic() < deadline, "the file picker never answered"
+        frame(app, dt=0.0)
+        time.sleep(0.01)
 
 
 def test_start_menu_is_its_own_screen_with_nothing_running(monkeypatch):
@@ -633,12 +814,10 @@ def test_start_menu_is_its_own_screen_with_nothing_running(monkeypatch):
         frame(a)
         key(a, pygame.K_ESCAPE)
         assert not a.opts.help and a.in_menu
-        key(a, pygame.K_o, pygame.KMOD_CTRL)                # so does the scenario picker
-        assert a.in_menu and len(a.dialogs) == 2
-        a.dialogs[-1].close()
-        assert a.in_menu
-        key(a, pygame.K_RETURN)
-        assert not a.in_menu and a.started and a.sim.n > 0
+        key(a, pygame.K_RETURN)                             # one satellite: Add satellite opens
+        assert not a.in_menu and a.started and a.dialogs[-1].title == "Add satellite"
+        a.dialogs[-1].submit()
+        assert a.sim.n == 1
         frame(a, 2)
         assert a.sim.t > t and drawn
     finally:
@@ -750,8 +929,13 @@ def test_every_part_of_the_window_has_a_tip_that_fits(scaled_app):
                 if s.kind != "info":
                     assert tips.at((dlg.rect.x + px(22), r.centery))[1] == dlg.field_tip(s, raw)
         else:                                               # the start screen
-            for r in dlg.card_rects:
-                assert "Click" in tips.at(r.center)[1]
+            for r in dlg.card_rects + dlg.file_rects:
+                assert "click" in tips.at(r.center)[1].lower()
+            raw = dlg.raw()
+            for s, r, _ in dlg.form_rows:
+                assert tips.at((r.x + px(4), r.centery))[1] == field_tip(s, raw), s.key
+                assert s.tip
+            assert tips.at(dlg.path.rect.center) is not None
         for b in getattr(dlg, "buttons", []):
             assert tips.at(b.rect.center) is not None, (state, b.text)
         for rect, text, key in regions:

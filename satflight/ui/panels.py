@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import math
+import re
 
 import numpy as np
 import pygame
@@ -19,7 +21,7 @@ from . import glossary, theme, tips
 from .launchui import draw_ascent_tab, launch_rows
 from .orbitpanel import draw_orbit_tab, draw_section, num
 from .theme import px
-from .widgets import Button
+from .widgets import Button, TextField
 
 # design px (see theme.px)
 LEFT_W = 262
@@ -204,6 +206,7 @@ class SatList:
             Button("Delete", a.delete_selected, tooltip="Del",
                    hint="Remove the selected satellite"),
         ]
+        self.find = TextField("", "text")     # lists only the names that contain it
         self.scroll = 0
         self.rect = pygame.Rect(0, 0, 0, 0)
         self.list_rect = pygame.Rect(0, 0, 0, 0)
@@ -219,26 +222,106 @@ class SatList:
             b.rect = pygame.Rect(self.rect.x + pad + col * (bw + pad),
                                  self.rect.y + pitch + row * pitch, bw, px(28))
         top = self.rect.y + pitch + (len(self.buttons) + 1) // 2 * pitch + pad
+        self.find.rect = pygame.Rect(self.rect.x + pad, top, w - 2 * pad, px(26))
+        top += px(32)
         self.list_rect = pygame.Rect(self.rect.x + px(6), top, w - px(12),
                                      self.rect.bottom - top - pad)
 
+    def shown(self) -> list[int]:
+        """The satellites the list shows: all of them, or those whose names
+        contain the find box's text (in any case)."""
+        sats, q = self.app.sim.sats, self.find.value.strip().casefold()
+        if not q:
+            return list(range(len(sats)))
+        return [k for k, s in enumerate(sats) if q in s.name.casefold()]
+
+    def start_find(self):
+        """Put the typing in the find box (Ctrl+F)."""
+        self.find.focused = True
+        pygame.key.start_text_input()
+
+    def _find_key(self, ev) -> bool:
+        """A key while the find box has the typing: Up / Down select the previous
+        / next satellite listed, Enter keeps the one selected and leaves the box,
+        Esc clears the box (and leaves it when empty); anything else edits the
+        text. Function keys go on to the view."""
+        k, app = ev.key, self.app
+        if pygame.K_F1 <= k <= pygame.K_F12:
+            return False
+        if k in (pygame.K_UP, pygame.K_DOWN):
+            app.cycle_selection(-1 if k == pygame.K_UP else 1)
+        elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            shown = self.shown()
+            if shown and app.selected not in shown:
+                app.select(shown[0])
+            self.find.focused = False
+        elif k == pygame.K_ESCAPE:
+            if self.find.value:
+                self._find_edit_to("")
+            else:
+                self.find.focused = False
+        else:
+            self._find_edit(ev)
+        return True
+
+    def _find_edit(self, ev):
+        """Pass ``ev`` to the find box (see :meth:`_find_edit_to`)."""
+        before = self.find.value
+        self.find.handle(ev)
+        if self.find.value != before:
+            self._find_edit_to(self.find.value)
+
+    def _find_edit_to(self, text):
+        """The find box now holds ``text``: the list starts at the top and, if the
+        selected satellite is no longer listed, the first one listed is selected."""
+        if text != self.find.value:
+            self.find.value = text
+        self.scroll = 0
+        shown = self.shown()
+        if shown and self.app.selected not in shown:
+            self.app.select(shown[0])
+        elif self.app.selected in shown:
+            self.ensure_visible(self.app.selected)
+
+    def _row_at(self, pos) -> int:
+        """The satellite of the list row at ``pos``, or -1."""
+        if not self.list_rect.collidepoint(pos):
+            return -1
+        shown = self.shown()
+        k = (pos[1] - self.list_rect.y) // px(self.ROW) + self.scroll
+        return shown[k] if 0 <= k < len(shown) else -1
+
     def handle(self, ev):
-        """Buttons, then list scrolling and selection; swallows clicks on the panel."""
+        """The find box while it has the typing; buttons; then list scrolling and
+        selection (a right-click opens a satellite's menu); swallows clicks on
+        the panel."""
+        if self.find.focused and ev.type == pygame.KEYDOWN:
+            return self._find_key(ev)
+        if self.find.focused and ev.type == pygame.TEXTINPUT:
+            self._find_edit(ev)
+            return True
+        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and self.find.handle(ev):
+            return True
         if any(b.handle(ev) for b in self.buttons):
             return True
         if ev.type == pygame.MOUSEWHEEL and self.list_rect.collidepoint(pygame.mouse.get_pos()):
             self.scroll = max(0, self.scroll - ev.y * 3)
             return True
-        if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
-                and self.list_rect.collidepoint(ev.pos)):
-            k = (ev.pos[1] - self.list_rect.y) // px(self.ROW) + self.scroll
-            if 0 <= k < self.app.sim.n:
+        if ev.type == pygame.MOUSEBUTTONDOWN and self.list_rect.collidepoint(ev.pos):
+            k = self._row_at(ev.pos)
+            if k >= 0 and ev.button == 1:
                 self.app.click_select(k)
+            elif k >= 0 and ev.button == 3:
+                self.app.satellite_menu(k, ev.pos)
             return True
         return self.rect.collidepoint(getattr(ev, "pos", (-1, -1)))
 
     def ensure_visible(self, i):
-        """Scroll so that row ``i`` is in view."""
+        """Scroll so that satellite ``i``'s row is in view (if it is listed)."""
+        shown = self.shown()
+        if i not in shown:
+            return
+        i = shown.index(i)
         rows = max(1, self.list_rect.h // px(self.ROW))
         if i < self.scroll:
             self.scroll = i
@@ -261,23 +344,30 @@ class SatList:
                  f"{sim.scenario.name}: {about}\nScenarios (Ctrl+O) loads another one.", "Ctrl+O")
         for b in self.buttons:
             b.draw(surf, fonts)
+        shown = self.shown()
+        self._draw_find(surf, len(shown))
         lr, row_h = self.list_rect, px(self.ROW)
         rows = max(1, lr.h // row_h)
-        self.scroll = max(0, min(self.scroll, max(0, sim.n - rows)))
+        self.scroll = max(0, min(self.scroll, max(0, len(shown) - rows)))
         tips.add(lr, f"Every object in the scenario ({sim.n}): satellites, rockets and spent "
-                     "stages, with their altitude. Click one to select it; the wheel scrolls.",
-                 "Tab")
-        tips.hot(pygame.Rect(lr.x, lr.y, lr.w, (min(sim.n, self.scroll + rows) - self.scroll)
-                             * row_h))
+                     "stages, with their altitude. Click one to select it, right-click it for "
+                     "its menu; the wheel scrolls.", "Tab")
+        if not shown:
+            fonts.draw(surf, fonts.fit(f"No name contains '{self.find.value.strip()}'",
+                                       lr.w - px(12), fonts.small),
+                       (lr.x + px(6), lr.y + px(4)), theme.FAINT, fonts.small)
+        visible = shown[self.scroll:self.scroll + rows]
+        tips.hot(pygame.Rect(lr.x, lr.y, lr.w, len(visible) * row_h))
         clip = surf.get_clip()
         surf.set_clip(lr)
-        for k in range(self.scroll, min(sim.n, self.scroll + rows)):
+        idle = not app.dialogs and app.menu is None
+        for n, k in enumerate(visible):
             s = sim.sats[k]
-            y = lr.y + (k - self.scroll) * row_h
+            y = lr.y + n * row_h
             row = pygame.Rect(lr.x, y, lr.w, row_h - 1)
             if k == app.selected:
                 pygame.draw.rect(surf, theme.ACCENT_DARK, row, border_radius=px(4))
-            elif app.mouse is not None and row.collidepoint(app.mouse) and not app.dialogs:
+            elif app.mouse is not None and row.collidepoint(app.mouse) and idle:
                 pygame.draw.rect(surf, theme.FIELD_FOCUS, row, border_radius=px(4))
             pygame.draw.circle(surf, s.color if s.status == ACTIVE else (100, 100, 100),
                                (row.x + px(10), row.centery), px(5))
@@ -291,11 +381,31 @@ class SatList:
             act = ("Selected: its details are in the right panel; double-click (or F) "
                    "follows it." if k == app.selected
                    else "Click to select it, double-click to follow it.")
-            tips.add(row, f"{s.name} - {what}.\n{act} Tab / Shift+Tab steps through the list, "
-                          "the wheel scrolls it.", clip=lr)
+            tips.add(row, f"{s.name} - {what}.\n{act} Right-click for its menu. Tab / "
+                          "Shift+Tab steps through the list, the wheel scrolls it.", clip=lr)
         surf.set_clip(clip)
-        if sim.n > rows:
-            theme.scrollbar(surf, lr.right - px(3), lr, self.scroll, rows, sim.n, 20)
+        if len(shown) > rows:
+            theme.scrollbar(surf, lr.right - px(3), lr, self.scroll, rows, len(shown), 20)
+
+    def _draw_find(self, surf, listed):
+        """The find box: a prompt while it is empty and idle, the count of
+        satellites listed while it holds text."""
+        fonts, box = self.app.fonts, self.find.rect
+        self.find.draw(surf, fonts)
+        if not self.find.value and not self.find.focused:
+            fonts.draw(surf, "Find a satellite", (box.x + px(8), box.centery), theme.FAINT,
+                       fonts.ui, "midleft")
+            fonts.draw(surf, "Ctrl+F", (box.right - px(8), box.centery), theme.FAINT,
+                       fonts.small, "midright")
+        elif self.find.value:
+            count = f"{listed} of {self.app.sim.n}"
+            room = box.w - px(22) - fonts.mono.size(self.find.value)[0]
+            if fonts.small.size(count)[0] <= room:
+                fonts.draw(surf, count, (box.right - px(8), box.centery), theme.FAINT,
+                           fonts.small, "midright")
+        tips.add(box, "Type part of a name to list only the satellites whose names contain "
+                      "it. Up / Down select among them, Enter keeps the one selected, Esc "
+                      "clears the box.", "Ctrl+F")
 
 
 def _list_value(sim, k):
@@ -594,17 +704,26 @@ class EventLog:
         self.rect = pygame.Rect(0, 0, 0, 0)
         self.back = 0             # events hidden below the view (0: the newest show)
         self._seen = 0            # how many events there were when last drawn
+        self.lines: list[tuple[pygame.Rect, int]] = []   # as drawn: (rect, satellite named)
+        self._names: tuple[str, ...] = ()     # the satellites' names when _named was filled
+        self._named: dict[str, int] = {}      # event text -> the satellite it names, or -1
 
     def rows(self) -> int:
         """How many events the panel shows at once."""
         return max(1, (self.rect.h - px(42)) // px(self.LINE) + 1)
 
     def handle(self, ev) -> bool:
-        """The wheel over the log scrolls it."""
+        """The wheel over the log scrolls it; a click on an event that names a
+        satellite selects it (twice: follows it). Takes clicks on the panel."""
         m = self.app.mouse
         if ev.type == pygame.MOUSEWHEEL and m is not None and self.rect.collidepoint(m):
             most = max(0, len(self.app.sim.events) - self.rows())
             self.back = max(0, min(most, self.back + ev.y))
+            return True
+        if ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
+            k = next((k for r, k in self.lines if r.collidepoint(ev.pos)), -1)
+            if k >= 0 and ev.button == 1:
+                self.app.click_select(k)
             return True
         return False
 
@@ -628,7 +747,8 @@ class EventLog:
         end = n - self.back
         tips.add(self.rect, f"The simulation's log ({n:,} events): launches, burns, eclipses, "
                             "station passes and alerts, newest at the bottom. The wheel scrolls "
-                            "back through older ones.")
+                            "back through older ones; a click on an event selects the "
+                            "satellite it names.")
         x = self.rect.x + px(10)
         fonts.draw(surf, "EVENTS", (x, self.rect.y + px(6)), theme.FAINT, fonts.small)
         if self.back:
@@ -638,24 +758,51 @@ class EventLog:
         y = self.rect.bottom - px(20)
         tx = self.rect.x + px(130)
         text_w = self.rect.right - px(14) - tx
+        self.lines = []
+        names = tuple(s.name for s in sim.sats)
+        if names != self._names:                # who each event names, worked out once
+            self._names, self._named = names, {}
         for ev in reversed(sim.events[max(0, end - rows):end]):
             col = theme.EVENT_COLORS.get(ev.kind, theme.DIM)
             fonts.draw(surf, f"{'T+' + format_duration(ev.t):>15}", (x, y), theme.FAINT,
                        fonts.small)
             fonts.draw(surf, fonts.fit(ev.text, text_w, fonts.small), (tx, y), col, fonts.small)
-            tips.add(pygame.Rect(x, y, self.rect.right - px(10) - x, px(self.LINE)),
-                     f"T+{format_duration(ev.t)}: {ev.text}\n{glossary.EVENTS.get(ev.kind, '')}")
+            line = pygame.Rect(x, y, self.rect.right - px(10) - x, px(self.LINE))
+            if ev.text not in self._named:
+                self._named[ev.text] = named_satellite(names, ev.text)
+            k = self._named[ev.text]
+            pick = ""
+            if k >= 0:
+                self.lines.append((line, k))
+                tips.hot(line)
+                pick = f"\nClick to select {sim.sats[k].name}, twice to follow it."
+            tips.add(line, f"T+{format_duration(ev.t)}: {ev.text}\n"
+                           f"{glossary.EVENTS.get(ev.kind, '')}{pick}")
             y -= px(self.LINE)
         if n > rows:
             area = pygame.Rect(self.rect.x, self.rect.y + px(24), 0, self.rect.h - px(30))
             theme.scrollbar(surf, self.rect.right - px(7), area, end - rows, rows, n)
 
 
+def named_satellite(names: tuple[str, ...], text: str) -> int:
+    """The index in ``names`` of the satellite named first in the event text
+    ``text`` (a whole name: "ISS 2" rather than "ISS" in it), or -1."""
+    m = _name_pattern(names).search(text) if names else None
+    return names.index(m.group(1)) if m else -1
+
+
+@functools.lru_cache(maxsize=4)
+def _name_pattern(names: tuple[str, ...]):
+    """A pattern matching any of ``names`` as a whole, longest first."""
+    alts = "|".join(map(re.escape, sorted(set(names), key=len, reverse=True)))
+    return re.compile(rf"(?<![\w-])({alts})(?![\w-])")
+
+
 HELP = [
     ("Mouse", ""),
     ("Drag  Wheel", "orbit the camera / zoom"),
     ("Rest on a part", "a tip says what it is and does"),
-    ("Click satellite", "select it (list or 3-D view); twice: follow"),
+    ("Click satellite", "select it; twice: follow; right-click: its menu"),
     ("Keyboard", ""),
     ("Arrows  + -", "rotate / zoom the camera"),
     ("Space", "pause / resume"),
@@ -673,7 +820,7 @@ HELP = [
     ("A  W  B  N", "add satellite, Walker, maneuver, station"),
     ("U", "launch a rocket from anywhere on Earth"),
     ("P", "physics & integrator settings"),
-    ("Ctrl+N  O  S", "start menu / scenarios / save snapshot"),
+    ("Ctrl+N O S F", "start menu / scenarios / save snapshot / find"),
     ("Ctrl+E  Del", "edit / delete selected satellite"),
     ("Ctrl+R  Ctrl+Q", "reset scenario / quit"),
     ("I", "hide / show panels"),

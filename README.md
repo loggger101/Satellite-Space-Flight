@@ -194,9 +194,12 @@ what it does, with its keyboard shortcut.
 | input | action |
 |---|---|
 | left-drag / wheel | orbit / zoom camera (the wheel scrolls the panel or event log under the mouse); click a satellite to select and inspect it, double-click to follow it |
+| right-click a satellite | its menu: follow, edit, maneuver, plot, delete (in the list or the 3-D view) |
+| click an event in the log | select the satellite it names (twice: follow it) |
+| `Ctrl+F` | find a satellite: the list shows only names containing what you type; `Up` / `Down` step through them, `Esc` clears |
 | arrow keys, `+` `-` | rotate / zoom camera |
 | `Space`, `,` `.`, `1` | pause, slower/faster time warp, real time |
-| `Tab` / `Shift+Tab`, `F` | next / previous satellite, follow it |
+| `Tab` / `Shift+Tab`, `F` | next / previous satellite (of those listed), follow it |
 | `E` | ECI / ECEF frame |
 | `O` `T` `L` `V` `X` `C` `R` `K` | orbits mode, trails, labels, vectors, axes, footprint, GEO ring, coastlines |
 | `D`, `Q` | selected orbit's geometry (full / basic / off), right panel tab (orbit / telemetry) |

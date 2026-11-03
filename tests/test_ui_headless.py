@@ -1351,3 +1351,131 @@ def test_a_double_click_on_a_satellite_follows_it(app):
     app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
     assert app.follow                                    # a third click does not let go
     frame(app)
+
+
+def press(app, k, text=""):
+    """A key as typed: its KEYDOWN, then the text it makes, if any."""
+    key(app, k, text=text)
+    if text:
+        type_text(app, text)
+
+
+def test_the_find_box_lists_only_matching_satellites(app):
+    frame(app)
+    sl, names = app.satlist, [s.name for s in app.sim.sats]
+    key(app, pygame.K_f, pygame.KMOD_CTRL)
+    assert sl.find.focused
+    for ch in "geo":                       # letters type, they open no dialog
+        press(app, getattr(pygame, f"K_{ch}"), ch)
+    assert not app.dialogs and sl.find.value == "geo"
+    assert sl.shown() == [names.index("Geostationary")]
+    assert app.selected == names.index("Geostationary")  # the only match is selected
+    frame(app)
+    row = (sl.list_rect.centerx, sl.list_rect.y + px(sl.ROW) // 2)
+    app.select(0)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=row))
+    assert app.selected == names.index("Geostationary") and not sl.find.focused
+    # Up / Down and Tab step through the matches only
+    sl.start_find()
+    assert sl.find.selected                             # what is typed next replaces it
+    press(app, pygame.K_END)
+    press(app, pygame.K_BACKSPACE)
+    press(app, pygame.K_BACKSPACE)
+    assert sl.find.value == "g"
+    matches = sl.shown()
+    assert matches == [k for k, n in enumerate(names) if "g" in n.lower()] and len(matches) > 1
+    for _ in range(len(matches)):
+        press(app, pygame.K_DOWN)
+        assert app.selected in matches
+    press(app, pygame.K_RETURN)
+    assert not sl.find.focused
+    key(app, pygame.K_TAB)
+    assert app.selected in matches
+    sl.start_find()
+    type_text(app, "zzz")
+    assert sl.shown() == []
+    frame(app)                                          # "No name contains 'gzzz'"
+    press(app, pygame.K_ESCAPE)                         # Esc clears, then lets go
+    assert sl.find.value == "" and sl.find.focused and len(sl.shown()) == app.sim.n
+    press(app, pygame.K_ESCAPE)
+    assert not sl.find.focused
+    press(app, pygame.K_a, "a")                         # the shortcuts are back
+    assert app.dialogs
+    app.dialogs.clear()
+    sl.start_find()
+    view = app.view_rect()
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=view.center))
+    assert not sl.find.focused                          # a click elsewhere lets go too
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=view.center))
+    sl.find.value = "Hub"
+    app.load_scenario(app.scenario_dir / "default.json")
+    assert sl.find.value == ""                          # a new scenario lists everything
+
+
+def test_a_right_click_on_a_satellite_opens_its_menu(app):
+    frame(app, 2)
+    sl = app.satlist
+    row = (sl.list_rect.centerx, sl.list_rect.y + px(sl.ROW) + 3)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=row))
+    assert app.menu is not None and app.selected == 1
+    frame(app)
+    assert app.screen.get_rect().contains(app.menu.rect)
+    assert app.menu.title == app.sim.sats[1].name
+    follow = app.menu._row(0).center
+    hover(app, follow)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=follow))
+    assert app.menu is None and app.follow
+    # in the 3-D view: a right-click (not a drag) on a satellite
+    app.toggle_follow()
+    frame(app, 2)
+    sx, sy, vis = app.renderer.sat_screen
+    view = app.view_rect()
+    k = next(k for k in range(app.sim.n) if vis[k] and view.collidepoint(sx[k], sy[k])
+             and not app.renderer.legend_rect.collidepoint(sx[k], sy[k]))
+    pos = (int(sx[k]), int(sy[k]))
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=pos))
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=3, pos=pos))
+    assert app.menu is not None and app.selected == k
+    key(app, pygame.K_h)                                # the menu takes the keys
+    assert not app.opts.help
+    key(app, pygame.K_ESCAPE)
+    assert app.menu is None
+    app.satellite_menu(k, pos)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(2, 2)))
+    assert app.menu is None and app.sim.n == 7          # a click elsewhere just closes it
+    name, n = app.sim.sats[k].name, app.sim.n
+    app.satellite_menu(k, app.screen.get_size())        # at the corner: it flips inside
+    frame(app)
+    assert app.screen.get_rect().contains(app.menu.rect)
+    key(app, pygame.K_UP)                               # from the bottom: Delete
+    assert app.menu.items[app.menu.lit].label == "Delete"
+    key(app, pygame.K_RETURN)
+    assert app.menu is None and app.sim.n == n - 1
+    assert any(name in msg for _, msg in app.toasts)
+    frame(app)
+
+
+def test_a_click_on_an_event_selects_the_satellite_it_names(app):
+    from satflight.ui.panels import named_satellite
+    names = ("ISS", "ISS 2", "Sun-synchronous 700 km", "GTO")
+    assert named_satellite(names, "Removed ISS 2") == 1
+    assert named_satellite(names, "AOS ISS @ Canberra") == 0
+    assert named_satellite(names, "ISSUE with GTO") == 3
+    assert named_satellite(names, "Sun-synchronous 700 km back in sunlight") == 2
+    assert named_satellite(names, "Physics: 2B+J2") == -1
+    assert named_satellite((), "ISS") == -1
+    frame(app)
+    sats = [s.name for s in app.sim.sats]
+    app.sim.log("AOS Hubble @ Canberra", "station")
+    app.sim.log("Physics: 2B+J2")
+    frame(app)
+    newest, ks = app.log.rect.bottom - px(12), [k for _, k in app.log.lines]
+    assert ks[0] == sats.index("Hubble")                # the physics line names no one
+    hub = app.log.lines[0][0]
+    assert hub.bottom <= newest - px(8)
+    app.select(0)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(hub.x + 50, newest)))
+    assert app.selected == 0                            # a click on a line naming no one
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=hub.center))
+    assert app.selected == sats.index("Hubble") and not app.follow
+    frame(app)

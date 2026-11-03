@@ -35,6 +35,7 @@ from .panels import (
 from .plots import PlotView
 from .render3d import SceneRenderer
 from .theme import px
+from .widgets import Menu, MenuItem
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -114,6 +115,7 @@ class App:
         self.map = GroundTrackView(self.renderer.earth)
         self.plot = PlotView()
         self.dialogs: list = []
+        self.menu: Menu | None = None   # a satellite's right-click menu while it is open
         self.toasts: list[tuple[float, str]] = []
         self.selected = -1
         self.follow = False
@@ -172,6 +174,8 @@ class App:
         self.scenario_path = path
         self.warp = sc.warp
         self.follow = False
+        self.menu = None
+        self.satlist.find.value = ""
         self.select(0 if self.sim.n else -1)
         if self.sim.n:
             rmed = float(np.median(np.linalg.norm(self.sim.y[:, :3], axis=1)))
@@ -261,15 +265,36 @@ class App:
         self._clicked = (-1, 0.0) if again else (i, now)
 
     def cycle_selection(self, step: int):
-        """Select the satellite ``step`` places along the list (wrapping; key Tab)."""
-        if self.sim.n:
-            self.select((self.selected + step) % self.sim.n)
+        """Select the satellite ``step`` places along the list (wrapping; key
+        Tab): among those the find box leaves listed, when it holds text."""
+        shown = self.satlist.shown()
+        if shown:
+            k = shown.index(self.selected) if self.selected in shown else (-1 if step > 0 else 0)
+            self.select(shown[(k + step) % len(shown)])
 
     def delete_selected(self):
         """Remove the selected satellite and select its neighbor (key Delete)."""
         if 0 <= self.selected < self.sim.n:
+            name = self.sim.sats[self.selected].name
             self.sim.remove(self.selected)
             self.select(min(self.selected, self.sim.n - 1))
+            self.toast(f"Removed {name} (Ctrl+R reloads the scenario)")
+
+    def satellite_menu(self, i: int, pos):
+        """Select satellite ``i`` and open its menu at ``pos`` (a right-click on
+        it, in the list or the 3-D view)."""
+        self.select(i)
+        self._clear_hover()
+        follow = "Stop following" if self.follow else "Follow"
+        self.menu = Menu(self.sim.sats[i].name, [
+            MenuItem(follow, "F", self.toggle_follow, "The camera moves with it."),
+            MenuItem("Edit...", "Ctrl+E", lambda: self.open("edit"),
+                     "Rename it or change its mass and drag area."),
+            MenuItem("Maneuver...", "B", lambda: self.open("maneuver"), "Plan a burn for it."),
+            MenuItem("Plot", "G", lambda: setattr(self.opts, "plot", True),
+                     "Show its telemetry plot under the view."),
+            MenuItem("Delete", "Del", self.delete_selected, "Remove it from the simulation."),
+        ], pos)
 
     def orbit_info(self):
         """Derived orbit properties of the selected satellite, computed once
@@ -406,6 +431,13 @@ class App:
             self.mouse, self._tip_hidden = ev.pos, any(ev.buttons)
         elif ev.type == pygame.MOUSEBUTTONDOWN:
             self.mouse, self._tip_hidden = ev.pos, True
+            if not self.satlist.find.rect.collidepoint(ev.pos):
+                self.satlist.find.focused = False      # typing goes back to the shortcuts
+        if self.menu is not None:
+            self.menu.handle(ev)
+            if not self.menu.open:
+                self.menu = None
+            return
         if self.dialogs:
             self.dialogs[-1].handle(ev)
             return
@@ -467,8 +499,12 @@ class App:
         elif ev.type == pygame.MOUSEBUTTONUP and self._drag:
             start, _, btn = self._drag
             self._drag = None
-            if btn == 1 and abs(ev.pos[0] - start[0]) + abs(ev.pos[1] - start[1]) < px(5):
-                self._pick(ev.pos)
+            if abs(ev.pos[0] - start[0]) + abs(ev.pos[1] - start[1]) < px(5):   # a click
+                k = self._sat_at(ev.pos)
+                if k >= 0 and btn == 1:
+                    self.click_select(k)
+                elif k >= 0 and btn == 3:
+                    self.satellite_menu(k, ev.pos)
         elif ev.type == pygame.MOUSEWHEEL:
             self._zoom(0.87 ** ev.y)
 
@@ -505,6 +541,7 @@ class App:
                 state = s.status
             what = ("Selected - F (or a double-click) makes the camera follow it."
                     if k == self.selected else "Click to select it, double-click to follow it.")
+            what += " Right-click for its menu."
             tips.add(rect, f"{s.name}: {state}.\n{what}")
             return
         ground = self.renderer.ground_at(self.camera, m)
@@ -523,17 +560,16 @@ class App:
     def _zoom(self, factor):
         self.camera.zoom(factor, 5.0 if self.follow else None)
 
-    def _pick(self, pos):
-        """Select the satellite drawn nearest the click, if within 14 design px."""
+    def _sat_at(self, pos) -> int:
+        """The satellite drawn nearest ``pos``, if within 14 design px; else -1."""
         data = self.renderer.sat_screen
         if data is None:
-            return
+            return -1
         sx, sy, vis = data
         d = np.hypot(sx - pos[0], sy - pos[1])
         d = np.where(np.isfinite(d), d, np.inf) + np.where(vis, 0.0, px(6))
         k = int(np.argmin(d)) if d.size else -1
-        if k >= 0 and d[k] < px(14):
-            self.click_select(k)
+        return k if k >= 0 and d[k] < px(14) else -1
 
     def _key(self, ev):
         """Keyboard shortcuts of the main view."""
@@ -542,6 +578,7 @@ class App:
             actions = {pygame.K_o: lambda: self.open("scenario"), pygame.K_s: self.quick_save,
                        pygame.K_n: lambda: self.open("start"),
                        pygame.K_e: lambda: self.open("edit"), pygame.K_r: self.reset,
+                       pygame.K_f: self.find_satellite,
                        pygame.K_q: lambda: setattr(self, "running", False)}
             if k in actions:
                 actions[k]()
@@ -593,6 +630,11 @@ class App:
         }
         if k in simple:
             simple[k]()
+
+    def find_satellite(self):
+        """Type into the satellite list's find box (Ctrl+F), showing the panels."""
+        self.opts.panels = True
+        self.satlist.start_find()
 
     def _escape(self):
         """Esc closes the help; with no help open it leaves fullscreen."""
@@ -684,6 +726,8 @@ class App:
             tips.add(r, "The camera moves with the selected satellite.", "F")
         for d in self.dialogs:
             d.draw(s)
+        if self.menu is not None:
+            self.menu.draw(s, self.fonts)
         self._draw_overlays(s)
 
     def _draw_menu(self, s):

@@ -453,6 +453,102 @@ class Checkbox(Widget):
             pygame.draw.lines(surf, theme.ACCENT, False, tick, px(2))
 
 
+@dataclass
+class MenuItem:
+    """A command of a :class:`Menu`: its label, the keys that do the same, what
+    it does and a line saying so (shown on hover)."""
+
+    label: str
+    keys: str
+    action: Callable[[], Any]
+    hint: str = ""
+
+
+class Menu:
+    """A pop-up list of commands under a title, opened at ``pos`` (a right-click
+    menu). While ``open`` its owner sends it every event (it is modal) and draws
+    it over everything else. The mouse or Up / Down light a command, a click or
+    Enter runs it; Esc or a click anywhere else closes the menu."""
+
+    ITEM = 26                      # design px per command
+
+    def __init__(self, title: str, items: list[MenuItem], pos):
+        self.title = title
+        self.items = list(items)
+        self.pos = pos
+        self.open = True
+        self.rect = pygame.Rect(pos, (0, 0))
+        self.lit = -1
+
+    def place(self, fonts, area):
+        """Size the menu to its text and put it at ``pos``, inside ``area``
+        (flipped left or up where it would run out)."""
+        widest = max([fonts.small.size(self.title)[0] + px(8)]
+                     + [fonts.ui.size(i.label)[0] + fonts.small.size(i.keys)[0] + px(34)
+                        for i in self.items])
+        w, h = max(px(170), widest + px(16)), px(26) + len(self.items) * px(self.ITEM) + px(4)
+        x, y = self.pos
+        x = x if x + w <= area.right else x - w
+        y = y if y + h <= area.bottom else y - h
+        self.rect = pygame.Rect(max(area.x, x), max(area.y, y), w, h)
+
+    def _row(self, k) -> pygame.Rect:
+        return pygame.Rect(self.rect.x + px(2), self.rect.y + px(24) + k * px(self.ITEM),
+                           self.rect.w - px(4), px(self.ITEM))
+
+    def _item_at(self, pos) -> int:
+        return next((k for k in range(len(self.items)) if self._row(k).collidepoint(pos)), -1)
+
+    def run(self, k):
+        """Close the menu and run command ``k``."""
+        self.open = False
+        self.items[k].action()
+
+    def handle(self, ev) -> bool:
+        """Every event while the menu is open (it takes them all)."""
+        if ev.type == pygame.MOUSEMOTION:
+            k = self._item_at(ev.pos)
+            self.lit = k if k >= 0 else self.lit
+        elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button in (1, 3):
+            k = self._item_at(ev.pos)
+            if k >= 0 and ev.button == 1:
+                self.run(k)
+            elif not self.rect.collidepoint(ev.pos):
+                self.open = False
+        elif ev.type == pygame.KEYDOWN:
+            n = len(self.items)
+            if ev.key in (pygame.K_UP, pygame.K_DOWN):
+                step = -1 if ev.key == pygame.K_UP else 1
+                self.lit = (self.lit + step) % n if self.lit >= 0 else (0 if step > 0 else n - 1)
+            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) and self.lit >= 0:
+                self.run(self.lit)
+            elif ev.key in (pygame.K_ESCAPE, pygame.K_TAB):
+                self.open = False
+        return True
+
+    def draw(self, surf, fonts):
+        """The menu over everything drawn before it."""
+        self.place(fonts, surf.get_rect().inflate(-px(8), -px(8)))
+        r = self.rect
+        tips.block(r)
+        pygame.draw.rect(surf, (14, 20, 36), r, border_radius=px(4))
+        pygame.draw.rect(surf, theme.ACCENT, r, 1, border_radius=px(4))
+        fonts.draw(surf, fonts.fit(self.title, r.w - px(20), fonts.small),
+                   (r.x + px(10), r.y + px(6)), theme.FAINT, fonts.small)
+        pygame.draw.line(surf, theme.PANEL_EDGE, (r.x + px(6), r.y + px(23)),
+                         (r.right - px(7), r.y + px(23)))
+        for k, item in enumerate(self.items):
+            line = self._row(k)
+            if k == self.lit:
+                pygame.draw.rect(surf, theme.ACCENT_DARK, line, border_radius=px(3))
+            fonts.draw(surf, item.label, (line.x + px(10), line.centery), theme.TEXT, fonts.ui,
+                       "midleft")
+            fonts.draw(surf, item.keys, (line.right - px(8), line.centery), theme.FAINT,
+                       fonts.small, "midright")
+            tips.hot(line)
+            tips.add(line, item.hint, item.keys)
+
+
 # --- Form dialog ------------------------------------------------------------------------------
 
 @dataclass

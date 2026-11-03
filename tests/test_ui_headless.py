@@ -1172,3 +1172,182 @@ def test_start_menu_counts_every_satellite():
         tag = scenario_card(root / f"{stem}.json")[2]
         n = Simulation(Scenario.load(root / f"{stem}.json")).n
         assert tag.startswith(f"{n:,} satellite"), (stem, tag, n)
+
+
+def type_text(app, text):
+    for ch in text:
+        app.handle(pygame.event.Event(pygame.TEXTINPUT, text=ch))
+
+
+def test_text_fields_edit_at_the_caret(app):
+    app.open("station")
+    dlg = app.dialogs[-1]
+    frame(app)                                           # drawn: a click can place the caret
+    w = dlg.widgets["name"]
+    w.value = "Goonhilly"
+    frame(app)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(w.rect.x + 1,
+                                                                         w.rect.centery)))
+    assert w.focused and not w.selected and w.caret == 0  # a click at the left edge
+    type_text(app, ">")
+    key(app, pygame.K_END)
+    type_text(app, "<")
+    assert w.value == ">Goonhilly<"
+    key(app, pygame.K_HOME)
+    key(app, pygame.K_DELETE)
+    key(app, pygame.K_RIGHT)
+    key(app, pygame.K_RIGHT)
+    key(app, pygame.K_BACKSPACE)
+    assert w.value == "Gonhilly<" and w.caret == 1
+    key(app, pygame.K_a, pygame.KMOD_CTRL)               # select all: typing replaces it
+    assert w.selected
+    type_text(app, "Madrid")
+    assert w.value == "Madrid" and not w.selected
+    key(app, pygame.K_a, pygame.KMOD_CTRL)
+    key(app, pygame.K_LEFT)                              # leaves the selection at its start
+    assert not w.selected and w.caret == 0
+    key(app, pygame.K_BACKSPACE, pygame.KMOD_CTRL)
+    assert w.value == ""
+    frame(app)
+
+
+def test_tabbing_into_a_field_selects_its_text_and_typing_replaces_it(app):
+    app.open("walker")
+    dlg = app.dialogs[-1]
+    key(app, pygame.K_TAB)
+    w = next(w for w in dlg.widgets.values() if isinstance(w, TextField) and w.focused)
+    assert w.value and w.selected
+    frame(app)
+    type_text(app, "7")
+    assert w.value == "7"
+    w.value = "a long text that cannot fit into the field it is typed in, " * 3
+    w.focused = False
+    w.focused = True
+    key(app, pygame.K_HOME)                              # the start scrolls into view
+    frame(app)
+    assert w._scroll == 0
+    key(app, pygame.K_END)
+    frame(app)
+    assert w._text_x + w._font.size(w.value)[0] <= w.rect.right
+
+
+def test_a_choice_opens_a_list_to_pick_from(app):
+    app.open("start")
+    scr = app.dialogs[-1]
+    frame(app)
+    prop = scr.widgets["propagator"]
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=prop.rect.center))
+    assert prop.open and prop.value == "cowell"          # opening changes nothing yet
+    frame(app)
+    assert app.screen.get_rect().contains(prop.list_rect)
+    assert prop._rows == len(prop.options)
+    kepler = prop.options.index("kepler")
+    row = prop.list_rect.y + px(2) + kepler * px(prop.ITEM) + px(prop.ITEM) // 2
+    pos = (prop.list_rect.centerx, row)
+    app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
+    frame(app)
+    assert any("two-body" in t for r, t, _ in tips.regions()
+               if r.collidepoint(pos) and t)             # the option under the mouse
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert not prop.open and prop.value == "kepler"
+    assert "method" not in [s.key for s, _, _ in scr.form_rows]   # the form followed
+    # from the keyboard: Down and Enter pick, Esc closes the list but not the menu
+    speed = scr.widgets["speed"]
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=speed.rect.center))
+    before = speed.index
+    key(app, pygame.K_DOWN)
+    key(app, pygame.K_RETURN)
+    assert speed.index == before + 1 and not speed.open and app.in_menu
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=speed.rect.center))
+    key(app, pygame.K_DOWN)
+    key(app, pygame.K_ESCAPE)
+    assert speed.index == before + 1 and not speed.open and app.in_menu
+    # a click outside the list closes it and does nothing else
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=speed.rect.center))
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1,
+                                  pos=scr.start_button.rect.center))
+    assert not speed.open and app.in_menu
+    # the wheel still steps without opening it
+    app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=speed.rect.center, rel=(0, 0),
+                                  buttons=(0, 0, 0)))
+    app.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1))
+    assert speed.index == before + 2 and not speed.open
+    frame(app)
+
+
+def test_a_long_option_list_fits_the_window_and_scrolls(app):
+    app.handle(pygame.event.Event(pygame.VIDEORESIZE, w=100, h=100))   # the smallest window
+    app.open("launch")
+    dlg = app.dialogs[-1]
+    frame(app)
+    site = dlg.widgets["site"]
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=site.rect.center))
+    frame(app)
+    assert app.screen.get_rect().contains(site.list_rect)
+    assert site._rows < len(site.options)                # more sites than rows: it scrolls
+    key(app, pygame.K_END)
+    assert site._first == len(site.options) - site._rows
+    key(app, pygame.K_RETURN)
+    assert site.value == site.options[-1] and not site.open
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=site.rect.center))
+    app.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-100))
+    assert site._first == len(site.options) - site._rows
+    frame(app)
+
+
+def test_start_screen_now_button_and_what_comes_next(app):
+    from datetime import datetime, timezone
+    app.open("start")
+    scr = app.dialogs[-1]
+    frame(app)
+    assert scr.setup_rect.contains(scr.now_button.rect)
+    assert not scr.now_button.rect.colliderect(scr.widgets["time"].rect)
+    scr.now_button.callback()
+    key(app, pygame.K_RETURN)                            # One satellite: the Add form opens
+    sim_t = app.sim.scenario.epoch
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert abs((sim_t.replace(tzinfo=None) - now).total_seconds()) < 60
+    app.open("start")
+    scr = app.dialogs[-1]
+    frame(app)
+    for option in ("One satellite", "Empty Earth"):
+        scr.widgets["start_with"].set(option)
+        lines = scr.next_lines(scr.raw())
+        assert lines and len(lines) * app.fonts.small.get_linesize() <= scr.next_rect.h
+        assert all(app.fonts.small.size(line)[0] <= scr.next_rect.w for line in lines)
+    assert not scr.next_rect.colliderect(scr.start_button.rect)
+
+
+def test_the_event_log_scrolls_back_and_stays_put(app):
+    frame(app)
+    log = app.log
+    for k in range(40):
+        app.sim.log(f"event {k}")
+    frame(app)
+    shown = log.rows()
+    over = log.rect.center
+    app.handle(pygame.event.Event(pygame.MOUSEMOTION, pos=over, rel=(0, 0), buttons=(0, 0, 0)))
+    app.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=5))
+    assert log.back == 5
+    frame(app)
+    app.sim.log("one more")                              # the view keeps its events
+    frame(app)
+    assert log.back == 6
+    app.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=10 ** 6))
+    frame(app)
+    assert log.back == len(app.sim.events) - shown       # no further than the oldest
+    app.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-(10 ** 6)))
+    assert log.back == 0
+
+
+def test_a_double_click_on_a_satellite_follows_it(app):
+    frame(app, 2)
+    row = app.satlist.list_rect
+    pos = (row.centerx, row.y + px(app.satlist.ROW) * 2 + 3)
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert app.selected == 2 and not app.follow
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert app.selected == 2 and app.follow
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert app.follow                                    # a third click does not let go
+    frame(app)

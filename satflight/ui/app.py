@@ -74,6 +74,7 @@ IDLE_FPS = 10              # frame rate while the window is minimized (nothing i
 RESTING_FPS = 20           # paused (or on the start menu) and untouched for REST_AFTER s
 REST_AFTER = 1.0           # s without input before a still picture is redrawn less often
 MAX_DROPPED = 3000         # most satellites a dropped TLE file adds
+DOUBLE_CLICK = 0.4         # s between two clicks on a satellite that make it followed
 CURSORS = {"hand": pygame.SYSTEM_CURSOR_HAND, "text": pygame.SYSTEM_CURSOR_IBEAM,
            "move": pygame.SYSTEM_CURSOR_SIZEALL, None: pygame.SYSTEM_CURSOR_ARROW}
 
@@ -121,6 +122,7 @@ class App:
         self.running = True
         self.sim_cost = 0.0
         self._drag = None
+        self._clicked = (-1, 0.0)    # the satellite last clicked, and when (see click_select)
         self.scenario_path: Path | None = None
         self._info_key = None
         self._info = None
@@ -247,6 +249,16 @@ class App:
         self.sim.watch = {self.selected} if self.selected >= 0 else set()
         if self.selected >= 0:
             self.satlist.ensure_visible(self.selected)
+
+    def click_select(self, i: int):
+        """Select satellite ``i`` from a click, in the list or the 3-D view; a
+        second click on it within DOUBLE_CLICK s makes the camera follow it."""
+        now = time.monotonic()
+        again = self._clicked[0] == i and now - self._clicked[1] < DOUBLE_CLICK
+        self.select(i)
+        if again and not self.follow:
+            self.toggle_follow()
+        self._clicked = (-1, 0.0) if again else (i, now)
 
     def cycle_selection(self, step: int):
         """Select the satellite ``step`` places along the list (wrapping; key Tab)."""
@@ -438,7 +450,7 @@ class App:
             return True                         # clicks on the map go no further
         if self.opts.plot and self.plot.handle(ev):
             return True
-        return bool(self.satlist.handle(ev) or self.info.handle(ev))
+        return bool(self.satlist.handle(ev) or self.info.handle(ev) or self.log.handle(ev))
 
     def _view_input(self, ev):
         """Keys, dragging (turn the view, click to select) and scrolling (zoom)."""
@@ -491,8 +503,8 @@ class App:
                 state = f"{alt:,.0f} km up, {'in sunlight' if s.shadow > 0.5 else 'in shadow'}"
             else:
                 state = s.status
-            what = "Selected - F makes the camera follow it." if k == self.selected else \
-                "Click to select it."
+            what = ("Selected - F (or a double-click) makes the camera follow it."
+                    if k == self.selected else "Click to select it, double-click to follow it.")
             tips.add(rect, f"{s.name}: {state}.\n{what}")
             return
         ground = self.renderer.ground_at(self.camera, m)
@@ -521,7 +533,7 @@ class App:
         d = np.where(np.isfinite(d), d, np.inf) + np.where(vis, 0.0, px(6))
         k = int(np.argmin(d)) if d.size else -1
         if k >= 0 and d[k] < px(14):
-            self.select(k)
+            self.click_select(k)
 
     def _key(self, ev):
         """Keyboard shortcuts of the main view."""

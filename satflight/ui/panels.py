@@ -233,7 +233,7 @@ class SatList:
                 and self.list_rect.collidepoint(ev.pos)):
             k = (ev.pos[1] - self.list_rect.y) // px(self.ROW) + self.scroll
             if 0 <= k < self.app.sim.n:
-                self.app.select(k)
+                self.app.click_select(k)
             return True
         return self.rect.collidepoint(getattr(ev, "pos", (-1, -1)))
 
@@ -277,6 +277,8 @@ class SatList:
             row = pygame.Rect(lr.x, y, lr.w, row_h - 1)
             if k == app.selected:
                 pygame.draw.rect(surf, theme.ACCENT_DARK, row, border_radius=px(4))
+            elif app.mouse is not None and row.collidepoint(app.mouse) and not app.dialogs:
+                pygame.draw.rect(surf, theme.FIELD_FOCUS, row, border_radius=px(4))
             pygame.draw.circle(surf, s.color if s.status == ACTIVE else (100, 100, 100),
                                (row.x + px(10), row.centery), px(5))
             txt, col, what = _list_value(sim, k)
@@ -286,8 +288,9 @@ class SatList:
             name = fonts.fit(s.name, r.x - px(10) - (row.x + px(22)))
             fonts.draw(surf, name, (row.x + px(22), row.centery),
                        theme.TEXT if s.status == ACTIVE else theme.FAINT, fonts.ui, "midleft")
-            act = ("Selected: its details are in the right panel." if k == app.selected
-                   else "Click to select it.")
+            act = ("Selected: its details are in the right panel; double-click (or F) "
+                   "follows it." if k == app.selected
+                   else "Click to select it, double-click to follow it.")
             tips.add(row, f"{s.name} - {what}.\n{act} Tab / Shift+Tab steps through the list, "
                           "the wheel scrolls it.", clip=lr)
         surf.set_clip(clip)
@@ -580,11 +583,30 @@ def _craft_rows(sim, i):
 # --- Bottom: event log ----------------------------------------------------------------------------
 
 class EventLog:
-    """Bottom panel: the latest simulation events, newest at the bottom."""
+    """Bottom panel: the latest simulation events, newest at the bottom. The
+    wheel scrolls back through older ones; while scrolled back the view stays
+    on the same events as new ones arrive, until it is scrolled down again."""
+
+    LINE = 16                     # design px per event
 
     def __init__(self, app):
         self.app = app
         self.rect = pygame.Rect(0, 0, 0, 0)
+        self.back = 0             # events hidden below the view (0: the newest show)
+        self._seen = 0            # how many events there were when last drawn
+
+    def rows(self) -> int:
+        """How many events the panel shows at once."""
+        return max(1, (self.rect.h - px(42)) // px(self.LINE) + 1)
+
+    def handle(self, ev) -> bool:
+        """The wheel over the log scrolls it."""
+        m = self.app.mouse
+        if ev.type == pygame.MOUSEWHEEL and m is not None and self.rect.collidepoint(m):
+            most = max(0, len(self.app.sim.events) - self.rows())
+            self.back = max(0, min(most, self.back + ev.y))
+            return True
+        return False
 
     def layout(self, w, h):
         """Span the view between the side panels, at the bottom of the window."""
@@ -596,30 +618,44 @@ class EventLog:
         sim, fonts = self.app.sim, self.app.fonts
         self.layout(*surf.get_size())
         theme.panel(surf, self.rect)
-        tips.add(self.rect, "The simulation's log: launches, burns, eclipses, station passes "
-                            "and alerts, newest at the bottom.")
+        n, rows = len(sim.events), self.rows()
+        if n < self._seen:                      # a new or reset scenario
+            self.back = 0
+        elif self.back:                         # scrolled back: keep showing the same events
+            self.back += n - self._seen
+        self._seen = n
+        self.back = max(0, min(self.back, n - rows))
+        end = n - self.back
+        tips.add(self.rect, f"The simulation's log ({n:,} events): launches, burns, eclipses, "
+                            "station passes and alerts, newest at the bottom. The wheel scrolls "
+                            "back through older ones.")
         x = self.rect.x + px(10)
         fonts.draw(surf, "EVENTS", (x, self.rect.y + px(6)), theme.FAINT, fonts.small)
+        if self.back:
+            fonts.draw(surf, f"{self.back:,} newer below - scroll down for the latest",
+                       (self.rect.right - px(14), self.rect.y + px(6)), theme.ACCENT,
+                       fonts.small, "topright")
         y = self.rect.bottom - px(20)
         tx = self.rect.x + px(130)
-        text_w = self.rect.right - px(10) - tx
-        for ev in reversed(sim.events[-7:]):
+        text_w = self.rect.right - px(14) - tx
+        for ev in reversed(sim.events[max(0, end - rows):end]):
             col = theme.EVENT_COLORS.get(ev.kind, theme.DIM)
             fonts.draw(surf, f"{'T+' + format_duration(ev.t):>15}", (x, y), theme.FAINT,
                        fonts.small)
             fonts.draw(surf, fonts.fit(ev.text, text_w, fonts.small), (tx, y), col, fonts.small)
-            tips.add(pygame.Rect(x, y, self.rect.right - px(10) - x, px(16)),
+            tips.add(pygame.Rect(x, y, self.rect.right - px(10) - x, px(self.LINE)),
                      f"T+{format_duration(ev.t)}: {ev.text}\n{glossary.EVENTS.get(ev.kind, '')}")
-            y -= px(16)
-            if y < self.rect.y + px(22):
-                break
+            y -= px(self.LINE)
+        if n > rows:
+            area = pygame.Rect(self.rect.x, self.rect.y + px(24), 0, self.rect.h - px(30))
+            theme.scrollbar(surf, self.rect.right - px(7), area, end - rows, rows, n)
 
 
 HELP = [
     ("Mouse", ""),
     ("Drag  Wheel", "orbit the camera / zoom"),
     ("Rest on a part", "a tip says what it is and does"),
-    ("Click satellite", "select it (list or 3-D view)"),
+    ("Click satellite", "select it (list or 3-D view); twice: follow"),
     ("Keyboard", ""),
     ("Arrows  + -", "rotate / zoom the camera"),
     ("Space", "pause / resume"),

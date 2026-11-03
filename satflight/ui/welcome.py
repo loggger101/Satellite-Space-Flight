@@ -12,6 +12,7 @@ import os
 import random
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pygame
@@ -38,6 +39,8 @@ from .widgets import (
     field_tip,
     is_visible,
     make_widget,
+    message_lines,
+    open_list,
     parse_fields,
 )
 from .widgets import FieldSpec as F
@@ -285,6 +288,9 @@ class StartScreen:
                                          "system's file dialog")
         self.open_button = Button("Open", self.open_typed,
                                   hint="Open the file whose path is typed above")
+        self.now_button = Button("Now", self.now,
+                                 hint="Start the clock at this moment: today's date and the "
+                                      "time now, in UTC")
         self.head_buttons = [Button("Controls", lambda: setattr(a.opts, "help", True),
                                     tooltip="H", hint="Every mouse and keyboard control")]
         if self.can_resume:
@@ -292,7 +298,7 @@ class StartScreen:
                                             hint=f"Back to '{a.sim.scenario.name}' where it "
                                                  "stopped"))
         self.buttons = [self.start_button, self.browse_button, self.open_button,
-                        *self.head_buttons]
+                        self.now_button, *self.head_buttons]
         self.hot = None                         # ("card" | "file", k) under the mouse
         self.rect = pygame.Rect(0, 0, 0, 0)
         self._backdrop: pygame.Surface | None = None
@@ -306,7 +312,8 @@ class StartScreen:
         paths = [p for p in a.scenario_dir.glob("*.json") if p.stem not in BLURBS]
         paths += list(a.user_scenario_dir.glob("*.json"))
         out = []
-        for p in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True):
+        self.saved_at = {p: datetime.fromtimestamp(p.stat().st_mtime) for p in paths}
+        for p in sorted(paths, key=self.saved_at.get, reverse=True):
             try:
                 out.append((p, *scenario_card(p)[:3]))
             except (OSError, ValueError) as exc:
@@ -351,6 +358,13 @@ class StartScreen:
         then = START_WITH[raw["start_with"]]
         if then:
             self.app.open(then)
+
+    def now(self):
+        """Set the start date and time to the present moment (UTC, whole seconds)."""
+        t = datetime.now(timezone.utc)
+        self.widgets["date"].value = t.strftime("%Y-%m-%d")
+        self.widgets["time"].value = t.strftime("%H:%M:%S")
+        self.error = ""
 
     def choose(self, k: int):
         """Load example ``k`` (a bundled scenario) and close."""
@@ -470,8 +484,17 @@ class StartScreen:
                           else pygame.Rect(wx, y, x + col_w - wx, h))
                 self.form_rows.append((s, pygame.Rect(x, y, col_w, h), w))
                 y += row
+            if column is RUN_FIELDS:
+                below_run = y
+        t = self.widgets["time"].rect                   # Now shares the time's row
+        nw = self.app.fonts.ui.size(self.now_button.text)[0] + px(20)
+        self.now_button.rect = pygame.Rect(t.right - nw, t.y, nw, t.h)
+        t.w -= nw + px(6)
         bw = self.app.fonts.ui.size(self.start_button.text)[0] + px(40)
         self.start_button.rect = pygame.Rect(r.x + cpad, r.bottom - px(46), bw, px(34))
+        # what Begin with leads to, in the room left under the first column
+        self.next_rect = pygame.Rect(self.col_x[0], below_run + px(2), col_w,
+                                     self.start_button.rect.y - px(8) - below_run)
 
     def _layout_files(self):
         """The path field and its buttons, then the list of saved files."""
@@ -502,6 +525,9 @@ class StartScreen:
                     and ev.key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_F1)):
                 self.app.opts.help = False
             return True
+        menu = open_list(self.widgets.values())
+        if menu is not None:                    # an open option list takes everything
+            return menu.handle_list(ev)
         if ev.type == pygame.KEYDOWN and self._key(ev.key, getattr(ev, "mod", 0)):
             return True
         for b in self.buttons:
@@ -590,6 +616,9 @@ class StartScreen:
         fonts.draw(surf, f"Enter starts   Tab moves between the text fields{back}   Ctrl+N "
                          "brings this menu back", (r.x + px(20), r.bottom - px(9)),
                    theme.FAINT, fonts.small, "bottomleft")
+        menu = open_list(self.widgets.values())
+        if menu is not None:
+            menu.draw_list(surf, fonts)
 
     def _box(self, surf, rect, bg, edge, title, tip):
         pygame.draw.rect(surf, bg, rect, border_radius=px(8))
@@ -612,6 +641,8 @@ class StartScreen:
             fonts.draw(surf, label, (row.x, row.centery), theme.DIM, fonts.ui, "midleft")
             w.draw(surf, fonts)
             tips.add(row, field_tip(s, raw))
+        self.now_button.draw(surf, fonts)
+        self._draw_next(surf, raw)
         b = self.start_button
         b.draw(surf, fonts)
         if self.error:
@@ -628,14 +659,31 @@ class StartScreen:
             fonts.draw(surf, "Enter", (b.rect.right + px(10), b.rect.centery), theme.FAINT,
                        fonts.small, "midleft")
 
+    def next_lines(self, raw: dict) -> list[str]:
+        """What starting leads to (the Begin-with choice, then the time speed), in
+        as many lines as fit under the first column."""
+        fonts, r = self.app.fonts, self.next_rect
+        text = f"{START_TIPS[raw['start_with']]} {raw['speed']}: {SPEED_TIPS[raw['speed']]}"
+        room = max(0, r.h // fonts.small.get_linesize())
+        lines = tips.wrap(text, fonts.small, r.w)
+        if len(lines) > room:
+            lines = lines[:room]
+            if lines:
+                lines[-1] = fonts.fit(lines[-1] + " ...", r.w, fonts.small)
+        return lines
+
+    def _draw_next(self, surf, raw):
+        fonts, r = self.app.fonts, self.next_rect
+        y, box = r.y, pygame.Rect(r.x, r.y, 0, 0)
+        for line in self.next_lines(raw):
+            box.union_ip(fonts.draw(surf, line, (r.x, y), theme.FAINT, fonts.small))
+            y += fonts.small.get_linesize()
+        tips.add(box, f"{START_TIPS[raw['start_with']]}\n{SPEED_TIPS[raw['speed']]}")
+
     def error_lines(self, width: int) -> list[str]:
         """The message beside the Start button in at most two lines of ``width``
         px (the second shortened if it must be; the hover tip has all of it)."""
-        fonts = self.app.fonts
-        lines = tips.wrap(self.error, fonts.small, width)
-        if len(lines) > 2:
-            lines = [lines[0], " ".join(lines[1:])]
-        return [fonts.fit(line, width, fonts.small) for line in lines]
+        return message_lines(self.app.fonts, self.error, width)
 
     def _draw_files(self, surf):
         fonts, r = self.app.fonts, self.file_rect
@@ -689,9 +737,10 @@ class StartScreen:
                 fonts.draw(surf, tag, (rect.right - px(6), rect.centery),
                            theme.BAD if bad else theme.ACCENT, fonts.small, "midright")
             tips.hot(rect)
-            tips.add(rect, f"{blurb}\n{path.name}" if bad else
+            when = self.saved_at[path].strftime("%d %b %Y, %H:%M")
+            tips.add(rect, f"{blurb}\n{path.name}, saved {when}" if bad else
                      f"{title}{f' ({tag})' if tag else ''}: {blurb or 'no description'}\n"
-                     f"{path.name} - click to open it.")
+                     f"{path.name}, saved {when} - click to open it.")
         fonts.draw(surf, fonts.fit("Or drop a file onto the window", w, fonts.small),
                    (x, r.bottom - px(10)), theme.FAINT, fonts.small, "bottomleft")
 

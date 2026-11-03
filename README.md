@@ -21,10 +21,11 @@ seconds.
 
 The simulator opens on a start menu that fills the window. Nothing is loaded or
 running until you choose. Most of the menu sets up a new simulation: its name,
-start date and time (UTC), what it begins with (one satellite, a constellation,
-a rocket launch or an empty Earth, and the matching form opens next), time
-speed, ground stations, and the physics (propagator, integrator, J2/J3/J4, C22,
-air drag and solar activity). Beside it, **Open a file** takes a scenario
+start date and time (UTC, or **Now**), what it begins with (one satellite, a
+constellation, a rocket launch or an empty Earth, and the matching form opens
+next; a line under the form says which), time speed, ground stations, and the
+physics (propagator, integrator, J2/J3/J4, C22, air drag and solar activity).
+Beside it, **Open a file** takes a scenario
 (`.json`) or TLE file: type its path, **Browse...** (`Ctrl+O`) for it, or click
 one you saved. A row of ready-made examples runs along the bottom. `Ctrl+N` (or
 **Start menu** in the left panel) brings the menu back and holds the simulation
@@ -192,7 +193,7 @@ what it does, with its keyboard shortcut.
 
 | input | action |
 |---|---|
-| left-drag / wheel | orbit / zoom camera (the wheel scrolls the right panel under the mouse); click a satellite to select and inspect it |
+| left-drag / wheel | orbit / zoom camera (the wheel scrolls the panel or event log under the mouse); click a satellite to select and inspect it, double-click to follow it |
 | arrow keys, `+` `-` | rotate / zoom camera |
 | `Space`, `,` `.`, `1` | pause, slower/faster time warp, real time |
 | `Tab` / `Shift+Tab`, `F` | next / previous satellite, follow it |
@@ -214,7 +215,11 @@ larger, so they keep the size you chose but stay sharp instead of being
 stretched by Windows. `--ui-scale 1.5` picks another size.
 
 Every dialog shows a live preview (resulting orbit, transfer delta-v, burn
-duration) before you commit.
+duration) before you commit. A click on a choice opens its list of options
+(arrow keys and `Enter` pick from it too; the wheel steps through them without
+opening it). Text fields edit where the caret is: click to place it, `Home` /
+`End` and the arrows move it; tabbing into a field or `Ctrl+A` selects its
+text so typing replaces it, and `Ctrl+C` / `Ctrl+V` copy and paste.
 
 ## Scenarios
 

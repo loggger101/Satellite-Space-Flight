@@ -54,9 +54,41 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
             out = runScript(script);
         end
 
+        function checkSections(tc, script, out)
+            % the Passes and eclipses and the Animation sections: their tables agree
+            % with the event log and the stations, and the animation was drawn
+            ev = out.events;
+            tc.verifyEqual(sort(out.eclipses.name), sort(unique(out.T.name)), script);
+            tc.verifyEqual(sum(out.eclipses.eclipses), ...
+                nnz(endsWith(ev.text, " entered Earth's shadow")), script);
+            pct = out.eclipses.shadow_pct;
+            tc.verifyTrue(all(pct >= 0 & pct <= 100 + 1e-9), script + ": shadow share");
+            if isempty(out.sim.stations)
+                tc.verifyFalse(isfield(out, "passes"), script);
+            else
+                P = out.passes;
+                tc.verifyEqual(height(P), nnz(startsWith(ev.text, "AOS ")), script);
+                closed = ~isnat(P.los);
+                tc.verifyEqual(nnz(closed), nnz(startsWith(ev.text, "LOS ")), script);
+                tc.verifyTrue(all(P.los(closed) >= P.aos(closed)) && all(P.minutes >= 0), ...
+                    script + ": pass times");
+                % a pass of 10 minutes or more has a sample between two of the
+                % simulator's checks that saw it, so above the station's mask: the
+                % elevation here is the one the simulator measures
+                mask = arrayfun(@(nm) out.sim.stations([out.sim.stations.name] == nm).minEl, ...
+                    P.station);
+                long = P.minutes >= 10;
+                low = P(long & ~(P.max_el_deg >= mask - 1e-6 & P.max_el_deg <= 90), :);
+                tc.verifyEmpty(low, script + ": " + formattedDisplayText(low));
+            end
+            tc.verifyNotEmpty(findobj(groot, "Type", "figure", "Name", "Animation"), ...
+                script + ": no animation");
+        end
+
         function [D, out] = check(tc, script)
             close all
             out = runScript(script);
+            tc.checkSections(script, out);
             tc.assertTrue(isfield(out, "differences"), script + ": no cross-check ran");
             D = out.differences;
             tc.verifyNotEmpty(D);
@@ -147,7 +179,8 @@ run(file);
 % read them by name at run time: "events" alone would be MATLAB's events function here.
 % A MATLAB-only script has no P, differences or eventDifferences.
 out = struct();
-for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim"]
+for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim", ...
+        "passes", "eclipses"]
     if exist(name, "var") == 1
         out.(name) = eval(name);
     end

@@ -2741,9 +2741,9 @@ fig = figure(Name="Orbits (ECI)");
 ax = axes(fig);
 styleAxes(ax);
 hold(ax, "on");
-[x, y, z] = sphere(48);
-surf(ax, C.RE * x, C.RE * y, C.RE * (1 - C.F) * z, FaceColor=[0.35 0.55 0.85], ...
-    EdgeColor=[0.25 0.4 0.65], EdgeAlpha=0.3, FaceAlpha=0.6, HandleVisibility="off");
+earth = drawEarth(ax, C);
+tEnd = max(T.t_s);
+earth.Matrix = makehgtform("zrotate", gmst(julianAt(T, tEnd)));   % as at the end markers
 for k = 1:numel(names)
     rows = T(T.name == names(k), :);
     plot3(ax, rows.x_km, rows.y_km, rows.z_km, Color=lineColor(k), LineWidth=1.2, ...
@@ -2753,7 +2753,8 @@ for k = 1:numel(names)
 end
 axis(ax, "equal"); grid(ax, "on"); view(ax, 35, 25);
 xlabel(ax, "x (km)"); ylabel(ax, "y (km)"); zlabel(ax, "z (km)");
-title(ax, "Trajectories, ECI");
+title(ax, "Trajectories, ECI", "the Earth turned as at " + string(T.utc(find(T.t_s == tEnd, ...
+    1)), "yyyy-MM-dd HH:mm") + " UTC");
 legend(ax, Location="eastoutside", Interpreter="none");
 end
 
@@ -2828,6 +2829,361 @@ end
 x = x(keep);
 y = y(keep);
 labels = labels(keep);
+end
+
+function earth = drawEarth(ax, C)
+% the Earth to scale (the WGS-84 ellipsoid) with its coastlines, in an hgtransform:
+% earth.Matrix = makehgtform("zrotate", gmst(jd)) turns it to where it is at jd
+earth = hgtransform(ax);
+[x, y, z] = sphere(48);
+% opaque: it hides what is behind it (and a see-through one is twice as slow to draw)
+surf(C.RE * x, C.RE * y, C.RE * (1 - C.F) * z, Parent=earth, FaceColor=[0.55 0.7 0.9], ...
+    EdgeColor="none", HandleVisibility="off");
+coast = deg2rad(satflightCoastline());
+lon = coast(:, 1);
+lat = coast(:, 2);
+up = C.RE * 1.002;       % just above the surface, so that its facets do not hide them
+plot3(up * cos(lat) .* cos(lon), up * cos(lat) .* sin(lon), up * (1 - C.F) * sin(lat), ...
+    Parent=earth, Color=[0.2 0.3 0.45], LineWidth=0.6, HandleVisibility="off");
+end
+
+function jd = julianAt(T, t)
+% the Julian date t seconds into the run of T (the export's epoch is T's t = 0)
+k = find(T.t_s == T.t_s(1), 1);
+jd = juliandate(T.utc(k)) + (t - T.t_s(k)) / 86400;
+end
+
+function S = eventSpans(T, events, kind)
+% the spans between the opening and closing lines of the event log, per object (and
+% station): passes over the stations (kind "station": AOS to LOS) or spells in the
+% Earth's shadow ("eclipse": entered the shadow to back in sunlight). The simulator
+% opens none at the start of a run: it first looks at the end of the first step. A
+% span still open when the object stops (comes down, leaves, or the run ends) runs to
+% its last sample in orbit and has stop NaT.
+E = events(events.kind == kind, :);
+n = height(E);
+if kind == "station"
+    % (cellstr: a cell of tokens per line, also for a single line)
+    tok = regexp(cellstr(E.text), "^(AOS|LOS) (.+) @ (.+)$", "tokens", "once");
+    bad = cellfun(@isempty, tok);
+    tok = string(vertcat(tok{~bad}, cell(0, 3)));
+    opens = tok(:, 1) == "AOS";
+    name = tok(:, 2);
+    place = tok(:, 3);
+else
+    opens = endsWith(E.text, " entered Earth's shadow");
+    bad = ~opens & ~endsWith(E.text, " back in sunlight");
+    name = erase(E.text, [" entered Earth's shadow", " back in sunlight"]);
+    place = strings(n, 1);
+end
+if any(bad)
+    error("satflight:events", "Not a %s line of the event log: %s", kind, ...
+        strjoin(E.text(bad), "; "));
+end
+epoch = T.utc(1) - seconds(T.t_s(1));
+S = table(strings(0, 1), strings(0, 1), zeros(0, 1), zeros(0, 1), true(0, 1), ...
+    VariableNames=["name", "place", "t0", "t1", "closed"]);
+key = name + " @ " + place;
+for k = unique(key, "stable")'
+    j = find(key == k);
+    t0 = NaN;
+    for q = j'
+        if opens(q) && isnan(t0)
+            t0 = E.t_s(q);
+        elseif ~opens(q) && ~isnan(t0)
+            S(end + 1, :) = {name(q), place(q), t0, E.t_s(q), true}; %#ok<AGROW>
+            t0 = NaN;
+        elseif opens(q)
+            error("satflight:events", "%s at %.3f s opens a span already open.", ...
+                E.text(q), E.t_s(q));
+        else
+            error("satflight:events", "%s at %.3f s closes a span that is not open.", ...
+                E.text(q), E.t_s(q));
+        end
+    end
+    if ~isnan(t0)
+        rows = T(T.name == name(j(1)) & T.status == "active", :);
+        S(end + 1, :) = {name(j(1)), place(j(1)), t0, max([rows.t_s; t0]), false}; %#ok<AGROW>
+    end
+end
+S.start = epoch + seconds(S.t0);
+S.stop = epoch + seconds(S.t1);
+S.stop(~S.closed) = NaT;
+S.minutes = (S.t1 - S.t0) / 60;
+end
+
+function fewerEvents(T)
+% says so when the run had more objects than the simulator logs eclipses and passes for
+C = satflightConstants();
+n = numel(unique(T.name));
+if n > C.EVENT_DETAIL_LIMIT
+    fprintf("This run has %d objects. The simulator logs eclipses and station passes " + ...
+        "only while there are at most %d, so none after that are in the event log or " + ...
+        "here.\n", n, C.EVENT_DETAIL_LIMIT);
+end
+end
+
+function P = satflightPasses(T, events, stations)
+%SATFLIGHTPASSES The station passes of the run, from the AOS and LOS lines of the
+%   event log: the object, the station, aos and los (UTC), the minutes in view and the
+%   highest elevation at the samples in between (NaN for a pass between two samples).
+%   A pass under way when the object stops (re-entry, the end of the run) has los NaT
+%   and counts its minutes to the object's last sample in orbit.
+C = satflightConstants();
+fewerEvents(T);
+S = eventSpans(T, events, "station");
+P = table(S.name, S.place, S.start, S.stop, S.minutes, nan(height(S), 1), ...
+    VariableNames=["name", "station", "aos", "los", "minutes", "max_el_deg"]);
+for k = 1:height(S)
+    g = stations(find([stations.name] == S.place(k), 1));
+    rows = T(T.name == S.name(k) & T.t_s >= S.t0(k) & T.t_s <= S.t1(k), :);
+    if ~isempty(rows)
+        P.max_el_deg(k) = max(elevationDeg(rows, g, C));
+    end
+end
+end
+
+function el = elevationDeg(rows, g, C)
+% elevation (deg) of the samples rows of T above station g, as the simulator measures
+% it for AOS and LOS: over the plane at right angles to the station's geodetic up
+theta = gmst(juliandate(rows.utc));
+c = cos(theta);
+sn = sin(theta);
+ecef = [c .* rows.x_km + sn .* rows.y_km, -sn .* rows.x_km + c .* rows.y_km, rows.z_km];
+lat = deg2rad(g.lat);
+lon = deg2rad(g.lon);
+d = ecef - geodeticToEcef(lat, lon, g.alt, C);
+up = [cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat)];
+el = asind(min(max((d * up.') ./ vecnorm(d, 2, 2), -1), 1));
+end
+
+function S = satflightEclipses(T, events)
+%SATFLIGHTECLIPSES Each object's time in the Earth's shadow, from the event log: the
+%   number of eclipses, the minutes in shadow in all and the longest, and their share
+%   of its time in the run: from its first sample to its last in orbit, or from the
+%   start of its first eclipse and to the end of its last when those lie outside (a
+%   spent stage appears at the first sample after its separation, and comes down
+%   between two).
+fewerEvents(T);
+spans = eventSpans(T, events, "eclipse");
+names = unique(T.name, "stable");
+S = table(names, zeros(size(names)), zeros(size(names)), zeros(size(names)), ...
+    zeros(size(names)), VariableNames=["name", "eclipses", "shadow_min", "longest_min", ...
+    "shadow_pct"]);
+for k = 1:numel(names)
+    mine = spans.minutes(spans.name == names(k));
+    first = min([T.t_s(T.name == names(k)); spans.t0(spans.name == names(k))]);
+    last = max([T.t_s(T.name == names(k) & T.status == "active"); ...
+        spans.t1(spans.name == names(k))]);
+    S.eclipses(k) = numel(mine);
+    S.shadow_min(k) = sum(mine);
+    S.longest_min(k) = max([mine; 0]);
+    if last > first
+        S.shadow_pct(k) = 100 * S.shadow_min(k) * 60 / (last - first);
+    end
+end
+end
+
+function fig = satflightPlotTimeline(T, events, names)
+%SATFLIGHTPLOTTIMELINE When each object is in the Earth's shadow (grey) and in view of
+%   each station (a colour per station), against time.
+arguments
+    T table
+    events table
+    names = string.empty
+end
+names = plotNames(T, names);
+shadow = eventSpans(T, events, "eclipse");
+shadow = shadow(ismember(shadow.name, names), :);
+passes = eventSpans(T, events, "station");
+passes = passes(ismember(passes.name, names), :);
+stations = unique(passes.place, "stable")';
+fig = figure(Name="Timeline");
+ax = axes(fig);
+styleAxes(ax);
+hold(ax, "on");
+box(ax, "on");
+% each object's time in the run (in orbit or flying), under its shadow and passes
+life = table(names', zeros(numel(names), 1), zeros(numel(names), 1), ...
+    VariableNames=["name", "t0", "t1"]);
+for k = 1:numel(names)
+    t = T.t_s(T.name == names(k) & T.status == "active");
+    life{k, ["t0", "t1"]} = [min([t; NaN]), max([t; NaN])];
+end
+bars(ax, life, names, 0, [0.6 0.6 0.6], 1.5, "in the run");
+bars(ax, shadow, names, 0, [0.35 0.35 0.35], 9, "Earth's shadow");
+% passes as thinner bars over the shadow, the stations side by side in each row
+offsets = zeros(size(stations));
+if numel(stations) > 1
+    offsets = linspace(-0.2, 0.2, numel(stations));
+end
+for j = 1:numel(stations)
+    bars(ax, passes(passes.place == stations(j), :), names, offsets(j), lineColor(j), 4, ...
+        "in view of " + stations(j));
+end
+if max(T.t_s) > min(T.t_s)
+    xlim(ax, [min(T.t_s), max(T.t_s)] / 3600);
+end
+ylim(ax, [0.4, numel(names) + 0.6]);
+yticks(ax, 1:numel(names));
+yticklabels(ax, names);
+ax.TickLabelInterpreter = "none";
+set(ax, YDir="reverse", XGrid="on");     % no row lines: they would look like time in the run
+xlabel(ax, "Time since epoch (h)");
+title(ax, "Eclipses and station passes");
+legend(ax, Location="eastoutside", Interpreter="none");
+end
+
+function bars(ax, S, names, offset, color, width, label)
+% the spans S as horizontal bars, one row per object of names; one legend entry
+% (none when there are no spans)
+row = arrayfun(@(nm) find(names == nm), S.name) + offset;
+x = [S.t0, S.t1, nan(height(S), 1)]' / 3600;
+y = [row, row, nan(height(S), 1)]';
+shown = "off";
+if height(S) > 0
+    shown = "on";
+end
+plot(ax, [NaN; x(:)], [NaN; y(:)], Color=color, LineWidth=width, DisplayName=label, ...
+    HandleVisibility=shown);
+end
+
+function fig = satflightAnimate(T, events, stations, names, opts)
+%SATFLIGHTANIMATE Plays the run back: the ground track and the orbits about the
+%   turning Earth over each object's last orbit (one period back, all of an escape or
+%   suborbital path) up to each moment, each object where it is then (o in orbit,
+%   x come down or gone), and the latest lines of the event log underneath.
+%   Options: Frames - at most this many, spread evenly over the samples (240);
+%   Seconds - how long it plays (20). A figure that is not on screen, as in a batch
+%   run, is not paced and not drawn frame by frame. File - also write it to this
+%   animated GIF, every frame, to play in Seconds.
+arguments
+    T table
+    events table
+    stations = struct("name", {}, "lat", {}, "lon", {})
+    names = string.empty
+    opts.Frames (1,1) double {mustBeInteger, mustBePositive} = 240
+    opts.Seconds (1,1) double {mustBeNonnegative, mustBeFinite} = 20
+    opts.File (1,1) string = ""
+end
+C = satflightConstants();
+names = plotNames(T, names);
+times = unique(T.t_s);
+frames = times(unique(round(linspace(1, numel(times), min(opts.Frames, numel(times))))));
+epoch = T.utc(1) - seconds(T.t_s(1));
+logged = events(events.kind ~= "info", :);
+
+fig = figure(Name="Animation", Position=[100 100 1200 500]);
+layout = tiledlayout(fig, 1, 3, TileSpacing="compact", Padding="compact");
+map = nexttile(layout, [1 2]);
+styleAxes(map);
+hold(map, "on");
+box(map, "on");
+coast = satflightCoastline();
+plot(map, coast(:, 1), coast(:, 2), Color=[0.55 0.55 0.55], LineWidth=0.5, ...
+    HandleVisibility="off");
+for g = reshape(stations, 1, [])
+    plot(map, g.lon, g.lat, "^", MarkerSize=7, MarkerFaceColor="k", MarkerEdgeColor="w", ...
+        HandleVisibility="off");
+end
+xlim(map, [-180 180]); ylim(map, [-90 90]); daspect(map, [1 1 1]);
+xticks(map, -180:60:180); yticks(map, -90:30:90); grid(map, "on");
+xlabel(map, "Longitude (deg)"); ylabel(map, "Latitude (deg)");
+
+globe = nexttile(layout);
+hold(globe, "on");
+earth = drawEarth(globe, C);
+shownRows = T(ismember(T.name, names), :);
+reach = max([vecnorm([shownRows.x_km, shownRows.y_km, shownRows.z_km], 2, 2); 1.2 * C.RE]);
+lim = 1.05 * [-reach, reach];
+axis(globe, "equal");
+xlim(globe, lim); ylim(globe, lim); zlim(globe, lim);
+axis(globe, "vis3d");
+axis(globe, "off");
+view(globe, 35, 25);
+
+n = numel(names);
+track = struct("t", cell(1, n), "lon", [], "lat", [], "rows", []);
+[trail, marker, orbit, marker3] = deal(gobjects(1, n));
+for k = 1:n
+    rows = T(T.name == names(k), :);
+    lon = rows.lon_deg;
+    lat = rows.lat_deg;
+    t = rows.t_s;
+    for j = flip(find(abs(diff(lon)) > 180))'
+        lon = [lon(1:j); NaN; lon(j + 1:end)];
+        lat = [lat(1:j); NaN; lat(j + 1:end)];
+        t = [t(1:j); t(j); t(j + 1:end)];
+    end
+    track(k) = struct("t", t, "lon", lon, "lat", lat, "rows", rows);
+    trail(k) = plot(map, NaN, NaN, Color=lineColor(k), LineWidth=1.1, DisplayName=names(k));
+    marker(k) = plot(map, NaN, NaN, "o", MarkerSize=7, Color=lineColor(k), ...
+        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
+    orbit(k) = plot3(globe, NaN, NaN, NaN, Color=lineColor(k), LineWidth=1.1, ...
+        HandleVisibility="off");
+    marker3(k) = plot3(globe, NaN, NaN, NaN, "o", MarkerSize=6, Color=lineColor(k), ...
+        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
+end
+lg = legend(map, Orientation="horizontal", NumColumns=min(n, 6), Interpreter="none");
+lg.Layout.Tile = "north";
+
+delay = opts.Seconds / numel(frames);
+onScreen = fig.Visible == "on";
+started = tic;
+for f = 1:numel(frames)
+    t = frames(f);
+    for k = 1:n
+        rows = track(k).rows;
+        i = find(rows.t_s <= t, 1, "last");
+        if isempty(i)
+            set([trail(k), marker(k), orbit(k), marker3(k)], Visible="off");
+            continue
+        end
+        % the trail: the last orbit (one period back), all of it on an open path
+        since = -Inf;
+        if rows.a_km(i) > 0
+            since = rows.t_s(i) - 2 * pi * sqrt(rows.a_km(i) ^ 3 / C.MU);
+        end
+        m0 = find(track(k).t >= since, 1);
+        m = find(track(k).t <= t, 1, "last");
+        i0 = find(rows.t_s >= since, 1);
+        mark = "o";
+        if rows.status(i) ~= "active"
+            mark = "x";
+        end
+        set(trail(k), XData=track(k).lon(m0:m), YData=track(k).lat(m0:m), Visible="on");
+        set(marker(k), XData=rows.lon_deg(i), YData=rows.lat_deg(i), Marker=mark, Visible="on");
+        set(orbit(k), XData=rows.x_km(i0:i), YData=rows.y_km(i0:i), ZData=rows.z_km(i0:i), ...
+            Visible="on");
+        set(marker3(k), XData=rows.x_km(i), YData=rows.y_km(i), ZData=rows.z_km(i), ...
+            Marker=mark, Visible="on");
+    end
+    earth.Matrix = makehgtform("zrotate", gmst(julianAt(T, t)));
+    title(layout, sprintf("%s UTC   (T+%s)", string(epoch + seconds(t), ...
+        "yyyy-MM-dd HH:mm:ss"), formatDuration(t)));
+    recent = logged(logged.t_s <= t, :);
+    recent = recent(max(1, end - 2):end, :);
+    caption = string(recent.utc, "HH:mm:ss") + "  " + recent.text;
+    xlabel(layout, [caption; strings(3 - numel(caption), 1)], Interpreter="none", FontSize=9);
+    if onScreen || opts.File ~= ""
+        drawnow              % every frame, as it is shown or written; a figure off screen
+    end                      % (a batch run) is drawn only when something draws it
+    if opts.File ~= ""
+        [img, map256] = rgb2ind(frame2im(getframe(fig)), 256);
+        if f == 1
+            imwrite(img, map256, opts.File, "gif", LoopCount=Inf, DelayTime=max(delay, 0.02));
+        else
+            imwrite(img, map256, opts.File, "gif", WriteMode="append", ...
+                DelayTime=max(delay, 0.02));
+        end
+    end
+    if onScreen
+        pause(max(0, f * delay - toc(started)));
+    end
+end
+if opts.File ~= ""
+    fprintf("Wrote the animation (%d frames) to %s\n", numel(frames), opts.File);
+end
 end
 
 % --- cross-check against the simulator ------------------------------------------------------

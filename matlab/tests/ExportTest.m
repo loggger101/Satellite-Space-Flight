@@ -103,6 +103,30 @@ classdef ExportTest < ExportCase
             tc.verifyEqual(alone.T, both.T);
             tc.verifyEqual(alone.events, both.events);
             tc.verifyEqual(alone.launches, both.launches);
+            tc.verifyEqual(alone.passes, both.passes);
+            tc.verifyEqual(alone.eclipses, both.eclipses);
+        end
+
+        function passesAndAnimationFile(tc)
+            % the geostationary satellite is in view of two stations the whole hour: long
+            % passes, whose highest sampled elevation must clear the station's mask; with
+            % animationFile set the animation is also written as a GIF, a frame a sample
+            script = tc.export(fullfile(tc.Root, "scenarios", "default.json"), "gif", ...
+                ["--duration", "1h", "--step", "300"]);
+            text = readlines(script);
+            k = find(startsWith(text, "animationFile = """";"));
+            tc.assertNumElements(k, 1);
+            gif = fullfile(tc.Tmp, "run.gif");
+            text(k) = "animationFile = """ + gif + """;";
+            here = fullfile(tc.Tmp, "gif_set.m");
+            writelines(text, here);
+            [~, out] = tc.check(here);
+            long = out.passes(out.passes.minutes >= 10, :);
+            tc.verifyGreaterThanOrEqual(height(long), 2);
+            tc.verifyTrue(all(ismember(["Geostationary", "GPS MEO"], long.name)));
+            frames = imfinfo(gif);
+            tc.verifyNumElements(frames, numel(unique(out.T.t_s)));
+            tc.verifyEqual(frames(1).DelayTime, round(100 * 20 / numel(frames)));
         end
 
         function midBurnSnapshot(tc)

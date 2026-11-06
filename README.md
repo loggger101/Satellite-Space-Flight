@@ -314,7 +314,10 @@ propagators and forces, the rocket ascent from pad to separation (pitch kick,
 gravity turn, closed-loop guidance, staging, fairing, spent stages as objects,
 circularization), the launch planner, and the event log (burns, eclipses,
 station passes, close approaches, re-entries). It runs and plots the results
-and each ascent. You also choose what the script holds:
+and each ascent, tabulates the station passes and each object's time in the
+Earth's shadow on a timeline, and plays the run back as an animation (ground
+track beside the orbits around the turning Earth; it can also be saved as a
+GIF). You also choose what the script holds:
 
 - **With a cross-check** (the default): a last section runs the Python
   simulator on the same scenario and compares the two. Positions agree to

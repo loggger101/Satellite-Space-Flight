@@ -426,7 +426,7 @@ several sides:
 | `test_ui_fuzz.py` | every option of every dialog, and bad text in every field, submitted and run on |
 | `test_ui_sweep.py` | every plot metric and panel for satellites of every scenario, before and after launches and re-entries |
 | `test_entry_points.py` | command line, batch runner, assets, fonts, loading and saving |
-| `test_matlab.py` | the MATLAB toolkit agrees with the simulator; its own suites pass, exported scripts included (when MATLAB is installed) |
+| `test_matlab.py` | the MATLAB toolkit agrees with the simulator; its own suites pass, exported scripts of every bundled scenario included (when MATLAB is installed) |
 | `test_matlab_export.py` | exported live scripts carry the exact starting states, burns and launches (plans and flight states), and the MATLAB engine the simulator's constants |
 | `test_tools.py` | generated scenarios match the generator, README pictures render, asset checks, selfcheck |
 | `test_harness.py` | the suite's own guards: warnings are errors, a hanging test fails with its stack |

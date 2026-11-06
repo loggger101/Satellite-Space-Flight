@@ -59,6 +59,9 @@ s.evText = strings(0, 1);
 s.t = 0;
 s.closePairs = zeros(0, 2);
 s.lastSample = [];
+% the simulator's adaptive integrator starts with a 10 s step and carries its step
+% size from one segment to the next; its events are looked for at the ends of steps
+s.hNext = min(10, sim.integrator.hMax);
 
 % the sample times the batch runner writes: 0, step, 2 step, ... and the end
 tout = 0;
@@ -524,11 +527,19 @@ end
 nIdx = numel(idx);
 it = s.sim.integrator;
 opts = odeset(RelTol=it.rtol, AbsTol=it.atol, MaxStep=it.hMax, ...
-    Events=@(t, y) leaveEvents(y, nIdx, C));
+    InitialStep=min(s.hNext, te - s.t), Events=@(t, y) leaveEvents(y, nIdx, C));
 F = s.sim.forces;
 f = @(t, y) derivative(t, y, nIdx, cdam, F, s.sim.jd0, s.man, burnRows, mdots, C);
 sol = ode45(f, [s.t, te], reshape(s.Y(idx, :), [], 1), opts);
 tReach = sol.x(end);
+% the step to start the next segment with, as the simulator carries it on: the last
+% step cut short to land on the segment's end says nothing about the natural size
+h = diff(sol.x);
+if numel(h) >= 2
+    s.hNext = min(it.hMax, max(h(end - 1:end)));
+elseif ~isempty(h)
+    s.hNext = min(it.hMax, max(s.hNext, h(end)));
+end
 s = recordBetween(s, tReach, idx, sol);
 % the simulator looks for events at the end of every integrator step
 for j = 2:numel(sol.x) - 1

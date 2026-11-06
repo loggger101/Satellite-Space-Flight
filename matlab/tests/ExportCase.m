@@ -37,6 +37,11 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
             runPython(["-m", "satflight.matlab_export", scenario, "--out", script, args]);
             tc.assertTrue(matlab.desktop.editor.EditorUtils.isLiveCodeFile(char(script)), ...
                 "MATLAB does not take the export for a Live Script");
+            % nothing for the Code Analyzer to mark in the editor: no unused function,
+            % no needless brackets, no output shown by a missing semicolon
+            issues = codeIssues(script).Issues;
+            tc.verifyEmpty(issues, script + ": " + formattedDisplayText( ...
+                issues(:, ["LineStart", "CheckID", "Description"])));
         end
 
         function out = runAlone(tc, script)

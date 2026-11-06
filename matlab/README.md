@@ -112,16 +112,21 @@ into a RAAN or another satellite's plane, the pitch-kick search); the
 simulator's step boundaries (liftoffs, ascent syncs every second, burns); and
 its events (eclipses with the conical shadow, station AOS/LOS, close
 approaches, re-entry at 80 km, escape). For numerical runs it uses `ode45` with
-the scenario's tolerances.
+the scenario's tolerances, starting, as the simulator's integrator does, with a
+10 s step and carrying the step size from one stretch of the run to the next.
 
 `tests/ExportTest.m` exports several scenarios that between them use every
 feature (`launch_day.json` from the start and mid-ascent among them), and
-requires the same objects at the same samples, the same statuses, positions
-within 10 m while in orbit, launch and maneuver events identical to the
-millisecond, and every other event within one integrator step. Two differences
-are expected. Events found at the end of a step (eclipses, passes, re-entries)
-fall at the end of each integrator's own steps; ode45 steps are not the
-simulator's. And an object coming down through the dense air (a sounding
+`tests/BundledExportTest.m` every scenario in `scenarios/`, from its start and
+an hour in. Both require the same objects at the same samples, the same
+statuses, positions within 10 m while in orbit, launch and maneuver events
+identical to the millisecond, and every other event within one integrator step.
+Three differences are expected. Events found at the end of a step (eclipses,
+passes, re-entries) fall at the end of each integrator's own steps; ode45 steps
+are not the simulator's. For the same reason a pass shorter than a step (a
+satellite grazing a station's elevation mask for under a minute, a brief shadow)
+can be in one log only: the two lines of such a pass are allowed to be missing
+from the other log together. And an object coming down through the dense air (a sounding
 rocket's payload, a spent stage) can differ by tens of metres: the atmosphere
 table jumps slightly at its layer boundaries, and with drag near 100 m/s^2
 where each integrator's steps straddle a jump matters. Such objects are held

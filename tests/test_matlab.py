@@ -46,13 +46,14 @@ def test_matlab_constants_match_the_simulator():
 
 
 @pytest.mark.skipif(shutil.which("matlab") is None, reason="MATLAB is not on the PATH")
-@pytest.mark.parametrize("suite", ["SatflightToolkitTest", "ExportTest"])
+@pytest.mark.parametrize("suite", ["SatflightToolkitTest", "ExportTest", "BundledExportTest"])
 def test_matlab_suite(suite):
     """matlab/tests/SatflightToolkitTest.m: scenarios round-trip through MATLAB
     unchanged, built ones pass the simulator's checks, refusals reach MATLAB,
     runs are read back and plotted. matlab/tests/ExportTest.m: exported live
-    scripts run in MATLAB and agree with the simulator. One MATLAB session each,
-    to stay inside the per-test time limit."""
+    scripts run in MATLAB and agree with the simulator; BundledExportTest.m: so
+    does every bundled scenario, from its start and part-way in. One MATLAB
+    session each, to stay inside the per-test time limit."""
     code = (f"addpath('matlab'); r = runtests('matlab/tests/{suite}.m'); disp(table(r)); "
             "assertSuccess(r);")
     proc = subprocess.run([shutil.which("matlab"), "-batch", code], cwd=ROOT, capture_output=True,

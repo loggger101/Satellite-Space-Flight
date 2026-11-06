@@ -10,16 +10,23 @@ and runs as an ordinary script in any MATLAB that reads the format. It holds
 * the satellites' exact ECI states at its start, their mass and drag
   properties, every scheduled maneuver (resolved to seconds after the epoch),
   the force model, propagator and integrator tolerances, ground stations;
+* every launch: the vehicle and its stages, the site, the target orbit and
+  timing, the simulator's plan for it (liftoff time, plane, pitch kick) and,
+  for a vehicle exported in powered flight, its whole flight state;
 * the simulator's physics ported to MATLAB (``satflight/matlab_runtime.m``,
-  appended as local functions), so the run needs MATLAB alone;
+  appended as local functions): the propagators and forces, the rocket ascent
+  (pad, vertical rise, pitch kick, gravity turn, closed-loop guidance, staging,
+  fairing, separation, spent stages as objects, circularization), the launch
+  planner, and the event log (burns, eclipses, station passes, close
+  approaches, re-entries), so the run needs MATLAB alone;
 * a cross-check section that runs the Python simulator on the same scenario
-  through the ``matlab/`` toolkit and plots how far the two runs differ.
+  through the ``matlab/`` toolkit and compares the trajectories and the event
+  logs line by line.
 
 It starts either at the moment shown in the app (``start="now"``, every
-satellite as it is, like Save snapshot) or at the start of the scenario
-(``start="start"``, the scenario as loaded). Rocket ascents are not ported:
-launches still on the pad are listed in the script as not reproduced, and
-take part in the cross-check only.
+satellite as it is, like Save snapshot, with launches on their pads or in
+flight carried on) or at the start of the scenario (``start="start"``, the
+scenario as loaded).
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .batch import parse_duration
+from .launch import PHASE_LABELS
 from .scenario import Scenario
 from .simulation import Simulation
 from .strict import one_of
@@ -123,10 +131,7 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
                          "digits and underscores, starting with a letter "
                          f"(e.g. {matlab_name(path.stem)}.m)")
 
-    powered = []
     if start == "now":
-        powered = [s.name for i, s in enumerate(sim.sats)
-                   if (a := sim.ascent_of(i)) is not None and a.phase != "pad"]
         scenario = sim.snapshot_scenario(sim.scenario.name)
         origin = (f"the moment it was exported, T+{format_duration(sim.t)} into "
                   f"*{sim.scenario.name}*")
@@ -135,43 +140,142 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
         origin = "the start of the scenario"
     data = scenario.to_dict()
     data["epoch"] = _epoch_text(scenario.epoch)
-    Scenario.from_dict(json.loads(json.dumps(data)))   # what the cross-check reads must load
+    Scenario.from_dict(json.loads(json.dumps(data, allow_nan=False)))  # the cross-check reads it
     src = Simulation(scenario)
 
-    on_pad = {id(a.sat) for a in src.ascents}
-    rows = [(i, s) for i, s in enumerate(src.sats) if id(s) not in on_pad]
-    names = {s.name for _, s in rows}
-    maneuvers = [m for m in src.maneuvers if m.sat in names]
-    launches = [f"{a.spec.name} ({a.spec.vehicle.name}), liftoff at T+{format_duration(a.t0)}"
-                for a in src.ascents]
-    if not rows:
-        raise ValueError("nothing to export: no satellite is in orbit (only launches on the pad)")
-    lines = _script(sim, src, scenario, data, rows, maneuvers, launches, powered, origin,
-                    duration, step)
+    vehicles = {id(a.sat) for a in src.ascents}
+    rows = [(i, s) for i, s in enumerate(src.sats) if id(s) not in vehicles]
+    maneuvers = list(src.maneuvers)
+    scrubbed = [e.text for e in src.events if e.kind == "alert" and e.text.startswith("Launch of ")]
+    if not rows and not src.ascents:
+        raise ValueError("nothing to export: no satellite and no launch")
+    lines = _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return path
 
 
-def _script(sim, src, scenario, data, rows, maneuvers, launches, powered, origin,
-            duration, step) -> list[str]:
+def _numx(x) -> str:
+    """Like :func:`_num`, but an infinite or undefined number is written as such."""
+    x = float(x)
+    if math.isnan(x):
+        return "NaN"
+    if math.isinf(x):
+        return "Inf" if x > 0 else "-Inf"
+    return _num(x)
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'s' * (n != 1)}"
+
+
+MODES = {None: 0, "prograde": 1, "fixed": 2}    # thrust modes as the MATLAB ascent codes them
+
+
+def _launch(a) -> list[str]:
+    """The MATLAB lines that put launch ``a`` (an Ascent of the exported run) in ``sim``."""
+    spec, v, r = a.spec, a.spec.vehicle, a.res
+    where = spec.site or f"({spec.lat:.3f}, {spec.lon:.3f})"
+    if a.resumed:
+        status = (f"in powered flight at T+{a.met:.1f} s ({PHASE_LABELS[a.phase].lower()}, "
+                  f"stage {a.k + 1}): it carries on from the state saved below")
+    elif a.t0 > 1e-6:
+        status = f"lifts off at T+{format_duration(a.t0)}"
+    else:
+        status = "lifts off at once"
+    out = _text(f"**{spec.name}**: {v.name} from {where}, {status}.")
+    out += ["% stages: thrust (kN, vacuum), Isp vacuum (s), Isp sea level (s, 0 for a vacuum "
+            "engine), propellant (kg), dry mass (kg)",
+            "stages = ["]
+    out += [f"    {_num(s.thrust)} {_num(s.isp_vac)} {_num(s.isp_sl)} {_num(s.propellant)} "
+            f"{_num(s.dry)}   % {s.name}" for s in v.stages] + ["];"]
+    names = ", ".join(_str(s.name) for s in v.stages)
+    out += [f"L = satflightLaunch({_str(spec.name)}, satflightVehicle({_str(v.name)}, [{names}], "
+            f"stages, {_num(v.fairing)}, {_num(v.fairing_alt)}, {_num(v.diameter)}, {_num(v.cd)}, "
+            f"{_num(v.max_g)}, {_num(v.stage_coast)}));   % fairing kg, jettison km, "
+            "diameter m, Cd, g limit (0 none), s between stages",
+            f"L.site = {_str(spec.site)}; L.lat = {_num(spec.lat)}; L.lon = {_num(spec.lon)}; "
+            f"L.alt = {_num(spec.alt)};   % geodetic deg, km",
+            f"L.timing = {_str(spec.timing)}; L.delay = {_num(spec.delay)}; "
+            f"L.t0 = {_numx(math.nan if spec.t0 is None else spec.t0)};   "
+            "% now | delay | absolute | raan | plane",
+            f"L.guidance = {_str(spec.guidance)}; L.perigeeAlt = {_num(spec.perigee_alt)}; "
+            f"L.apogeeAlt = {_num(spec.apogee_alt)}; L.inclination = {_num(spec.inclination)}; "
+            f"L.direction = {_str(spec.direction)};",
+            f"L.raan = {_num(spec.raan)}; L.target = {_str(spec.target)}; "
+            f"L.azimuth = {_num(spec.azimuth)}; L.verticalTime = {_num(spec.vertical_time)}; "
+            f"L.kick = {_numx(math.nan if spec.kick is None else spec.kick)};   "
+            "% kick NaN: searched by the planner",
+            f"L.payloadMass = {_num(spec.payload_mass)}; "
+            f"L.payloadArea = {_num(spec.payload_area)}; L.payloadCd = {_num(spec.payload_cd)}; "
+            f"L.circularize = {_bool(spec.circularize)}; "
+            f"L.trackStages = {_bool(spec.track_stages)};"]
+    n = "[]" if r.n is None else _vec(r.n)
+    out += ["% the simulator's plan: liftoff (s), azimuth (rad), plane normal, inclination (deg), "
+            "insertion radius (km), speed (km/s), orbital energy, pitch kick (deg)",
+            f"L.plan = satflightPlan({_num(r.t0)}, {_num(r.azimuth)}, {n}, "
+            f"{_numx(r.inclination)}, {_numx(r.r_target)}, {_numx(r.v_target)}, "
+            f"{_numx(r.e_target)}, {_num(a.kick_deg)});"]
+    if a.resumed:
+        s = a.save(0.0)["state"]
+        c = s["ctrl"]
+        ctrl = "[]" if c is None else (
+            f"struct(\"mdot\", {_num(c['mdot'])}, \"stage\", {c['stage'] + 1}, "
+            f"\"mode\", {MODES[c['mode']]}, \"fixed\", "
+            f"{_vec(c['fixed'] if c['fixed'] is not None else (0.0, 0.0, 0.0))})")
+        hold = "[]" if s["hold"] is None else _vec(s["hold"])
+        lo = s["losses"]
+        out += ["% its flight state when the run was exported",
+                f"L.state = struct(\"t\", {_num(s['t'])}, \"y\", {_vec(s['y'])}, "
+                f"\"phase\", {_str(s['phase'])}, \"stage\", {s['stage'] + 1}, ...",
+                f"    \"prop\", {_num(s['prop'])}, \"mass\", {_num(s['mass'])}, "
+                f"\"fairingOn\", {_bool(s['fairing_on'])}, \"burning\", {_bool(s['burning'])}, ...",
+                f"    \"coastUntil\", {_numx(_none(s['coast_until'], -math.inf))}, "
+                f"\"throttle\", {_num(s['throttle'])}, \"thrustDir\", {_vec(s['thrust_dir'])}, ...",
+                f"    \"ctrl\", {ctrl}, \"hold\", {hold}, ...",
+                f"    \"tgo\", {_numx(_none(s['tgo'], math.nan))}, "
+                f"\"kickStart\", {_numx(_none(s['kick_start'], math.nan))}, "
+                f"\"q\", {_num(s['q'])}, \"maxQ\", {_num(s['max_q'])}, ...",
+                f"    \"tMaxQ\", {_numx(_none(s['t_max_q'], math.nan))}, "
+                f"\"qLogged\", {_bool(s['q_logged'])}, \"accel\", {_num(s['accel'])}, "
+                f"\"dvIdeal\", {_num(s['dv_ideal'])}, ...",
+                f"    \"losses\", {_vec([lo['gravity'], lo['drag'], lo['steering']])}, "
+                f"\"vStart\", {_num(s['v_start'])}, "
+                f"\"nextSample\", {_numx(_none(s['next_sample'], -math.inf))});"]
+    out += ["sim.launches(end + 1) = L;"]
+    return out
+
+
+def _none(x, default: float) -> float:
+    return default if x is None else x
+
+
+def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step) -> list[str]:
     F, it = src.forces, scenario.integrator
     epoch = ensure_utc(scenario.epoch)
     exported = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    n = len(rows)
+    launches = list(src.ascents)
+    what = [_plural(len(rows), "satellite")]
+    if launches:
+        what.append(_plural(len(launches), "launch").replace("launchs", "launches"))
+    what.append(_plural(len(maneuvers), "scheduled maneuver"))
     out = _text(
         f"# {scenario.name}\n"
         f"Exported from **Satellite Space Flight** on {exported}. The run starts at {origin}: "
-        f"{epoch.strftime('%Y-%m-%d %H:%M:%S')} UTC, with {n} satellite{'s' * (n != 1)} and "
-        f"{len(maneuvers)} scheduled maneuver{'s' * (len(maneuvers) != 1)}.\n"
-        "Press **Run** to propagate it here in MATLAB with the simulator's own physics, plot "
-        "the results and, when the simulator is installed, run it there too and compare.")
+        f"{epoch.strftime('%Y-%m-%d %H:%M:%S')} UTC, with {', '.join(what[:-1])} and {what[-1]}.\n"
+        "Press **Run** to run it here in MATLAB with the simulator's own physics"
+        + (" and rocket ascents" if launches else "")
+        + ", plot the results and, when the simulator is installed, run it there too and "
+        "compare.")
     out += ["%%"]
     out += _text("## Settings\nHow far to propagate and how often to sample (seconds). "
                  "Change them freely.")
     out += [f"duration = {_num(duration)};   % s ({format_duration(duration)})",
             f"step = {_num(step)};   % s between samples",
             "crossCheck = true;   % also run the Python simulator and compare (last section)"]
+    if launches:
+        out += ["planLaunches = false;   % true: plan the launches on their pads here (window, "
+                "pitch kick), e.g. after editing one"]
     out += ["%%"]
 
     method = it.method
@@ -201,13 +305,17 @@ def _script(sim, src, scenario, data, rows, maneuvers, launches, powered, origin
             f"sim.integrator = struct(\"method\", {_str(method)}, \"rtol\", {_num(it.rtol)}, "
             f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)});"]
 
-    out += _text("Satellites at the epoch: ECI position (km) and velocity (km/s), mass (kg), "
-                 "drag area (m^2) and drag coefficient.")
-    out += ["sim.names = ["] + [f"    {_str(s.name)}" for _, s in rows] + ["];"]
-    out += ["% x, y, z (km), vx, vy, vz (km/s)", "sim.y0 = ["]
-    out += ["    " + " ".join(_num(x) for x in src.y[i]) for i, _ in rows] + ["];"]
-    out += ["% mass (kg), area (m^2), Cd", "props = ["]
-    out += [f"    {_num(s.mass)} {_num(s.area)} {_num(s.cd)}" for _, s in rows] + ["];"]
+    if rows:
+        out += _text("Satellites at the epoch: ECI position (km) and velocity (km/s), mass (kg), "
+                     "drag area (m^2) and drag coefficient.")
+        out += ["sim.names = ["] + [f"    {_str(s.name)}" for _, s in rows] + ["];"]
+        out += ["% x, y, z (km), vx, vy, vz (km/s)", "sim.y0 = ["]
+        out += ["    " + " ".join(_num(x) for x in src.y[i]) for i, _ in rows] + ["];"]
+        out += ["% mass (kg), area (m^2), Cd", "props = ["]
+        out += [f"    {_num(s.mass)} {_num(s.area)} {_num(s.cd)}" for _, s in rows] + ["];"]
+    else:
+        out += _text("No satellites in orbit at the epoch: everything starts on a launch pad.")
+        out += ["sim.names = strings(0, 1);", "sim.y0 = zeros(0, 6);", "props = zeros(0, 3);"]
     out += ["sim.mass = props(:, 1);", "sim.area = props(:, 2);", "sim.cd = props(:, 3);"]
 
     if maneuvers:
@@ -227,44 +335,67 @@ def _script(sim, src, scenario, data, rows, maneuvers, launches, powered, origin
         out += ["sim.maneuvers = satflightNoBurns();"]
 
     stations = src.stations
-    out += _text("Ground stations (marked on the ground track):" if stations
-                 else "No ground stations.")
-    out.append('sim.stations = struct("name", {{{}}}, "lat", {{{}}}, "lon", {{{}}});'.format(
-        ", ".join(_str(g.name) for g in stations), ", ".join(_num(g.lat) for g in stations),
-        ", ".join(_num(g.lon) for g in stations)))
-    if launches or powered:
-        notes = []
-        if launches:
-            notes.append("**Not reproduced in MATLAB:** rocket ascents run only in the simulator, "
-                         "so these launches are left out here (the cross-check includes them): "
-                         + "; ".join(launches) + ".")
-        if powered:
-            notes.append("Exported in powered flight and continued here as free-flying objects: "
-                         + ", ".join(powered) + ".")
-        out += _text("\n".join(notes))
+    out += _text("Ground stations (marked on the ground track; passes are logged as AOS and LOS "
+                 "above each one's elevation mask):" if stations else "No ground stations.")
+    out.append('sim.stations = struct("name", {{{}}}, "lat", {{{}}}, "lon", {{{}}}, '
+               '"alt", {{{}}}, "minEl", {{{}}});'.format(
+                   ", ".join(_str(g.name) for g in stations),
+                   ", ".join(_num(g.lat) for g in stations),
+                   ", ".join(_num(g.lon) for g in stations),
+                   ", ".join(_num(g.alt) for g in stations),
+                   ", ".join(_num(g.min_el) for g in stations)))
+    out += ["sim.launches = satflightNoLaunches();"]
+    if launches:
+        out += ["%%"]
+        out += _text(
+            "## Launches\nEach vehicle waits on its pad, turning with the Earth, and lifts off at "
+            "the planned time. It then flies the simulator's ascent: a vertical rise, the pitch "
+            "kick, a gravity turn through the dense air, then closed-loop guidance to the target "
+            "orbit, with staging, fairing jettison and an acceleration limit, until its payload "
+            "separates and joins the run. Spent stages fly on as objects of their own. The plan "
+            "(launch window and pitch kick) is the simulator's; set `planLaunches = true` in "
+            "Settings to plan again here after editing a launch.")
+        for a in launches:
+            out += _launch(a)
+    if scrubbed:
+        out += _text("Scrubbed by the simulator when the scenario loaded (left out here too): "
+                     + "; ".join(scrubbed))
     out += ["%%"]
 
-    out += _text("## Propagate\nOne row per satellite per sample, in the columns of the "
-                 "simulator's ephemeris CSV (`satflight.readRun` reads the same).")
-    out += ["[T, events] = satflightRun(sim, duration, step);",
-            "disp(events)",
-            "head(T, 2 * numel(sim.names))",
-            "%%"]
-    out += _text("## Plots\nGround track, altitude, orbital elements and the orbits in 3-D. "
-                 "Each takes a list of names, e.g. `satflightPlotAltitude(T, \"ISS\")`.")
+    out += _text("## Run\nOne row per object per sample, in the columns of the simulator's "
+                 "ephemeris CSV (`satflight.readRun` reads the same); the event log, line for "
+                 "line as the simulator writes it (key events shown)"
+                 + ("; and per launch its outcome, insertion orbit, delta-v budget and ascent "
+                    "profile." if launches else "."))
+    plan = ", PlanLaunches=planLaunches" if launches else ""
+    out += [f"[T, events, launches] = satflightRun(sim, duration, step{plan});",
+            'disp(events(ismember(events.kind, ["launch", "maneuver", "alert", "warn"]), :))',
+            "head(T, max(1, numel(sim.names)))"]
+    if launches:
+        out += ['struct2table(rmfield(launches, ["insertion", "losses_kms", "profile", "marks", '
+                '"planned", "plannedMarks"]), AsArray=true)']
+    out += ["%%"]
+    out += _text("## Plots\nGround track, altitude, orbital elements and the orbits in 3-D"
+                 + (", and each launch's ascent" if launches else "")
+                 + ". Each takes a list of names, e.g. `satflightPlotAltitude(T, \"ISS\")`.")
     out += ["satflightPlotGroundTrack(T, sim.stations);",
             "satflightPlotAltitude(T);",
             "satflightPlotElements(T);",
-            "satflightPlotOrbits(T);",
-            "%%"]
+            "satflightPlotOrbits(T);"]
+    if launches:
+        out += ["satflightPlotAscent(launches);"]
+    out += ["%%"]
     out += _text("## Cross-check against the simulator\nRuns the Python simulator on the same "
-                 "scenario (through the `matlab/` toolkit of the folder below) and plots how far "
-                 "apart the two runs are. It needs Satellite Space Flight and Python with numpy; "
+                 "scenario (through the `matlab/` toolkit of the folder below), plots how far "
+                 "apart the two runs are and pairs up the two event logs line by line (shown: "
+                 "the lines that differ). It needs Satellite Space Flight and Python with numpy; "
                  "set `crossCheck = false` in Settings to skip it.")
     out += [f"simulatorFolder = {_str(ROOT)};",
             "if crossCheck",
-            "    P = satflightRunSimulator(simulatorFolder, scenarioJson(), duration, step);",
+            "    [P, E] = satflightRunSimulator(simulatorFolder, scenarioJson(), duration, step);",
             "    differences = satflightCompare(T, P)",
+            "    eventDifferences = satflightCompareEvents(events, E);",
+            "    eventDifferences(~eventDifferences.same_text, :)",
             "end",
             ""]
 

@@ -263,3 +263,37 @@ def test_adding_objects_does_not_repeat_station_acquisitions():
     sim.launch(spec(name="New"))
     sim.advance(900.0)                                    # stages are spawned along the way
     assert sum("AOS GEO" in e.text for e in sim.events) == before
+
+
+def test_snapshot_in_powered_flight_carries_the_ascent_on():
+    """A snapshot taken mid-ascent keeps each vehicle in flight on its stage,
+    propellant, steering and step grid: going on from it is going on from the
+    original run (before, the vehicle was saved as a free-flying object)."""
+    from satflight.matlab_export import _epoch_text
+    sim = Simulation(Scenario.load("scenarios/launch_day.json"))
+    sim.advance(333.7)
+    assert [a.phase for a in sim.ascents if a.phase != "pad"] == ["guided", "turn"]
+    data = sim.snapshot_scenario().to_dict()
+    data["epoch"] = _epoch_text(sim.datetime())         # keep the fraction of a second
+    again = Simulation(Scenario.from_dict(data))
+    assert [a.phase for a in again.ascents] == [a.phase for a in sim.ascents]
+    for dt in (0.4, 30.0, 600.0):
+        sim.advance(dt)
+        again.advance(dt)
+        assert {s.name for s in again.sats} == {s.name for s in sim.sats}
+        for i, s in enumerate(sim.sats):
+            j = again.index_of(s.name)
+            assert again.sats[j].status == s.status
+            if s.status == "active":
+                assert np.linalg.norm(again.y[j, :3] - sim.y[i, :3]) < 1e-3, s.name   # km
+    texts = [e.text for e in again.events]
+    assert "Starlink batch: SECO at T+466 s - orbit 300 x 300 km, i 53.00 deg; payload separation" \
+        in texts
+
+
+def test_a_bad_resume_record_scrubs_the_launch_with_the_reason():
+    s = spec(name="Broken", timing="delay", delay=60.0, kick=2.5)
+    s.resume = {"plan": {"t0": 60.0}}
+    sim = Simulation(_scenario(launches=[s]))
+    assert not sim.ascents
+    assert any("scrubbed" in e.text and "missing" in e.text for e in sim.events)

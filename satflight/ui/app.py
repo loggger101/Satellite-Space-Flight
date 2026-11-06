@@ -389,6 +389,7 @@ class App:
                    "maneuver": dialogs.maneuver_dialog, "station": dialogs.station_dialog,
                    "physics": dialogs.physics_dialog, "scenario": dialogs.scenario_dialog,
                    "edit": dialogs.edit_satellite_dialog, "launch": launchui.launch_dialog,
+                   "matlab": dialogs.matlab_export_dialog,
                    "start": welcome.StartScreen}[name]
         dlg = factory(self)
         if dlg is not None:

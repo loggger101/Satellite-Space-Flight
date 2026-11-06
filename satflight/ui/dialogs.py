@@ -8,13 +8,14 @@ from pathlib import Path
 
 import numpy as np
 
-from ..batch import export_history_csv
+from ..batch import export_history_csv, parse_duration
 from ..constants import R_EARTH
 from ..elements import period_of, rv2coe
 from ..forces import ForceModel
 from ..integrators import METHODS
 from ..launch import G0_M
 from ..maneuvers import Maneuver
+from ..matlab_export import export_live_script, matlab_name
 from ..planner import (
     plan_bielliptic,
     plan_hohmann,
@@ -33,7 +34,7 @@ from ..scenario import (
     walker_states,
 )
 from ..simulation import ACTIVE, PROPAGATORS
-from ..timeutil import format_period
+from ..timeutil import format_duration, format_period
 from .widgets import FieldSpec as F
 from .widgets import FormDialog
 
@@ -665,12 +666,18 @@ def scenario_dialog(app):
         app.reset()
         dlg.close()
 
+    def to_matlab(dlg):
+        dlg.close()
+        app.open("matlab")
+
     dlg = FormDialog(app, "Scenarios", specs, on_ok, "Load", width=620, on_change=describe,
                      extra_buttons=[
                          ("Save snapshot", save, "Save every satellite as it is now, as a new "
                                                  "scenario starting at this moment"),
                          ("Export CSV", export, "Write the recorded history (time, position, "
                                                 "velocity of each satellite) to a CSV file"),
+                         ("Export MATLAB", to_matlab, "Write this simulation as a MATLAB live "
+                                                      "script that runs it again in MATLAB"),
                          ("Reset current", reset, "Restart the current scenario from its "
                                                   "beginning (Ctrl+R)")],
                      ok_hint="Replace what is running with the chosen scenario",
@@ -678,6 +685,49 @@ def scenario_dialog(app):
                               "or export history")
     describe(dlg)
     return dlg
+
+
+def matlab_export_dialog(app):
+    """Write the simulation as a MATLAB live script (Scenarios > Export MATLAB)."""
+    sim = app.sim
+    # time runs on behind the dialog: "now" is the moment Export is pressed
+    starts = {"Current moment": "now", "Scenario start": "start"}
+    labels = list(starts)
+    folder = app.user_scenario_dir / "exports"
+    specs = [
+        F("start", "Start from", "choice", labels[0], labels,
+          tip="Where the MATLAB run begins: every satellite as it is now, with the burns "
+              "still to come, or the scenario as it was loaded.",
+          option_tips={labels[0]: "Like Save snapshot: positions and velocities at the moment "
+                                  "you press Export.",
+                       labels[1]: "The scenario from its epoch, as Reset would restart it."}),
+        F("duration", "Run length", "text", "1d",
+          tip="How far the script propagates: seconds, or 90m, 12h, 3d. It can be changed "
+              "in the script."),
+        F("step", "Sample every", "text", "60",
+          tip="Seconds between output samples (or 5m, 1h)."),
+        F("name", "Script name", "text", matlab_name(sim.scenario.name),
+          tip="Letters, digits and underscores, starting with a letter: MATLAB runs a "
+              "script by its name."),
+        F("where", "", "info", f"Written to {folder}"[:88],
+          tip="Open it in MATLAB R2025a or later and press Run. It needs no Python; its "
+              "last section compares the run with this simulator."),
+    ]
+
+    def on_ok(v):
+        name = v["name"].strip()
+        if matlab_name(name) != name:
+            return f"'{name}' cannot name a MATLAB script; try {matlab_name(name)}"
+        start = starts[v["start"]]
+        path = export_live_script(sim, folder / f"{name}.m", start,
+                                  parse_duration(v["duration"]), parse_duration(v["step"]))
+        when = f"from T+{format_duration(sim.t)}" if start == "now" else "from the start"
+        app.toast(f"Wrote {path.name} ({when}) to {path.parent}")
+        return None
+
+    return FormDialog(app, "Export to MATLAB", specs, on_ok, "Export", width=560,
+                      ok_hint="Write the live script",
+                      subtitle="A live script that runs this simulation again in MATLAB")
 
 
 # --- Edit satellite -------------------------------------------------------------------------------

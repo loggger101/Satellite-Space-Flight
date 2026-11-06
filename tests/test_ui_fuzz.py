@@ -18,7 +18,7 @@ from satflight.scenario import Scenario
 from satflight.ui.app import App
 from satflight.ui.widgets import Checkbox, Choice, TextField
 
-DIALOGS = ("add", "walker", "maneuver", "station", "physics", "edit", "launch")
+DIALOGS = ("add", "walker", "maneuver", "station", "physics", "edit", "launch", "matlab")
 BAD = ("", "abc", "nan", "inf", "-1", "0", "1e300", "2.5")
 
 

@@ -21,6 +21,10 @@ satflight = "satflight.__main__:main"
 [tool.setuptools.packages.find]
 include = ["satflight*"]
 
+[tool.setuptools.package-data]
+# the MATLAB port of the engine that satflight.matlab_export appends to every script
+satflight = ["matlab_runtime.m"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # a warning (numpy divide-by-zero, invalid value, ...) is a failure, not noise

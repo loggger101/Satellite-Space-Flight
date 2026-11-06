@@ -1009,6 +1009,9 @@ class Simulation:
         sc.satellites = []
         sc.constellations = []
         pads = {id(a.sat): a for a in self.ascents if a.phase == "pad"}
+        # a finite burn under way goes on in the new scenario: what is left of it
+        # starts at once, from the mass the satellite has now
+        burning = {b.man.sat: b for b in self.burns if b.t1 > self.t + 1e-6}
         sc.launches = []
         for a in pads.values():
             spec = a.spec.copy()
@@ -1020,13 +1023,20 @@ class Simulation:
             if self.ascent_of(i) is not None:
                 self.log(f"Snapshot: {s.name} is in powered flight; "
                          "saved as a free-flying state", "warn")
+            b = burning.get(s.name)
+            mass = s.mass if b is None else b.m0 - b.mdot * (self.t - b.t0)
             sc.satellites.append(SatSpec(
                 s.name, {"type": "state", "r": self.y[i, :3].tolist(), "v": self.y[i, 3:].tolist()},
-                list(s.color), s.mass, s.area, s.cd))
+                list(s.color), mass, s.area, s.cd))
         sc.stations = list(self.stations)
         sc.forces = ForceModel.from_dict(self.forces.to_dict())
         sc.propagator = self.propagator
         sc.maneuvers = []
+        for b in burning.values():
+            rest = Maneuver.from_dict(b.man.to_dict())
+            rest.timing, rest.t, rest.duration = "absolute", 0.0, b.t1 - self.t
+            rest.done, rest.result = False, ""
+            sc.maneuvers.append(rest)
         for m in self.maneuvers:
             mm = Maneuver.from_dict(m.to_dict())
             mm.t = m.t - self.t

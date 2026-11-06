@@ -211,6 +211,32 @@ def test_scenario_dialog_load_save_export(app, tmp_path):
     assert list((tmp_path / "user" / "exports").glob("*.csv"))
 
 
+@pytest.mark.parametrize("start", ["Current moment", "Scenario start"])
+def test_export_matlab_live_script(app, tmp_path, start):
+    app.load_scenario(Path("scenarios/hohmann_to_geo.json"))
+    app.sim.advance(1500)
+    app.open("scenario")
+    scenarios = app.dialogs[-1]
+    button(scenarios, "Export MATLAB").callback()
+    assert scenarios not in app.dialogs
+    dlg = app.dialogs[-1]
+    assert dlg.title == "Export to MATLAB"
+    assert dlg.widgets["name"].value == "Hohmann_transfer_LEO_to_GEO"
+    frame(app, 2)
+    dlg.set("start", start)
+    fill(dlg, "name", "not a name")
+    dlg.submit()
+    assert dlg in app.dialogs and "try not_a_name" in dlg.error
+    fill(dlg, "name", "transfer")
+    fill(dlg, "duration", "6h")
+    dlg.submit()
+    assert dlg not in app.dialogs
+    text = (tmp_path / "user" / "exports" / "transfer.m").read_text(encoding="utf-8")
+    assert "duration = 21600;" in text
+    # time runs on behind the dialog, so the moment is when Export was pressed
+    assert ("starts at the moment it was exported" in text) == (start == "Current moment")
+
+
 def test_delete_edit_and_pick(app):
     frame(app, 2)
     sx, sy, vis = app.renderer.sat_screen

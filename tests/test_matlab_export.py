@@ -126,9 +126,50 @@ def test_every_satellite_row_says_what_orbit_it_is_on(tmp_path):
     assert 'satflightVehicle("Sounding rocket", "Motor", stages' in text
 
 
+def headings(text: str) -> list[str]:
+    return re.findall(r"^%\[text\] ## (.+)$", text, re.M)
+
+
+@pytest.mark.parametrize("scenario, compare, sections", [
+    ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Plots",
+                          "Passes and eclipses", "Animation",
+                          "Cross-check against the simulator"]),
+    ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
+                               "Animation"])])
+def test_sections_in_order(scenario, compare, sections, tmp_path):
+    """Every section starts a new %% cell; the passes table only with stations, the
+    animation always, behind its own setting."""
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / f"{scenario}.json"))
+    text = export_live_script(sim, tmp_path / "s.m", "start", 60, 60, compare=compare).read_text(
+        encoding="utf-8")
+    assert headings(text) == sections
+    cells = text.split("\n%%\n")
+    assert [re.match(r"%\[text\] ## (.+)", c).group(1) for c in cells[1:]] == sections
+    assert ("passes = satflightPasses(T, events, sim.stations);" in text) == bool(sim.stations)
+    assert "eclipses = satflightEclipses(T, events);" in text
+    assert "satflightPlotTimeline(T, events, shown);" in text
+    assert re.search(r'^animate = true;   % .+\nanimationFile = "";   % ', text, re.M)
+    assert ("if animate\n    satflightAnimate(T, events, sim.stations, shown, "
+            "File=animationFile);\nend") in text
+
+
+def test_the_introduction_counts_in_words(tmp_path):
+    from satflight.launch import LaunchSpec
+    one = Simulation(Scenario.load(ROOT / "scenarios" / "launch_day.json"))
+    text = export_live_script(one, tmp_path / "a.m", "start", 60, 60).read_text(encoding="utf-8")
+    assert "with 1 satellite in orbit, 6 launches and no scheduled maneuvers." in text
+    two = Simulation(Scenario.load(ROOT / "scenarios" / "hohmann_to_geo.json"))
+    text = export_live_script(two, tmp_path / "b.m", "start", 60, 60).read_text(encoding="utf-8")
+    assert "with 2 satellites in orbit and 2 scheduled maneuvers." in text
+    pad = Simulation(Scenario(name="Pad only", launches=[LaunchSpec(
+        name="Solo", timing="delay", delay=60.0, kick=2.5)]))
+    text = export_live_script(pad, tmp_path / "c.m", "start").read_text(encoding="utf-8")
+    assert "with no satellites in orbit, 1 launch and no scheduled maneuvers." in text
+
+
 @pytest.mark.parametrize("scenario, gone", [
     ("hohmann_to_geo", {"satflightNoBurns", "satflightPlan", "satflightPlotAscent",
-                        "mergeMarks"}),
+                        "mergeMarks", "satflightPasses", "elevationDeg"}),
     ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks"}),
     ("launch_day", set())])
 def test_a_script_holds_only_the_helpers_it_calls(scenario, gone, tmp_path):

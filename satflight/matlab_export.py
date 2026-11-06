@@ -234,8 +234,10 @@ def _numx(x) -> str:
     return _num(x)
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word}{'s' * (n != 1)}"
+def _count(n: int, one: str, many: str = "") -> str:
+    """"1 satellite", "3 satellites", "no satellites"."""
+    many = many or one + "s"
+    return f"1 {one}" if n == 1 else f"{n or 'no'} {many}"
 
 
 MODES = {None: 0, "prograde": 1, "fixed": 2}    # thrust modes as the MATLAB ascent codes them
@@ -326,10 +328,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     epoch = ensure_utc(scenario.epoch)
     exported = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     launches = list(src.ascents)
-    what = [_plural(len(rows), "satellite")]
+    what = [_count(len(rows), "satellite in orbit", "satellites in orbit")]
     if launches:
-        what.append(_plural(len(launches), "launch").replace("launchs", "launches"))
-    what.append(_plural(len(maneuvers), "scheduled maneuver"))
+        what.append(_count(len(launches), "launch", "launches"))
+    what.append(_count(len(maneuvers), "scheduled maneuver"))
     out = _text(
         f"# {scenario.name}\n"
         f"Exported from **Satellite Space Flight** on {exported}. The run starts at {origin}: "
@@ -348,6 +350,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     if launches:
         out += ["planLaunches = false;   % true: plan the launches on their pads here (window, "
                 "pitch kick), e.g. after editing one"]
+    out += ["animate = true;   % play the run back (Animation section)",
+            'animationFile = "";   % e.g. "run.gif": also save the animation as an animated GIF']
     out += ["%%"]
 
     method = it.method
@@ -448,7 +452,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                  + (", and the launches." if launches else "."))
     plan = ", PlanLaunches=planLaunches" if launches else ""
     out += [f"[T, events, launches] = satflightRun(sim, duration, step{plan});",
-            'keyEvents = events(ismember(events.kind, ["launch", "maneuver", "alert", "warn"]), :);',
+            'keyEvents = events(ismember(events.kind, ["launch", "maneuver", "alert", "warn"]), '
+            ':);',
             "display(keyEvents)",
             'atEnd = T(T.t_s == max(T.t_s), ["name", "status", "alt_km", "lat_deg", "lon_deg", '
             '"a_km", "e", "i_deg"]);',
@@ -470,6 +475,25 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             "satflightPlotOrbits(T, shown);"]
     if launches:
         out += ["satflightPlotAscent(launches);"]
+    out += ["%%"]
+    out += _text("## Passes and eclipses\nFrom the event log: "
+                 + ("each station pass (`passes`: when it starts and ends, and the highest "
+                    "elevation at the samples in between), " if stations else "")
+                 + "each object's time in the Earth's shadow (`eclipses`), and a timeline of "
+                   "both for the objects in `shown`.")
+    if stations:
+        out += ["passes = satflightPasses(T, events, sim.stations);", "display(passes)"]
+    out += ["eclipses = satflightEclipses(T, events);", "display(eclipses)",
+            "satflightPlotTimeline(T, events, shown);"]
+    out += ["%%"]
+    out += _text("## Animation\nPlays the run back (in 20 s in a figure window): the ground "
+                 "track and the orbits about the turning Earth, each over its last orbit, each "
+                 "object where it is then (o in orbit, x come down or gone) and the latest lines "
+                 "of the event log. Settings: `animate` to skip it, `animationFile` to save it "
+                 "as a GIF (every frame drawn and written, so it takes a while).")
+    out += ["if animate",
+            "    satflightAnimate(T, events, sim.stations, shown, File=animationFile);",
+            "end"]
     if compare:
         out += ["%%"]
         out += _text("## Cross-check against the simulator\nRuns the Python simulator on the "
@@ -502,7 +526,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             "    ];", "c = reshape(c, 2, []).';", "end", ""]
     # the helpers this script's sections do not call: MATLAB would flag them as unused
     unused = (["satflightNoBurns"] if maneuvers else []) + (
-        [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"])
+        [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"]) + (
+        [] if stations else ["satflightPasses", "elevationDeg"])
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]

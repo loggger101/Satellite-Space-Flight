@@ -15,7 +15,7 @@ from ..forces import ForceModel
 from ..integrators import METHODS
 from ..launch import G0_M
 from ..maneuvers import Maneuver
-from ..matlab_export import export_live_script, matlab_name
+from ..matlab_export import ROOT, export_live_script, matlab_name
 from ..planner import (
     plan_bielliptic,
     plan_hohmann,
@@ -687,12 +687,28 @@ def scenario_dialog(app):
     return dlg
 
 
+def _short_path(path: Path, limit: int) -> str:
+    """``path`` for a one-line label: relative to the project folder when inside
+    it, and at most ``limit`` characters, the middle elided (the end names the
+    folder)."""
+    try:
+        text = str(path.relative_to(ROOT))
+    except ValueError:
+        text = str(path)
+    if len(text) <= limit:
+        return text
+    head = (limit - 3) // 3
+    return text[:head] + "..." + text[len(text) - (limit - 3 - head):]
+
+
 def matlab_export_dialog(app):
     """Write the simulation as a MATLAB live script (Scenarios > Export MATLAB)."""
     sim = app.sim
     # time runs on behind the dialog: "now" is the moment Export is pressed
     starts = {"Current moment": "now", "Scenario start": "start"}
     labels = list(starts)
+    contents = {"With a cross-check": True, "MATLAB only": False}
+    kinds = list(contents)
     folder = app.user_scenario_dir / "exports"
     specs = [
         F("start", "Start from", "choice", labels[0], labels,
@@ -701,6 +717,14 @@ def matlab_export_dialog(app):
           option_tips={labels[0]: "Like Save snapshot: positions and velocities at the moment "
                                   "you press Export.",
                        labels[1]: "The scenario from its epoch, as Reset would restart it."}),
+        F("compare", "Script", "choice", kinds[0], kinds,
+          tip="Whether the script also runs this simulator on the same scenario and compares "
+              "the two runs, or is just the MATLAB simulation.",
+          option_tips={kinds[0]: "A last section runs this simulator (Python, from this "
+                                 "folder) on the same scenario and plots the differences. "
+                                 "It can be switched off in the script.",
+                       kinds[1]: "Only the MATLAB simulation and its plots: no Python, no "
+                                 "comparison. Runs anywhere MATLAB does."}),
         F("duration", "Run length", "text", "1d",
           tip="How far the script propagates: seconds, or 90m, 12h, 3d. It can be changed "
               "in the script."),
@@ -709,9 +733,9 @@ def matlab_export_dialog(app):
         F("name", "Script name", "text", matlab_name(sim.scenario.name),
           tip="Letters, digits and underscores, starting with a letter: MATLAB runs a "
               "script by its name."),
-        F("where", "", "info", f"Written to {folder}"[:88],
-          tip="Open it in MATLAB R2025a or later and press Run. It needs no Python; its "
-              "last section compares the run with this simulator."),
+        F("where", "", "info", f"Written to {_short_path(folder, 50)}",
+          tip=f"{folder}. Open it in MATLAB R2025a or later and press Run. The simulation "
+              "needs no Python; only the cross-check, if included, runs this simulator."),
     ]
 
     def on_ok(v):
@@ -719,10 +743,13 @@ def matlab_export_dialog(app):
         if matlab_name(name) != name:
             return f"'{name}' cannot name a MATLAB script; try {matlab_name(name)}"
         start = starts[v["start"]]
+        compare = contents[v["compare"]]
         path = export_live_script(sim, folder / f"{name}.m", start,
-                                  parse_duration(v["duration"]), parse_duration(v["step"]))
+                                  parse_duration(v["duration"]), parse_duration(v["step"]),
+                                  compare)
         when = f"from T+{format_duration(sim.t)}" if start == "now" else "from the start"
-        app.toast(f"Wrote {path.name} ({when}) to {path.parent}")
+        what = "with a cross-check" if compare else "MATLAB only"
+        app.toast(f"Wrote {path.name} ({when}, {what}) to {path.parent}")
         return None
 
     return FormDialog(app, "Export to MATLAB", specs, on_ok, "Export", width=560,

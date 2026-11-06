@@ -313,11 +313,18 @@ engine ([`satflight/matlab_runtime.m`](satflight/matlab_runtime.m)): the
 propagators and forces, the rocket ascent from pad to separation (pitch kick,
 gravity turn, closed-loop guidance, staging, fairing, spent stages as objects,
 circularization), the launch planner, and the event log (burns, eclipses,
-station passes, close approaches, re-entries). It runs, plots the results and
-each ascent, and in its last section runs the Python simulator on the same
-scenario and compares the two: positions agree to within centimetres to metres
-over hours, every launch event to the millisecond, and the rest of the event log
-to within an integrator step. The same export from the command line:
+station passes, close approaches, re-entries). It runs and plots the results
+and each ascent. You also choose what the script holds:
+
+- **With a cross-check** (the default): a last section runs the Python
+  simulator on the same scenario and compares the two. Positions agree to
+  within centimetres to metres over hours, every launch event to the
+  millisecond, and the rest of the event log to within an integrator step. It
+  needs this folder and Python, and can be switched off in the script.
+- **MATLAB only**: just the simulation and its plots, without that section or
+  the code behind it. It runs anywhere MATLAB does.
+
+The same export from the command line (add `--no-compare` for MATLAB only):
 
 ```bash
 python -m satflight.matlab_export scenarios/hohmann_to_geo.json --out hohmann.m --duration 8h
@@ -427,7 +434,7 @@ several sides:
 | `test_ui_sweep.py` | every plot metric and panel for satellites of every scenario, before and after launches and re-entries |
 | `test_entry_points.py` | command line, batch runner, assets, fonts, loading and saving |
 | `test_matlab.py` | the MATLAB toolkit agrees with the simulator; its own suites pass, exported scripts of every bundled scenario included (when MATLAB is installed) |
-| `test_matlab_export.py` | exported live scripts carry the exact starting states, burns and launches (plans and flight states), and the MATLAB engine the simulator's constants |
+| `test_matlab_export.py` | exported live scripts carry the exact starting states, burns and launches (plans and flight states), MATLAB-only ones none of the cross-check, and the MATLAB engine the simulator's constants |
 | `test_tools.py` | generated scenarios match the generator, README pictures render, asset checks, selfcheck |
 | `test_harness.py` | the suite's own guards: warnings are errors, a hanging test fails with its stack |
 

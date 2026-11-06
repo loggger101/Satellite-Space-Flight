@@ -79,9 +79,13 @@ satellite with `T(T.name == "ISS", :)`.
 The app's Scenarios dialog (Ctrl+O) has an **Export MATLAB** button. It writes
 a live script to `scenarios/user/exports/` that runs the simulation again in
 MATLAB on its own, starting at the current moment or at the scenario's start
-(your choice). Open it in the Live Editor and press Run. Its sections:
+(your choice), either **with a cross-check** against the simulator (the
+default) or **MATLAB only** (`--no-compare` from the command line): no
+cross-check section, no `crossCheck` setting and none of the comparison code,
+so it needs nothing but MATLAB. Open it in the Live Editor and press Run. Its
+sections:
 
-1. **Settings**: `duration`, `step`, `crossCheck`, and with launches
+1. **Settings**: `duration`, `step`, `crossCheck` (with a cross-check), and with launches
    `planLaunches` (false: fly the simulator's plan; true: find the launch
    window and search the pitch kick here, as the simulator does when a
    scenario loads, e.g. after editing a launch).
@@ -97,7 +101,7 @@ MATLAB on its own, starting at the current moment or at the scenario's start
    losses, max Q, and the ascent profile (`profile`, `marks`, and the plan's).
 5. **Plots**: ground track, altitude, elements, 3-D orbits, and each ascent
    (`satflightPlotAscent`).
-6. **Cross-check**: runs the Python simulator on the same scenario through
+6. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
    It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.

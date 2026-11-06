@@ -2,6 +2,7 @@
 
     python -m satflight.matlab_export scenarios/hohmann_to_geo.json --out hohmann.m
     python -m satflight.matlab_export scenarios/default.json --at 3h --out iss_later.m
+    python -m satflight.matlab_export scenarios/default.json --no-compare --out iss_only.m
 
 The script is a plain-text Live Script (the ``.m`` Live Code format of MATLAB
 R2025a and later): it opens in the Live Editor with headings and explanations,
@@ -19,9 +20,11 @@ and runs as an ordinary script in any MATLAB that reads the format. It holds
   fairing, separation, spent stages as objects, circularization), the launch
   planner, and the event log (burns, eclipses, station passes, close
   approaches, re-entries), so the run needs MATLAB alone;
-* a cross-check section that runs the Python simulator on the same scenario
-  through the ``matlab/`` toolkit and compares the trajectories and the event
-  logs line by line.
+* unless exported MATLAB-only (``compare=False``), a cross-check section that
+  runs the Python simulator on the same scenario through the ``matlab/``
+  toolkit and compares the trajectories and the event logs line by line. A
+  MATLAB-only script leaves out that section, the scenario JSON it feeds the
+  simulator and the comparison functions: it needs nothing but MATLAB.
 
 It starts either at the moment shown in the app (``start="now"``, every
 satellite as it is, like Save snapshot, with launches on their pads or in
@@ -50,6 +53,21 @@ RUNTIME = Path(__file__).with_name("matlab_runtime.m")
 COASTLINES = ROOT / "assets" / "coastlines.json"
 STARTS = ("now", "start")
 NAME_MAX = 63          # MATLAB's namelengthmax: a longer script name cannot be run
+# the runtime's last section: the functions only the cross-check uses
+CROSS_CHECK = "% --- cross-check against the simulator "
+
+
+def runtime_lines(compare: bool) -> list[str]:
+    """``matlab_runtime.m`` as lines; without its cross-check section unless
+    ``compare``. RuntimeError if the file has lost the section's marker line."""
+    lines = RUNTIME.read_text(encoding="utf-8").rstrip("\n").split("\n")
+    if compare:
+        return lines
+    at = [k for k, line in enumerate(lines) if line.startswith(CROSS_CHECK)]
+    if len(at) != 1:
+        raise RuntimeError(f"{RUNTIME.name}: expected one line starting {CROSS_CHECK!r}, "
+                           f"found {len(at)}")
+    return lines[:at[0]]
 
 
 def matlab_name(text: str) -> str:
@@ -115,12 +133,15 @@ def _epoch_text(epoch: datetime) -> str:
 
 
 def export_live_script(sim: Simulation, path, start: str = "now", duration: float = 86400.0,
-                       step: float = 60.0) -> Path:
+                       step: float = 60.0, compare: bool = True) -> Path:
     """Write ``sim`` as a MATLAB live script at ``path`` (see the module notes).
     ``start`` is "now" or "start"; ``duration`` and ``step`` (s) are the script's
-    initial settings. Returns the path. ValueError if the file name is not one
-    MATLAB can run a script by, or a setting is unusable."""
+    initial settings; ``compare`` adds the cross-check against the simulator
+    (False: a script that needs MATLAB alone). Returns the path. ValueError if the
+    file name is not one MATLAB can run a script by, or a setting is unusable."""
     one_of(start, STARTS, "export start")
+    if not isinstance(compare, bool):
+        raise TypeError(f"compare must be True or False, got {compare!r}")
     if not (math.isfinite(duration) and duration >= 0):
         raise ValueError(f"duration must be zero or more seconds, got {duration}")
     if not (math.isfinite(step) and step > 0):
@@ -140,7 +161,8 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
         origin = "the start of the scenario"
     data = scenario.to_dict()
     data["epoch"] = _epoch_text(scenario.epoch)
-    Scenario.from_dict(json.loads(json.dumps(data, allow_nan=False)))  # the cross-check reads it
+    # the cross-check hands this to the simulator; it must read back (checked either way)
+    Scenario.from_dict(json.loads(json.dumps(data, allow_nan=False)))
     src = Simulation(scenario)
 
     vehicles = {id(a.sat) for a in src.ascents}
@@ -149,7 +171,8 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
     scrubbed = [e.text for e in src.events if e.kind == "alert" and e.text.startswith("Launch of ")]
     if not rows and not src.ascents:
         raise ValueError("nothing to export: no satellite and no launch")
-    lines = _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step)
+    lines = _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step,
+                    compare)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return path
@@ -250,7 +273,8 @@ def _none(x, default: float) -> float:
     return default if x is None else x
 
 
-def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step) -> list[str]:
+def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step,
+            compare) -> list[str]:
     F, it = src.forces, scenario.integrator
     epoch = ensure_utc(scenario.epoch)
     exported = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -265,14 +289,15 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         f"{epoch.strftime('%Y-%m-%d %H:%M:%S')} UTC, with {', '.join(what[:-1])} and {what[-1]}.\n"
         "Press **Run** to run it here in MATLAB with the simulator's own physics"
         + (" and rocket ascents" if launches else "")
-        + ", plot the results and, when the simulator is installed, run it there too and "
-        "compare.")
+        + (", plot the results and, when the simulator is installed, run it there too and "
+           "compare." if compare else " and plot the results. It needs MATLAB alone."))
     out += ["%%"]
     out += _text("## Settings\nHow far to propagate and how often to sample (seconds). "
                  "Change them freely.")
     out += [f"duration = {_num(duration)};   % s ({format_duration(duration)})",
-            f"step = {_num(step)};   % s between samples",
-            "crossCheck = true;   % also run the Python simulator and compare (last section)"]
+            f"step = {_num(step)};   % s between samples"]
+    if compare:
+        out += ["crossCheck = true;   % also run the Python simulator and compare (last section)"]
     if launches:
         out += ["planLaunches = false;   % true: plan the launches on their pads here (window, "
                 "pitch kick), e.g. after editing one"]
@@ -384,30 +409,33 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             "satflightPlotOrbits(T);"]
     if launches:
         out += ["satflightPlotAscent(launches);"]
-    out += ["%%"]
-    out += _text("## Cross-check against the simulator\nRuns the Python simulator on the same "
-                 "scenario (through the `matlab/` toolkit of the folder below), plots how far "
-                 "apart the two runs are and pairs up the two event logs line by line (shown: "
-                 "the lines that differ). It needs Satellite Space Flight and Python with numpy; "
-                 "set `crossCheck = false` in Settings to skip it.")
-    out += [f"simulatorFolder = {_str(ROOT)};",
-            "if crossCheck",
-            "    [P, E] = satflightRunSimulator(simulatorFolder, scenarioJson(), duration, step);",
-            "    differences = satflightCompare(T, P)",
-            "    eventDifferences = satflightCompareEvents(events, E);",
-            "    eventDifferences(~eventDifferences.same_text, :)",
-            "end",
-            ""]
+    if compare:
+        out += ["%%"]
+        out += _text("## Cross-check against the simulator\nRuns the Python simulator on the "
+                     "same scenario (through the `matlab/` toolkit of the folder below), plots how "
+                     "far apart the two runs are and pairs up the two event logs line by line "
+                     "(shown: the lines that differ). It needs Satellite Space Flight and Python "
+                     "with numpy; set `crossCheck = false` in Settings to skip it.")
+        out += [f"simulatorFolder = {_str(ROOT)};",
+                "if crossCheck",
+                "    [P, E] = satflightRunSimulator(simulatorFolder, scenarioJson(), duration, "
+                "step);",
+                "    differences = satflightCompare(T, P)",
+                "    eventDifferences = satflightCompareEvents(events, E);",
+                "    eventDifferences(~eventDifferences.same_text, :)",
+                "end"]
+    out += [""]
 
-    out += ["function text = scenarioJson()",
-            "% the scenario as the simulator reads it (for the cross-check)",
-            "text = strjoin(["]
-    out += [f"    {_str(c)}" for c in _chunks(json.dumps(data, separators=(",", ":")))]
-    out += ['], "");', "end", ""]
+    if compare:
+        out += ["function text = scenarioJson()",
+                "% the scenario as the simulator reads it (for the cross-check)",
+                "text = strjoin(["]
+        out += [f"    {_str(c)}" for c in _chunks(json.dumps(data, separators=(",", ":")))]
+        out += ['], "");', "end", ""]
     out += ["function c = satflightCoastline()",
             "% coastlines (Natural Earth, public domain), thinned to 0.5 degree",
             "c = ["] + [f"    {r}" for r in _coastline_rows()] + ["];", "end", ""]
-    out += RUNTIME.read_text(encoding="utf-8").rstrip("\n").split("\n")
+    out += runtime_lines(compare)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]
     return out
@@ -422,6 +450,9 @@ def main(argv=None):
                                  "without it the export starts at the scenario's start")
     ap.add_argument("--duration", default="1d", help="the script's run length (default 1d)")
     ap.add_argument("--step", default="60", help="the script's sample interval (default 60 s)")
+    ap.add_argument("--compare", action=argparse.BooleanOptionalAction, default=True,
+                    help="add the section that runs the Python simulator on the same scenario "
+                         "and compares (default); --no-compare writes a MATLAB-only script")
     args = ap.parse_args(argv)
     try:
         sc = Scenario.load(args.scenario)
@@ -439,7 +470,7 @@ def main(argv=None):
         sim.advance(at)
     try:
         path = export_live_script(sim, args.out, "now" if at is not None else "start",
-                                  duration, step)
+                                  duration, step, args.compare)
     except ValueError as exc:
         ap.error(str(exc))
     print(f"Wrote {path}")

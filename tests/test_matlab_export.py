@@ -10,7 +10,14 @@ import pytest
 
 from satflight import atmosphere, constants
 from satflight.maneuvers import Maneuver
-from satflight.matlab_export import RUNTIME, export_live_script, main, matlab_name
+from satflight.matlab_export import (
+    CROSS_CHECK,
+    RUNTIME,
+    export_live_script,
+    main,
+    matlab_name,
+    runtime_lines,
+)
 from satflight.scenario import SatSpec, Scenario
 from satflight.simulation import Simulation
 
@@ -82,13 +89,59 @@ def test_launches_in_flight_carry_their_flight_state(tmp_path):
     assert "in powered flight at T+213.0 s (closed-loop guidance, stage 2)" in text
 
 
+def test_matlab_only_export_leaves_out_the_cross_check(tmp_path):
+    """compare=False: the same simulation, plots and engine, without the section
+    that runs the Python simulator, its scenario JSON or the comparison code."""
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "launch_day.json"))
+    sim.advance(333.7)                      # vehicles in flight and on their pads
+    both = export_live_script(sim, tmp_path / "both.m", "now", 600, 60).read_text(
+        encoding="utf-8")
+    alone = export_live_script(sim, tmp_path / "alone.m", "now", 600, 60, compare=False)
+    alone = alone.read_text(encoding="utf-8")
+    cross = ("crossCheck", "simulatorFolder", "scenarioJson", "satflightRunSimulator",
+             "satflightCompare", "satflightCompareEvents", "eventKeys", "satflight.runScenario",
+             "addpath", "## Cross-check")
+    for word in cross:
+        assert word in both, word
+        assert word not in alone, word
+    assert "It needs MATLAB alone." in alone
+    assert alone.splitlines()[-5:] == both.splitlines()[-5:]          # still a Live Script
+    # every other line is the same: states, burns, launches, run, plots, engine
+    kept = set(both.splitlines())
+    differ = [line for line in alone.splitlines() if line not in kept
+              and not line.startswith("%[text] Exported from")]
+    assert differ == [line for line in alone.splitlines() if line.startswith("%[text] Press")]
+    engine = runtime_lines(False)
+    assert engine and "\n".join(engine) in alone
+    assert len(engine) < len(runtime_lines(True))
+
+
+def test_a_runtime_without_its_cross_check_marker_is_an_error(tmp_path, monkeypatch):
+    """The MATLAB-only export cuts the runtime at a marker line: losing it must
+    stop the export, not write a script with the comparison code left in."""
+    text = RUNTIME.read_text(encoding="utf-8").replace(CROSS_CHECK, "% --- renamed ")
+    fake = tmp_path / "matlab_runtime.m"
+    fake.write_text(text, encoding="utf-8")
+    monkeypatch.setattr("satflight.matlab_export.RUNTIME", fake)
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "rendezvous.json"))
+    export_live_script(sim, tmp_path / "with.m", "start", 60, 60)      # needs no cut
+    with pytest.raises(RuntimeError, match="cross-check against the simulator"):
+        export_live_script(sim, tmp_path / "alone.m", "start", 60, 60, compare=False)
+    assert not (tmp_path / "alone.m").exists()
+    with pytest.raises(TypeError, match="compare"):
+        export_live_script(sim, tmp_path / "x.m", "start", 60, 60, compare="no")
+
+
 def test_command_line(tmp_path, capsys):
     out = tmp_path / "hohmann.m"
     main([str(ROOT / "scenarios" / "hohmann_to_geo.json"), "--out", str(out), "--at", "15m",
           "--duration", "2h", "--step", "30"])
     text = out.read_text(encoding="utf-8")
     assert "duration = 7200;" in text and "step = 30;" in text
-    assert "T+00:15:00" in text
+    assert "T+00:15:00" in text and "crossCheck = true;" in text
+    alone = tmp_path / "alone.m"
+    main([str(ROOT / "scenarios" / "hohmann_to_geo.json"), "--out", str(alone), "--no-compare"])
+    assert "crossCheck" not in alone.read_text(encoding="utf-8")
     with pytest.raises(SystemExit):
         main([str(ROOT / "scenarios" / "hohmann_to_geo.json"), "--out", str(tmp_path / "1x.m")])
     assert "MATLAB script" in capsys.readouterr().err

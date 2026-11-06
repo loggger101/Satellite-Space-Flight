@@ -39,9 +39,20 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
                 "MATLAB does not take the export for a Live Script");
         end
 
+        function out = runAlone(tc, script)
+            % runs a MATLAB-only script with the matlab/ toolkit off the path: it
+            % must need nothing outside itself
+            toolkit = fullfile(tc.Root, "matlab");
+            rmpath(toolkit);
+            restore = onCleanup(@() addpath(toolkit));
+            close all
+            out = runScript(script);
+        end
+
         function [D, out] = check(tc, script)
             close all
             out = runScript(script);
+            tc.assertTrue(isfield(out, "differences"), script + ": no cross-check ran");
             D = out.differences;
             tc.verifyNotEmpty(D);
             tc.verifyEqual(D.status_matlab, D.status_simulator, script);
@@ -128,10 +139,13 @@ end
 function out = runScript(file)
 % runs the exported script here; its variables land in this workspace
 run(file);
-% read them by name at run time: "events" alone would be MATLAB's events function here
+% read them by name at run time: "events" alone would be MATLAB's events function here.
+% A MATLAB-only script has no P, differences or eventDifferences.
 out = struct();
 for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim"]
-    out.(name) = eval(name);
+    if exist(name, "var") == 1
+        out.(name) = eval(name);
+    end
 end
 end
 

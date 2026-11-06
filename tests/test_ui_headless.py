@@ -235,6 +235,29 @@ def test_export_matlab_live_script(app, tmp_path, start):
     assert "duration = 21600;" in text
     # time runs on behind the dialog, so the moment is when Export was pressed
     assert ("starts at the moment it was exported" in text) == (start == "Current moment")
+    assert "crossCheck = true;" in text                  # the cross-check is the default
+    # MATLAB only: no section that runs this simulator
+    app.open("matlab")
+    dlg = app.dialogs[-1]
+    dlg.set("start", start)
+    dlg.set("compare", "MATLAB only")
+    fill(dlg, "name", "transfer_alone")
+    dlg.submit()
+    assert dlg not in app.dialogs
+    alone = (tmp_path / "user" / "exports" / "transfer_alone.m").read_text(encoding="utf-8")
+    assert "crossCheck" not in alone and "satflightRunSimulator" not in alone
+    assert "satflightRun(sim, duration, step)" in alone
+    assert "MATLAB only" in app.toasts[-1][1]
+
+
+def test_export_folder_label_fits_on_one_line():
+    from satflight.matlab_export import ROOT
+    from satflight.ui.dialogs import _short_path
+    assert _short_path(ROOT / "scenarios" / "user" / "exports", 50) == str(
+        Path("scenarios/user/exports"))
+    far = Path("/elsewhere") / ("deep_folder_" * 8) / "exports"
+    short = _short_path(far, 50)
+    assert len(short) == 50 and "..." in short and short.endswith("exports")
 
 
 def test_delete_edit_and_pick(app):

@@ -2,7 +2,8 @@ classdef ExportTest < ExportCase
     %EXPORTTEST Live scripts written by Scenarios > Export MATLAB run in MATLAB and
     %   reproduce the simulator (held to it as ExportCase describes), for cases built
     %   to reach every feature: each burn kind under each propagator, a burn under way,
-    %   re-entry, launches from the pad and mid-ascent, launches planned in MATLAB.
+    %   re-entry, launches from the pad and mid-ascent, launches planned in MATLAB, and
+    %   a MATLAB-only export (no cross-check) giving the very same run.
     %   BundledExportTest runs every bundled scenario the same way. From the
     %   repository root:
     %     matlab -batch "addpath('matlab'); assertSuccess(runtests('matlab/tests/ExportTest.m'))"
@@ -87,6 +88,21 @@ classdef ExportTest < ExportCase
             plan = [out.sim.launches.plan];
             tc.verifyEqual([out.launches.liftoff_s], [plan.t0], AbsTol=1e-6);
             tc.verifyEqual([out.launches.kick_deg], [plan.kick], AbsTol=1e-9);
+        end
+
+        function matlabOnly(tc)
+            % exported without the cross-check (--no-compare): it runs with the toolkit
+            % off the path, runs no simulator, and gives exactly the run of the script
+            % with the cross-check (held to the simulator here), launches in flight too
+            file = fullfile(tc.Root, "scenarios", "launch_day.json");
+            args = ["--at", "333.7", "--duration", "1h", "--step", "60"];
+            [~, both] = tc.check(tc.export(file, "withcheck", args));
+            alone = tc.runAlone(tc.export(file, "alone", [args, "--no-compare"]));
+            tc.verifyFalse(isfield(alone, "P") || isfield(alone, "differences"), ...
+                "the MATLAB-only script ran the simulator");
+            tc.verifyEqual(alone.T, both.T);
+            tc.verifyEqual(alone.events, both.events);
+            tc.verifyEqual(alone.launches, both.launches);
         end
 
         function midBurnSnapshot(tc)

@@ -55,7 +55,16 @@ from .atmosphere import H0, RHO0, SCALE_H, TOP_KM
 from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, SOI_EARTH
 from .elements import rv2coe
 from .frames import ecef_to_eci_state, geodetic_to_ecef
-from .strict import MAX_CDA_OVER_M, MAX_SPAN, build, drag_props, finite, one_of, within
+from .strict import (
+    MAX_CDA_OVER_M,
+    MAX_SPAN,
+    build,
+    check_keys,
+    drag_props,
+    finite,
+    one_of,
+    within,
+)
 
 G0_M = 9.80665            # m/s^2, standard gravity (defines Isp)
 P_SCALE_H = 7.0           # km, scale height of ambient pressure (thrust vs altitude)
@@ -252,11 +261,16 @@ class LaunchSpec:
     circularize: bool = False    # the payload circularizes at its first apogee
     track_stages: bool = True    # spent stages become objects of their own
     color: list | None = None
+    resume: dict | None = None   # a snapshot's plan and flight state (see Ascent.save)
 
     def to_dict(self):
-        """JSON-ready dict; the vehicle is stored in full, not by preset name."""
+        """JSON-ready dict; the vehicle is stored in full, not by preset name. A
+        launch with nothing to resume (every one but a snapshot's) has no
+        ``resume`` key."""
         d = asdict(self)
         d["vehicle"] = self.vehicle.to_dict()
+        if d["resume"] is None:
+            del d["resume"]
         return d
 
     @classmethod
@@ -449,6 +463,16 @@ def _energy(s) -> float:
     """Two-body specific orbital energy (km^2/s^2) of state ``s``."""
     x, y, z, vx, vy, vz = s
     return 0.5 * (vx * vx + vy * vy + vz * vz) - MU_EARTH / math.sqrt(x * x + y * y + z * z)
+
+
+def _opt(x: float):
+    """``x`` for JSON: None when it is infinite or undefined."""
+    return float(x) if math.isfinite(x) else None
+
+
+def _back(x, default: float, what: str) -> float:
+    """Inverse of :func:`_opt`: None reads as ``default``."""
+    return default if x is None else finite(x, what)
 
 
 def _unit(v):
@@ -685,6 +709,7 @@ class Ascent:
         self._next_sample = -math.inf
         self.insertion = None           # dict of the orbit at release
         self.planned = None             # (samples, stage marks, outcome text) of the plan
+        self.resumed = False            # restored mid-flight from a snapshot, not yet synced
         r_ecef = geodetic_to_ecef(math.radians(spec.lat), math.radians(spec.lon), spec.alt)
         self._pad_hat = tuple(float(x) for x in r_ecef / np.linalg.norm(r_ecef))
 
@@ -1061,6 +1086,107 @@ class Ascent:
         s_h = math.sqrt(max(0.0, 1.0 - s_r * s_r - s_n * s_n))
         return _unit(tuple(s_r * u + s_n * q + s_h * e
                            for u, q, e in zip(up, n, eh, strict=True)))
+
+    # --- saving and resuming ------------------------------------------------------------------
+    def save(self, t_ref: float) -> dict:
+        """What :meth:`resumed` needs to carry this ascent on in a scenario whose
+        epoch is simulation time ``t_ref``: the plan and, once off the pad, the
+        whole flight state, with times counted from the new epoch. JSON-ready
+        (infinite and undefined numbers are None)."""
+        if self.released:
+            raise ValueError(f"{self.spec.name} has already separated")
+        r = self.res
+        out = {"plan": {"t0": r.t0 - t_ref, "azimuth": r.azimuth,
+                        "n": None if r.n is None else [float(x) for x in r.n],
+                        "inclination": _opt(r.inclination), "r_target": _opt(r.r_target),
+                        "v_target": _opt(r.v_target), "e_target": _opt(r.e_target),
+                        "kick": self.kick_deg}}
+        if self.phase == "pad":
+            return out
+        ctrl = None
+        if self._ctrl is not None:
+            mdot, st, mode, fixed = self._ctrl
+            ctrl = {"mdot": mdot, "stage": None if st is None else self.veh.stages.index(st),
+                    "mode": mode, "fixed": None if fixed is None else [float(x) for x in fixed]}
+        out["state"] = {
+            "t": self.t - t_ref, "y": [float(x) for x in self.y], "phase": self.phase,
+            "stage": self.k, "prop": self.prop, "mass": self.mass, "fairing_on": self.fairing_on,
+            "burning": self.burning, "coast_until": _opt(self.coast_until - t_ref),
+            "throttle": self.throttle, "thrust_dir": [float(x) for x in self.thrust_dir],
+            "ctrl": ctrl, "hold": None if self.hold is None else [float(x) for x in self.hold],
+            "tgo": _opt(self.tgo), "kick_start": _opt(self.kick_start - t_ref), "q": self.q,
+            "max_q": self.max_q[0], "t_max_q": _opt(self.max_q[1]), "q_logged": self._q_logged,
+            "accel": self.accel, "dv_ideal": self.dv_ideal, "losses": dict(self.losses),
+            "v_start": self.v_start, "next_sample": _opt(self._next_sample - t_ref)}
+        return out
+
+    @classmethod
+    def resumed(cls, spec: LaunchSpec, env: AscentEnv, resume: dict) -> Ascent:
+        """The ascent :meth:`save` described (ValueError if ``resume`` is not one)."""
+        where = f"launch {spec.name!r} resume"
+        check_keys(resume, ("plan", "state"), where, ("plan",))
+        plan = resume["plan"]
+        keys = ("t0", "azimuth", "n", "inclination", "r_target", "v_target", "e_target", "kick")
+        check_keys(plan, keys, f"{where} plan", keys)
+        n = plan["n"]
+        if n is not None and len(n) != 3:
+            raise ValueError(f"{where} plan: n needs 3 components")
+        res = Resolved(finite(plan["t0"], f"{where} t0"),
+                       finite(plan["azimuth"], f"{where} azimuth"),
+                       None if n is None else tuple(finite(x, f"{where} n") for x in n),
+                       *(_back(plan[k], math.nan, f"{where} {k}")
+                         for k in ("inclination", "r_target", "v_target", "e_target")))
+        if spec.guidance == "orbit" and (res.n is None or not math.isfinite(res.e_target)):
+            raise ValueError(f"{where} plan: orbit guidance needs the target plane and orbit")
+        a = cls(spec, res, env, finite(plan["kick"], f"{where} kick"))
+        if resume.get("state") is not None:
+            a._restore(resume["state"], f"{where} state")
+        return a
+
+    def _restore(self, s: dict, where: str):
+        """Put the flight state :meth:`save` wrote back in place."""
+        keys = ("t", "y", "phase", "stage", "prop", "mass", "fairing_on", "burning",
+                "coast_until", "throttle", "thrust_dir", "ctrl", "hold", "tgo", "kick_start",
+                "q", "max_q", "t_max_q", "q_logged", "accel", "dv_ideal", "losses", "v_start",
+                "next_sample")
+        check_keys(s, keys, where, keys)
+        one_of(s["phase"], ("vertical", "kick", "turn", "guided"), f"{where} phase")
+        if len(s["y"]) != 6 or len(s["thrust_dir"]) != 3:
+            raise ValueError(f"{where}: y needs 6 numbers and thrust_dir 3")
+        nst = len(self.veh.stages)
+        if not (isinstance(s["stage"], int) and 0 <= s["stage"] < nst):
+            raise ValueError(f"{where}: stage must be 0 to {nst - 1}")
+        self.t = finite(s["t"], f"{where} t")
+        self.y = tuple(finite(x, f"{where} y") for x in s["y"])
+        self.phase, self.k = s["phase"], s["stage"]
+        self.prop = finite(s["prop"], f"{where} prop")
+        self.mass = within(s["mass"], 1e-3, math.inf, f"{where} mass")
+        self.fairing_on, self.burning = bool(s["fairing_on"]), bool(s["burning"])
+        self.coast_until = _back(s["coast_until"], -math.inf, f"{where} coast_until")
+        self.throttle = within(s["throttle"], 0.0, 1.0, f"{where} throttle")
+        self.thrust_dir = tuple(finite(x, f"{where} thrust_dir") for x in s["thrust_dir"])
+        c = s["ctrl"]
+        if c is not None:
+            check_keys(c, ("mdot", "stage", "mode", "fixed"), f"{where} ctrl",
+                       ("mdot", "stage", "mode", "fixed"))
+            st = None if c["stage"] is None else self.veh.stages[int(c["stage"])]
+            fixed = None if c["fixed"] is None else tuple(finite(x, where) for x in c["fixed"])
+            if c["mode"] not in (None, "prograde", "fixed"):
+                raise ValueError(f"{where} ctrl: unknown mode {c['mode']!r}")
+            self._ctrl = (finite(c["mdot"], f"{where} ctrl mdot"), st, c["mode"], fixed)
+        h = s["hold"]
+        self.hold = None if h is None else tuple(finite(x, f"{where} hold") for x in h)
+        self.tgo = _back(s["tgo"], math.nan, where)
+        self.kick_start = _back(s["kick_start"], math.nan, where)
+        self.q = finite(s["q"], where)
+        self.max_q = (finite(s["max_q"], where), _back(s["t_max_q"], math.nan, where))
+        self._q_logged = bool(s["q_logged"])
+        self.accel, self.dv_ideal = finite(s["accel"], where), finite(s["dv_ideal"], where)
+        check_keys(s["losses"], tuple(self.losses), f"{where} losses", tuple(self.losses))
+        self.losses = {k: finite(v, where) for k, v in s["losses"].items()}
+        self.v_start = finite(s["v_start"], where)
+        self._next_sample = _back(s["next_sample"], -math.inf, where)
+        self.resumed = True
 
     # --- reporting --------------------------------------------------------------------------
     def telemetry(self) -> dict:

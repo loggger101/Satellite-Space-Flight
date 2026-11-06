@@ -43,7 +43,7 @@ from .ephemeris import sun_position
 from .forces import ForceModel, approx_altitude, conservative_energy
 from .frames import eci_to_ecef
 from .integrators import Propagator
-from .launch import Ascent, AscentEnv, LaunchSpec, coast, plan_launch, plane_normal
+from .launch import Ascent, AscentEnv, LaunchSpec, coast, fly, plan_launch, plane_normal, validate
 from .maneuvers import G0, Maneuver, finite_direction, impulse_eci, propellant_after, resolve_time
 from .scenario import (
     PROPAGATORS,
@@ -244,6 +244,7 @@ class Simulation:
         self.maneuvers: list[Maneuver] = []
         self.burns: list[FiniteBurn] = []
         self.events: list[Event] = []
+        self.event_count = 0               # events ever logged (the log keeps the latest)
         self.ascents: list[Ascent] = []
         self.conjunction_km = 10.0
         self.watch: set[int] = set()       # indices the UI wants detailed events for
@@ -333,6 +334,7 @@ class Simulation:
     def log(self, text: str, kind: str = "info", t: float | None = None):
         """Append an event (the log keeps the latest ~500)."""
         self.events.append(Event(self.t if t is None else t, text, kind))
+        self.event_count += 1
         if len(self.events) > 600:
             del self.events[:100]
 
@@ -452,14 +454,25 @@ class Simulation:
         return plan_launch(spec, self.ascent_env(), self.t, self.plane_of)
 
     def launch(self, spec: LaunchSpec, plan=None) -> Satellite:
-        """Put a vehicle on its pad; it lifts off at the planned time."""
+        """Put a vehicle on its pad; it lifts off at the planned time. A spec
+        with ``resume`` (from a snapshot) keeps the plan it holds and, if it
+        was in flight, carries on from where it was."""
         spec.name = self.unique_name(spec.name or "Payload")
-        if plan is None:
-            plan = self.plan(spec)
-        asc = Ascent(spec, plan.res, self.ascent_env(), plan.kick)
+        if spec.resume is not None:
+            validate(spec)
+            asc = Ascent.resumed(spec, self.ascent_env(), spec.resume)
+            flight = fly(spec, asc.res, asc.env, asc.kick_deg)       # the plan, for the log
+        else:
+            if plan is None:
+                plan = self.plan(spec)
+            asc = Ascent(spec, plan.res, self.ascent_env(), plan.kick)
+            flight = plan.flight
         n_old = self.n
         props = dict(mass=asc.mass, area=spec.vehicle.area, cd=spec.vehicle.cd)
-        y = asc.pad_state(self.t) if asc.t0 > self.t else asc.state()
+        if asc.phase != "pad":
+            y = asc.peek(self.t)
+        else:
+            y = asc.pad_state(self.t) if asc.t0 > self.t else asc.state()
         sat = self._append(spec.name, spec.color or palette_color(self.n), props,
                            np.array(y[:3]), np.array(y[3:]))
         sat.family = sat.name
@@ -467,7 +480,7 @@ class Simulation:
         self._rebuild_history(n_old)
         self._resize_visible()
         self.ascents.append(asc)
-        f = plan.flight
+        f = flight
         when = "now" if asc.t0 <= self.t + 1e-6 else f"in {format_duration(asc.t0 - self.t)}"
         if f.outcome == "orbit" and spec.guidance == "orbit":
             outcome = f"orbit {f.insertion['hp']:,.0f} x {f.insertion['ha']:,.0f} km"
@@ -500,6 +513,9 @@ class Simulation:
             return
         spawned = []
         for asc in list(self.ascents):
+            if asc.resumed and t < asc.t + ASCENT_SYNC - 1e-9:
+                continue        # restored from a snapshot: it steps again at its own next sync
+            asc.resumed = False
             i = self.sats.index(asc.sat)
             asc.advance_to(t)
             self.y[i] = asc.state()
@@ -1008,21 +1024,24 @@ class Simulation:
         sc.epoch = self.datetime()
         sc.satellites = []
         sc.constellations = []
-        pads = {id(a.sat): a for a in self.ascents if a.phase == "pad"}
+        # a vehicle on its pad or in powered flight stays a launch: it keeps its plan
+        # (liftoff time, plane, pitch kick) and, in flight, its whole flight state
+        flying = {id(a.sat) for a in self.ascents}
         # a finite burn under way goes on in the new scenario: what is left of it
         # starts at once, from the mass the satellite has now
         burning = {b.man.sat: b for b in self.burns if b.t1 > self.t + 1e-6}
         sc.launches = []
-        for a in pads.values():
+        for a in self.ascents:
             spec = a.spec.copy()
+            spec.name = a.sat.name
             spec.timing, spec.t0, spec.kick = "absolute", a.t0 - self.t, a.kick_deg
+            if spec.guidance == "orbit":
+                spec.inclination = a.res.inclination      # a plane-timed launch takes its target's
+            spec.resume = a.save(self.t)
             sc.launches.append(spec)
         for i, s in enumerate(self.sats):
-            if s.status != ACTIVE or id(s) in pads:
+            if s.status != ACTIVE or id(s) in flying:
                 continue
-            if self.ascent_of(i) is not None:
-                self.log(f"Snapshot: {s.name} is in powered flight; "
-                         "saved as a free-flying state", "warn")
             b = burning.get(s.name)
             mass = s.mass if b is None else b.m0 - b.mdot * (self.t - b.t0)
             sc.satellites.append(SatSpec(

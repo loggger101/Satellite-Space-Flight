@@ -20,6 +20,7 @@ import pytest
 from satflight import batch
 from satflight.__main__ import main as cli
 from satflight.scenario import Scenario
+from satflight.simulation import Simulation
 from satflight.ui import theme
 from satflight.ui.app import App
 from satflight.ui.earth import EarthRenderer
@@ -223,3 +224,21 @@ def test_reset_after_the_file_went_away_says_so(app, tmp_path):
     path.unlink()
     app.reset()
     assert any("Could not reload s.json" in m for _, m in app.toasts)
+
+
+def test_batch_event_log_has_every_event(tmp_path):
+    """--events writes every line the simulator logged, more than its log keeps."""
+    out = tmp_path / "events.csv"
+    sim = batch.run(Scenario.load("scenarios/launch_day.json"), 7200, 60, quiet=True, events=out)
+    with open(out, newline="", encoding="utf-8") as fh:
+        rows = list(csv.reader(fh))
+    assert rows[0] == batch.EVENT_HEADER
+    assert len(rows) - 1 == sim.event_count
+    assert [r[3] for r in rows[-len(sim.events):]] == [e.text for e in sim.events]
+    assert any(r[2] == "launch" and "MECO" in r[3] for r in rows[1:])
+
+
+def test_an_event_log_that_overflows_is_an_error():
+    sim = Simulation(Scenario.load(DEFAULT))
+    with pytest.raises(RuntimeError, match="overflowed"):
+        batch.new_events(sim, sim.event_count - len(sim.events) - 1)

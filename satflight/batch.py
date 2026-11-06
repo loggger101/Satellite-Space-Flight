@@ -21,6 +21,7 @@ from .scenario import Scenario
 from .simulation import Simulation
 from .timeutil import format_duration, format_epoch
 
+EVENT_HEADER = ["t_s", "utc", "kind", "text"]
 HEADER = ["t_s", "utc", "name", "status", "x_km", "y_km", "z_km", "vx_kms", "vy_kms", "vz_kms",
           "alt_km", "lat_deg", "lon_deg", "a_km", "e", "i_deg", "raan_deg", "argp_deg", "nu_deg"]
 
@@ -55,6 +56,16 @@ def export_history_csv(sim: Simulation, path) -> int:
     return n
 
 
+def new_events(sim: Simulation, seen: int):
+    """Events logged since ``seen`` had been (``sim.event_count`` then), oldest
+    first. RuntimeError if the log, which keeps only the latest, lost some."""
+    new = sim.event_count - seen
+    if new > len(sim.events):
+        raise RuntimeError(f"{new} events in one step overflowed the event log "
+                           f"(it keeps {len(sim.events)}); take shorter steps")
+    return sim.events[len(sim.events) - new:] if new else []
+
+
 def parse_duration(text: str) -> float:
     """Seconds from ``90``, ``90s``, ``15m``, ``12h`` or ``3d`` (ValueError otherwise)."""
     text = str(text).strip().lower()
@@ -68,24 +79,36 @@ def parse_duration(text: str) -> float:
     return x
 
 
-def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool = False):
+def run(scenario: Scenario, duration: float, step: float, out=None, quiet: bool = False,
+        events=None):
     """Propagate ``scenario`` for ``duration`` s, writing every ``step`` s to CSV ``out``
-    (if given), then print a summary unless ``quiet``. Returns the finished simulation."""
+    (if given) and every event logged to CSV ``events`` (if given), then print a
+    summary unless ``quiet``. Returns the finished simulation."""
     if not duration >= 0:
         raise ValueError(f"duration must be zero or more seconds, got {duration}")
     if not step > 0:
         raise ValueError(f"step must be a positive number of seconds, got {step}")
     sim = Simulation(scenario)
-    if out:
-        Path(out).parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "w", newline="", encoding="utf-8") if out else contextlib.nullcontext() as fh:
-        writer = csv.writer(fh) if fh else None
-        if writer:
+    for path in (out, events):
+        if path:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.ExitStack() as stack:
+        writer = log = None
+        if out:
+            writer = csv.writer(stack.enter_context(open(out, "w", newline="", encoding="utf-8")))
             writer.writerow(HEADER)
+        if events:
+            log = csv.writer(stack.enter_context(open(events, "w", newline="", encoding="utf-8")))
+            log.writerow(EVENT_HEADER)
         t_end = sim.t + duration
+        seen = 0
         while True:
             if writer:
                 writer.writerows(_rows(sim, sim.t, sim.y))
+            if log:
+                log.writerows([f"{e.t:.3f}", format_epoch(sim.clock.datetime(e.t)), e.kind, e.text]
+                              for e in new_events(sim, seen))
+                seen = sim.event_count
             if sim.t >= t_end - 1e-9:
                 break
             sim.advance(min(step, t_end - sim.t))
@@ -122,6 +145,7 @@ def main(argv=None):
     ap.add_argument("--duration", default="1d", help="e.g. 5400, 90m, 12h, 3d (default 1d)")
     ap.add_argument("--step", default="60", help="output interval (default 60 s)")
     ap.add_argument("--out", help="CSV file for the ephemeris")
+    ap.add_argument("--events", help="CSV file for the event log (t_s, utc, kind, text)")
     ap.add_argument("--propagator", choices=("cowell", "kepler", "j2mean"))
     args = ap.parse_args(argv)
     try:                                 # input the run cannot use: exit 2 saying which
@@ -138,9 +162,10 @@ def main(argv=None):
         ap.error(f"--step must be positive ({args.step})")
     if args.propagator:
         sc.propagator = args.propagator
-    run(sc, duration, step, args.out)
-    if args.out:
-        print(f"\nWrote {args.out}")
+    run(sc, duration, step, args.out, events=args.events)
+    for path in (args.out, args.events):
+        if path:
+            print(f"\nWrote {path}")
 
 
 if __name__ == "__main__":

@@ -62,7 +62,7 @@ faithfully: a NaN or Inf, an epoch without a time zone, a misspelt option name.
 
 | function | |
 |---|---|
-| `[T, report] = runScenario(scenario, ...)` | propagate a struct or file: `Duration` (`"12h"`, `"3d"` or seconds), `Step`, `Out` (keep the CSV), `Propagator` |
+| `[T, report, E] = runScenario(scenario, ...)` | propagate a struct or file: `Duration` (`"12h"`, `"3d"` or seconds), `Step`, `Out` (keep the CSV), `Events` (keep the event log), `Propagator`; `E` is the event log (`t_s`, `utc`, `kind`, `text`) |
 | `T = readRun(csv)` | read a CSV from `runScenario`, `python -m satflight.batch --out`, or the app's Scenarios > Export CSV |
 | `plotGroundTrack(T, ...)` | tracks on a coastline map; `Names`, `Scenario` (marks its stations) |
 | `plotAltitude(T, ...)` | altitude against time |
@@ -81,26 +81,51 @@ a live script to `scenarios/user/exports/` that runs the simulation again in
 MATLAB on its own, starting at the current moment or at the scenario's start
 (your choice). Open it in the Live Editor and press Run. Its sections:
 
-1. **Settings**: `duration`, `step`, and `crossCheck`.
+1. **Settings**: `duration`, `step`, `crossCheck`, and with launches
+   `planLaunches` (false: fly the simulator's plan; true: find the launch
+   window and search the pitch kick here, as the simulator does when a
+   scenario loads, e.g. after editing a launch).
 2. **Scenario**: epoch, force model, propagator, each satellite's exact ECI
    state and drag properties, the scheduled burns, ground stations.
-3. **Propagate**: `satflightRun` returns the same table as `readRun` above.
-4. **Plots**: ground track, altitude, elements, 3-D orbits.
-5. **Cross-check**: runs the Python simulator on the same scenario through
-   this toolkit and tabulates and plots the position difference. It needs
-   this folder and Python; set `crossCheck = false` to skip it elsewhere.
+3. **Launches**: per launch the vehicle's stages, the site, the target orbit
+   and timing, the simulator's plan and, for a vehicle exported in powered
+   flight, its flight state.
+4. **Run**: `[T, events, launches] = satflightRun(...)`. `T` is the same table
+   as `readRun` above, a payload from its pad and each spent stage from its
+   separation; `events` the event log, line for line as the simulator writes
+   it; `launches` per launch the outcome, insertion orbit, delta-v budget and
+   losses, max Q, and the ascent profile (`profile`, `marks`, and the plan's).
+5. **Plots**: ground track, altitude, elements, 3-D orbits, and each ascent
+   (`satflightPlotAscent`).
+6. **Cross-check**: runs the Python simulator on the same scenario through
+   this toolkit, tabulates and plots the position difference
+   (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
+   It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.
 
-The physics after the sections is a port of the simulator's own (forces J2-J4,
-C22, drag; every burn kind and timing; finite burns; re-entry at 80 km; the
-Kepler and J2-mean propagators). For numerical runs it uses `ode45` with the
-scenario's tolerances. `tests/ExportTest.m` exports several scenarios that
-between them use every feature, and requires every satellite still in orbit to
-match the simulator within 10 m. One difference is expected: a satellite that
-re-enters stops at the instant it drops below 80 km here, but at the end of the
-integrator step in the simulator, so the two frozen positions differ by that
-step's travel. Rocket ascents are not ported. Launches still on the pad are
-listed in the script and appear only in the cross-check, and a vehicle exported
-in powered flight continues as a free-flying object.
+The code after the sections is a port of the simulator's own: forces J2-J4,
+C22 and drag; every burn kind and timing; finite burns; the Kepler and J2-mean
+propagators; the rocket ascent step for step (fixed 1 s RK4, thrust varying
+with altitude, drag, throttling, vertical rise, pitch kick, gravity turn,
+closed-loop guidance, staging, fairing jettison, cutoff on the target energy,
+spent stages, circularization at apogee); the launch planner (launch windows
+into a RAAN or another satellite's plane, the pitch-kick search); the
+simulator's step boundaries (liftoffs, ascent syncs every second, burns); and
+its events (eclipses with the conical shadow, station AOS/LOS, close
+approaches, re-entry at 80 km, escape). For numerical runs it uses `ode45` with
+the scenario's tolerances.
+
+`tests/ExportTest.m` exports several scenarios that between them use every
+feature (`launch_day.json` from the start and mid-ascent among them), and
+requires the same objects at the same samples, the same statuses, positions
+within 10 m while in orbit, launch and maneuver events identical to the
+millisecond, and every other event within one integrator step. Two differences
+are expected. Events found at the end of a step (eclipses, passes, re-entries)
+fall at the end of each integrator's own steps; ode45 steps are not the
+simulator's. And an object coming down through the dense air (a sounding
+rocket's payload, a spent stage) can differ by tens of metres: the atmosphere
+table jumps slightly at its layer boundaries, and with drag near 100 m/s^2
+where each integrator's steps straddle a jump matters. Such objects are held
+to 50 m.
 
 ## Which Python
 

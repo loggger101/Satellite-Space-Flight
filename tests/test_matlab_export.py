@@ -34,19 +34,23 @@ def test_every_scenario_exports_its_exact_starting_state(path, tmp_path):
     assert lines[0].startswith("%[text] # ")
     assert lines[-5:] == ['%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
                           '%   data: {"layout":"inline"}', "%---"]
-    assert "function [T, events] = satflightRun(sim, duration, step)" in text
-    on_pad = {id(a.sat) for a in sim.ascents}
-    rows = [i for i, s in enumerate(sim.sats) if id(s) not in on_pad]
-    names = [r.strip('"').replace('""', '"') for r in block(text, "sim.names")]
-    assert names == [sim.sats[i].name for i in rows]
-    y0 = np.array([[float(x) for x in r.split()] for r in block(text, "sim.y0")])
-    assert np.array_equal(y0, sim.y[rows])                       # bit for bit
+    assert "function [T, events, launches] = satflightRun(sim, duration, step, opts)" in text
+    vehicles = {id(a.sat) for a in sim.ascents}
+    rows = [i for i, s in enumerate(sim.sats) if id(s) not in vehicles]
+    if rows:
+        names = [r.strip('"').replace('""', '"') for r in block(text, "sim.names")]
+        assert names == [sim.sats[i].name for i in rows]
+        y0 = np.array([[float(x) for x in r.split()] for r in block(text, "sim.y0")])
+        assert np.array_equal(y0, sim.y[rows])                   # bit for bit
     burns = block(text, "sim.maneuvers") if sim.maneuvers else []
     times = [float(re.match(r'satflightBurn\("[^"]*", "[^"]*", ([^,]+),', b).group(1))
              for b in burns]
     assert times == [m.t for m in sim.maneuvers]
+    plans = re.findall(r"^L.plan = satflightPlan\(([^,]+), ([^,]+), .*, ([^,]+)\);$", text, re.M)
+    assert [(float(t0), float(az), float(kick)) for t0, az, kick in plans] == [
+        (a.t0, a.res.azimuth, a.kick_deg) for a in sim.ascents]   # bit for bit
     for a in sim.ascents:
-        assert a.spec.name in text                               # listed as not reproduced
+        assert f'L = satflightLaunch("{a.spec.name}", satflightVehicle(' in text
 
 
 def test_current_moment_export_starts_where_the_app_is(tmp_path):
@@ -57,6 +61,25 @@ def test_current_moment_export_starts_where_the_app_is(tmp_path):
     assert "datetime(2026, 9, 29, 15, 0, 17.25" in text             # the fraction is kept
     y0 = np.array([[float(x) for x in r.split()] for r in block(text, "sim.y0")])
     assert np.array_equal(y0, sim.y)
+
+
+def test_launches_in_flight_carry_their_flight_state(tmp_path):
+    """Exported mid-ascent, a vehicle keeps its stage, propellant, steering and
+    the step grid of its ascent; one on its pad keeps the simulator's plan."""
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "launch_day.json"))
+    sim.advance(333.7)
+    flying = [a for a in sim.ascents if a.phase != "pad"]
+    assert [a.phase for a in flying] == ["guided", "turn"]
+    text = export_live_script(sim, tmp_path / "mid.m", "now", 600, 60).read_text(encoding="utf-8")
+    states = re.findall(r'^L.state = struct\("t", ([^,]+), "y", \[([^\]]+)\], "phase", "(\w+)", '
+                        r'"stage", (\d+)', text, re.M)
+    assert len(states) == 2
+    for a, (t, y, phase, stage) in zip(flying, states, strict=True):
+        assert float(t) == pytest.approx(a.t - sim.t, abs=1e-9)
+        assert np.array_equal([float(x) for x in y.split()], a.y)
+        assert phase == a.phase and int(stage) == a.k + 1
+    assert text.count("sim.launches(end + 1) = L;") == len(sim.ascents) == 5
+    assert "in powered flight at T+213.0 s (closed-loop guidance, stage 2)" in text
 
 
 def test_command_line(tmp_path, capsys):
@@ -95,6 +118,15 @@ def test_bad_settings_are_refused(kw, match, tmp_path):
     assert not (tmp_path / "x.m").exists()
 
 
+def test_launches_alone_can_be_exported(tmp_path):
+    from satflight.launch import LaunchSpec
+    sc = Scenario(name="Pad only", launches=[LaunchSpec(name="Solo", timing="delay", delay=60.0,
+                                                         kick=2.5)])
+    text = export_live_script(Simulation(sc), tmp_path / "solo.m", "start").read_text(
+        encoding="utf-8")
+    assert "sim.names = strings(0, 1);" in text and "planLaunches = false;" in text
+
+
 def test_nothing_in_orbit_is_refused(tmp_path):
     with pytest.raises(ValueError, match="nothing to export"):
         export_live_script(Simulation(Scenario(name="Empty")), tmp_path / "x.m", "start")
@@ -116,9 +148,19 @@ def test_runtime_constants_are_the_simulators():
     for k in ("J2", "J3", "J4", "C22", "S22"):
         assert const(k) == getattr(constants, k)
     assert const("SOI") == constants.SOI_EARTH
+    assert const("R_SUN") == constants.R_SUN and const("AU") == constants.AU
+    assert "C.DEG = pi / 180;" in src
+    from satflight import launch, simulation
     from satflight.maneuvers import G0
-    from satflight.simulation import REENTRY_ALT
-    assert const("G0") == G0 and const("REENTRY_ALT") == REENTRY_ALT
+    assert const("G0") == G0 and const("REENTRY_ALT") == simulation.REENTRY_ALT
+    assert const("ASCENT_SYNC") == simulation.ASCENT_SYNC
+    assert const("EVENT_DETAIL_LIMIT") == simulation.EVENT_DETAIL_LIMIT
+    assert const("ALL_PAIRS_LIMIT") == simulation.ALL_PAIRS_LIMIT
+    assert const("CONJUNCTION_KM") == Simulation(Scenario()).conjunction_km
+    for name in ("G0_M", "P_SCALE_H", "GUIDANCE_ALT", "H_POWERED", "H_COAST", "SAMPLE_DT",
+                 "FREEZE_TGO", "MIN_PERIGEE", "MAX_BURN"):
+        assert const(name.replace("G0_M", "G0M")) == getattr(launch, name), name
+    assert const("TOP_KM") == atmosphere.TOP_KM
     table = re.search(r"C\.ATM = \[(.*?)\];", src, re.S).group(1)
     atm = np.array([[float(x) for x in row.split()] for row in table.replace("...", "").split(";")])
     python_table = np.column_stack([atmosphere.H0, atmosphere.RHO0, atmosphere.SCALE_H])

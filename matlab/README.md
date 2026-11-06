@@ -90,7 +90,9 @@ sections:
    window and search the pitch kick here, as the simulator does when a
    scenario loads, e.g. after editing a launch).
 2. **Scenario**: epoch, force model, propagator, each satellite's exact ECI
-   state and drag properties, the scheduled burns, ground stations.
+   state (with a comment saying what orbit it is: perigee x apogee altitude
+   and inclination, sub-orbital or escaping) and drag properties, the
+   scheduled burns, ground stations.
 3. **Launches**: per launch the vehicle's stages, the site, the target orbit
    and timing, the simulator's plan and, for a vehicle exported in powered
    flight, its flight state.
@@ -99,8 +101,11 @@ sections:
    separation; `events` the event log, line for line as the simulator writes
    it; `launches` per launch the outcome, insertion orbit, delta-v budget and
    losses, max Q, and the ascent profile (`profile`, `marks`, and the plan's).
+   Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
+   at the end of the run) and `launchTable`.
 5. **Plots**: ground track, altitude, elements, 3-D orbits, and each ascent
-   (`satflightPlotAscent`).
+   (`satflightPlotAscent`), of the objects in `shown`: all of them up to 12,
+   past that those still in orbit first. Set `shown` to the names you want.
 6. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
@@ -122,7 +127,8 @@ the scenario's tolerances, starting, as the simulator's integrator does, with a
 `tests/ExportTest.m` exports several scenarios that between them use every
 feature (`launch_day.json` from the start and mid-ascent among them), and
 `tests/BundledExportTest.m` every scenario in `scenarios/`, from its start and
-an hour in. Both require the same objects at the same samples, the same
+an hour in. Every script they export must pass MATLAB's Code Analyzer with
+nothing to mark (`codeIssues`). Both require the same objects at the same samples, the same
 statuses, positions within 10 m while in orbit, launch and maneuver events
 identical to the millisecond, and every other event within one integrator step.
 Three differences are expected. Events found at the end of a step (eclipses,

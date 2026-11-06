@@ -2596,13 +2596,37 @@ end
 
 % --- plots ---------------------------------------------------------------------------------
 
+function names = satflightPlotNames(T)
+%SATFLIGHTPLOTNAMES The objects to plot when none are named: all of them up to 12, and
+%   past that the first 12 still in orbit at the end of the run, then the rest (in the
+%   order they appear in T). Says so when it leaves some out.
+present = unique(T.name, "stable")';
+last = T(T.t_s == max(T.t_s), :);
+inOrbit = ismember(present, last.name(last.status == "active"));
+ranked = [present(inOrbit), present(~inOrbit)];
+names = present(ismember(present, ranked(1:min(12, end))));
+if numel(names) < numel(present)
+    fprintf("Plotting %d of the %d objects (those still in orbit first); name them to choose.\n", ...
+        numel(names), numel(present));
+end
+end
+
+function styleAxes(ax)
+% twelve distinct line colours: no two of the (at most 12) objects plotted share one
+colororder(ax, orderedcolors("gem12"));
+end
+
+function c = lineColor(k)
+% the k-th of styleAxes' colours, for a line and its marker drawn with the same one
+% (a marker plotted without a colour would take the next colour in the order)
+colors = orderedcolors("gem12");
+c = colors(mod(k - 1, size(colors, 1)) + 1, :);
+end
+
 function names = plotNames(T, names)
 present = unique(T.name, "stable")';
 if isempty(names)
-    names = present(1:min(12, end));
-    if numel(present) > 12
-        fprintf("Plotting the first 12 of %d satellites; pass names to choose.\n", numel(present));
-    end
+    names = satflightPlotNames(T);
 else
     names = reshape(string(names), 1, []);
     unknown = setdiff(names, present);
@@ -2621,22 +2645,23 @@ end
 names = plotNames(T, names);
 fig = figure(Name="Ground track");
 ax = axes(fig);
+styleAxes(ax);
 hold(ax, "on");
 box(ax, "on");
 coast = satflightCoastline();
 plot(ax, coast(:, 1), coast(:, 2), Color=[0.55 0.55 0.55], LineWidth=0.5, ...
     HandleVisibility="off");
-for nm = names
-    rows = T(T.name == nm, :);
+for k = 1:numel(names)
+    rows = T(T.name == names(k), :);
     lon = rows.lon_deg;
     lat = rows.lat_deg;
     for j = flip(find(abs(diff(lon)) > 180))'
         lon = [lon(1:j); NaN; lon(j + 1:end)];
         lat = [lat(1:j); NaN; lat(j + 1:end)];
     end
-    h = plot(ax, lon, lat, LineWidth=1.2, DisplayName=nm);
-    plot(ax, rows.lon_deg(end), rows.lat_deg(end), "o", MarkerFaceColor=h.Color, ...
-        MarkerEdgeColor="k", HandleVisibility="off");
+    plot(ax, lon, lat, Color=lineColor(k), LineWidth=1.2, DisplayName=names(k));
+    plot(ax, rows.lon_deg(end), rows.lat_deg(end), "o", Color=lineColor(k), ...
+        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
 end
 for g = reshape(stations, 1, [])
     plot(ax, g.lon, g.lat, "^", MarkerSize=8, MarkerFaceColor="k", MarkerEdgeColor="w", ...
@@ -2648,7 +2673,7 @@ xticks(ax, -180:60:180); yticks(ax, -90:30:90); grid(ax, "on");
 xlabel(ax, "Longitude (deg)"); ylabel(ax, "Latitude (deg)");
 fmt = "yyyy-MM-dd HH:mm";
 title(ax, sprintf("Ground track, %s to %s UTC", string(T.utc(1), fmt), string(T.utc(end), fmt)));
-legend(ax, Location="southoutside", Orientation="horizontal", Interpreter="none");
+legend(ax, Location="eastoutside", Interpreter="none");
 end
 
 function fig = satflightPlotAltitude(T, names)
@@ -2659,14 +2684,16 @@ end
 names = plotNames(T, names);
 fig = figure(Name="Altitude");
 ax = axes(fig);
+styleAxes(ax);
 hold(ax, "on");
 for nm = names
     rows = T(T.name == nm, :);
     plot(ax, rows.t_s / 3600, rows.alt_km, LineWidth=1.2, DisplayName=nm);
 end
 grid(ax, "on");
+ax.YLim(1) = 0;          % the ground; nothing is plotted below it
 xlabel(ax, "Time since epoch (h)"); ylabel(ax, "Altitude (km)"); title(ax, "Altitude");
-legend(ax, Location="best", Interpreter="none");
+legend(ax, Location="eastoutside", Interpreter="none");
 end
 
 function fig = satflightPlotElements(T, names)
@@ -2683,6 +2710,7 @@ layout = tiledlayout(fig, 2, 3, TileSpacing="compact");
 title(layout, "Osculating elements");
 for p = 1:size(panels, 1)
     ax = nexttile(layout);
+    styleAxes(ax);
     hold(ax, "on");
     for nm = names
         rows = T(T.name == nm, :);
@@ -2693,9 +2721,13 @@ for p = 1:size(panels, 1)
         plot(ax, rows.t_s / 3600, y, LineWidth=1.1, DisplayName=nm);
     end
     grid(ax, "on");
+    if panels(p, 1) == "alt_km"
+        ax.YLim(1) = 0;      % the ground
+    end
     xlabel(ax, "Time (h)"); ylabel(ax, panels(p, 2));
 end
-legend(ax, Location="best", Interpreter="none");
+lg = legend(ax, Interpreter="none");
+lg.Layout.Tile = "east";     % beside the panels, not over one of them
 end
 
 function fig = satflightPlotOrbits(T, names)
@@ -2707,20 +2739,22 @@ C = satflightConstants();
 names = plotNames(T, names);
 fig = figure(Name="Orbits (ECI)");
 ax = axes(fig);
+styleAxes(ax);
 hold(ax, "on");
 [x, y, z] = sphere(48);
 surf(ax, C.RE * x, C.RE * y, C.RE * (1 - C.F) * z, FaceColor=[0.35 0.55 0.85], ...
     EdgeColor=[0.25 0.4 0.65], EdgeAlpha=0.3, FaceAlpha=0.6, HandleVisibility="off");
-for nm = names
-    rows = T(T.name == nm, :);
-    h = plot3(ax, rows.x_km, rows.y_km, rows.z_km, LineWidth=1.2, DisplayName=nm);
-    plot3(ax, rows.x_km(end), rows.y_km(end), rows.z_km(end), "o", MarkerFaceColor=h.Color, ...
-        MarkerEdgeColor="k", HandleVisibility="off");
+for k = 1:numel(names)
+    rows = T(T.name == names(k), :);
+    plot3(ax, rows.x_km, rows.y_km, rows.z_km, Color=lineColor(k), LineWidth=1.2, ...
+        DisplayName=names(k));
+    plot3(ax, rows.x_km(end), rows.y_km(end), rows.z_km(end), "o", Color=lineColor(k), ...
+        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
 end
 axis(ax, "equal"); grid(ax, "on"); view(ax, 35, 25);
 xlabel(ax, "x (km)"); ylabel(ax, "y (km)"); zlabel(ax, "z (km)");
 title(ax, "Trajectories, ECI");
-legend(ax, Location="best", Interpreter="none");
+legend(ax, Location="eastoutside", Interpreter="none");
 end
 
 function fig = satflightPlotAscent(launches, names)
@@ -2762,7 +2796,9 @@ for L = reshape(launches, 1, [])
         if k == 1
             plot(ax, L.marks.downrange_km, L.marks.alt_km, "o", MarkerFaceColor="k", ...
                 MarkerEdgeColor="w", HandleVisibility="off");
-            text(ax, L.marks.downrange_km, L.marks.alt_km, "  " + L.marks.label, FontSize=7);
+            [x, y, labels] = mergeMarks(L.marks.downrange_km, L.marks.alt_km, ...
+                string(L.marks.label), L.profile.downrange_km, L.profile.alt_km);
+            text(ax, x, y, "  " + labels, FontSize=7);
             legend(ax, Location="southeast");
         else
             for j = 1:height(L.marks)
@@ -2771,6 +2807,27 @@ for L = reshape(launches, 1, [])
         end
     end
 end
+end
+
+function [x, y, labels] = mergeMarks(x, y, labels, xs, ys)
+% marks (x, y) labelled with one text each, those that would print on top of one
+% another (within 4% of the profile's extent xs, ys of the first of a run of them)
+% joined into one text at that first mark: "S-II sep., S-IVB ign."
+spanX = max(max(xs) - min(xs), eps);
+spanY = max(max(ys) - min(ys), eps);
+keep = true(size(x));
+first = 1;
+for j = 2:numel(x)
+    if hypot((x(j) - x(first)) / spanX, (y(j) - y(first)) / spanY) < 0.04
+        labels(first) = labels(first) + ", " + labels(j);
+        keep(j) = false;
+    else
+        first = j;
+    end
+end
+x = x(keep);
+y = y(keep);
+labels = labels(keep);
 end
 
 % --- cross-check against the simulator ------------------------------------------------------
@@ -2812,6 +2869,7 @@ D = table('Size', [numel(names) 6], ...
     "status_matlab", "status_simulator"]);
 fig = figure(Name="MATLAB vs simulator");
 ax = axes(fig);
+styleAxes(ax);
 hold(ax, "on");
 for k = 1:numel(names)
     a = T(T.name == names(k), :);
@@ -2832,7 +2890,7 @@ ax.YScale = "log";
 grid(ax, "on");
 xlabel(ax, "Time since epoch (h)"); ylabel(ax, "Position difference (m)");
 title(ax, "This script vs the simulator");
-legend(ax, Location="best", Interpreter="none");
+legend(ax, Location="eastoutside", Interpreter="none");
 end
 
 function M = satflightCompareEvents(events, E)

@@ -2,6 +2,7 @@
 MATLAB port of the engine uses the simulator's constants, and unusable input is
 refused. (Running the scripts in MATLAB is matlab/tests/ExportTest.m.)"""
 
+import json
 import re
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from satflight.maneuvers import Maneuver
 from satflight.matlab_export import (
     CROSS_CHECK,
     RUNTIME,
+    _epoch_text,
+    drop_functions,
     export_live_script,
     main,
     matlab_name,
@@ -26,10 +29,23 @@ SCENARIOS = sorted((ROOT / "scenarios").glob("*.json"))
 
 
 def block(text: str, name: str) -> list[str]:
-    """Rows of the MATLAB matrix ``name = [ ... ];`` in ``text``."""
+    """Rows of the MATLAB matrix ``name = [ ... ];`` in ``text`` (comments cut off),
+    or the one value of ``name = value;``."""
     m = re.search(rf"^{re.escape(name)} = \[\n(.*?)\n\];", text, re.S | re.M)
+    if not m:
+        m = re.search(rf"^{re.escape(name)} = ([^\[\n].*);$", text, re.M)
     assert m, f"no {name} block"
-    return [r.strip() for r in m.group(1).split("\n")]
+    return [r.split("   % ")[0].strip() for r in m.group(1).split("\n")]
+
+
+def matlab_strings(lines: list[str]) -> list[str]:
+    """The texts of MATLAB string literals, one per line."""
+    out = []
+    for line in lines:
+        m = re.fullmatch(r'\s*"((?:[^"]|"")*)"', line)
+        assert m, line
+        out.append(m.group(1).replace('""', '"'))
+    return out
 
 
 @pytest.mark.parametrize("path", SCENARIOS, ids=lambda p: p.stem)
@@ -58,6 +74,85 @@ def test_every_scenario_exports_its_exact_starting_state(path, tmp_path):
         (a.t0, a.res.azimuth, a.kick_deg) for a in sim.ascents]   # bit for bit
     for a in sim.ascents:
         assert f'L = satflightLaunch("{a.spec.name}", satflightVehicle(' in text
+
+
+def test_the_scenario_json_breaks_between_items_and_joins_back_exactly(tmp_path):
+    """The cross-check's copy of the scenario is cut into lines after commas (not
+    inside a name or a number) and reads back as exactly what the simulator loads."""
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "launch_day.json"))
+    sim.advance(333.7)
+    text = export_live_script(sim, tmp_path / "j.m", "now", 60, 60).read_text(encoding="utf-8")
+    m = re.search(r"^text = strjoin\(\[\n(.*?)\n\], \"\"\);", text, re.S | re.M)
+    pieces = matlab_strings(m.group(1).split("\n"))
+    snap = sim.snapshot_scenario(sim.scenario.name)
+    data = snap.to_dict() | {"epoch": _epoch_text(snap.epoch)}
+    assert "".join(pieces) == json.dumps(data, separators=(",", ":"))
+    assert all(p.endswith(",") for p in pieces[:-1])
+    assert max(len(p) for p in pieces) < 400 and len(pieces) > 20
+
+
+def test_coastlines_are_packed_and_unchanged(tmp_path):
+    """Ten points to a line instead of one: the same points, in the same order."""
+    from satflight.matlab_export import COASTLINES
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "rendezvous.json"))
+    text = export_live_script(sim, tmp_path / "c.m", "start", 60, 60).read_text(encoding="utf-8")
+    m = re.search(r"^c = \[ \.\.\.\n(.*?)\n    \];\nc = reshape\(c, 2, \[\]\)\.';$", text,
+                  re.S | re.M)
+    rows = m.group(1).split("\n")
+    assert all(r.endswith(" ...") for r in rows)
+    got = np.array([float(x) for r in rows for x in r[:-4].split()]).reshape(-1, 2)
+    want = []
+    for line in json.loads(COASTLINES.read_text(encoding="utf-8")):
+        kept = [line[0]]
+        for p in line[1:-1]:
+            if np.hypot(p[0] - kept[-1][0], p[1] - kept[-1][1]) >= 0.5:
+                kept.append(p)
+        want += [[round(p[0], 1), round(p[1], 1)] for p in kept + [line[-1]]] + [[np.nan] * 2]
+    np.testing.assert_array_equal(got, np.array(want))
+    assert len(rows) < len(want) / 9
+
+
+def test_every_satellite_row_says_what_orbit_it_is_on(tmp_path):
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "launches_and_arcs.json"))
+    text = export_live_script(sim, tmp_path / "o.m", "start", 60, 60).read_text(encoding="utf-8")
+    m = re.search(r"^sim\.y0 = \[\n(.*?)\n\];", text, re.S | re.M)
+    notes = [r.split("   % ")[1] for r in m.group(1).split("\n")]
+    assert notes[0].startswith("Hop 15 deg: sub-orbital, apogee ")
+    assert re.fullmatch(r"Insertion: [\d,]+ x [\d,]+ km, i \d+\.\d deg", notes[3]), notes[3]
+    assert re.fullmatch(r"Escape: escaping \(e \d\.\d\d\), i \d+\.\d deg", notes[4]), notes[4]
+    one = Simulation(Scenario.load(ROOT / "scenarios" / "launch_day.json"))
+    text = export_live_script(one, tmp_path / "one.m", "start", 60, 60).read_text(encoding="utf-8")
+    assert 'sim.names = "ISS";' in text                     # one name: no brackets
+    assert 'satflightVehicle("Sounding rocket", "Motor", stages' in text
+
+
+@pytest.mark.parametrize("scenario, gone", [
+    ("hohmann_to_geo", {"satflightNoBurns", "satflightPlan", "satflightPlotAscent",
+                        "mergeMarks"}),
+    ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks"}),
+    ("launch_day", set())])
+def test_a_script_holds_only_the_helpers_it_calls(scenario, gone, tmp_path):
+    """Helpers the sections never call are left out (MATLAB marks an unused local
+    function); every function is defined once, and the rest are all there."""
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / f"{scenario}.json"))
+    text = export_live_script(sim, tmp_path / "h.m", "start", 60, 60).read_text(encoding="utf-8")
+    defined = re.findall(r"^function (?:.*= *)?(\w+)\(", text, re.M)
+    assert len(defined) == len(set(defined))
+    everything = set(re.findall(r"^function (?:.*= *)?(\w+)\(", RUNTIME.read_text(
+        encoding="utf-8"), re.M)) | {"scenarioJson", "satflightCoastline"}
+    assert everything - set(defined) == gone
+
+
+def test_dropping_a_function_needs_it_whole(tmp_path):
+    lines = ["function a = one(x)", "a = x;", "end", "", "function b = two(x)",
+             "for k = 1:2", "end", "b = x;", "end", "", "% --- tail", "function c = three()",
+             "c = 1;"]
+    assert drop_functions(lines, ["two"]) == lines[:4] + lines[10:]
+    assert drop_functions(lines, ["one"])[0] == "function b = two(x)"
+    with pytest.raises(RuntimeError, match="expected one function four"):
+        drop_functions(lines, ["four"])
+    with pytest.raises(RuntimeError, match="does not end in 'end'"):
+        drop_functions(lines, ["three"])
 
 
 def test_current_moment_export_starts_where_the_app_is(tmp_path):

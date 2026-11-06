@@ -42,6 +42,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .batch import parse_duration
+from .constants import R_EARTH
+from .elements import rv2coe
 from .launch import PHASE_LABELS
 from .scenario import Scenario
 from .simulation import Simulation
@@ -68,6 +70,30 @@ def runtime_lines(compare: bool) -> list[str]:
         raise RuntimeError(f"{RUNTIME.name}: expected one line starting {CROSS_CHECK!r}, "
                            f"found {len(at)}")
     return lines[:at[0]]
+
+
+def drop_functions(lines: list[str], names) -> list[str]:
+    """``lines`` (of the runtime) without the local functions ``names``: from each
+    one's ``function`` line to the line before the next function or section
+    divider. RuntimeError unless each is there exactly once and ends in ``end``."""
+    out = list(lines)
+    for name in names:
+        head = re.compile(rf"function (?:.*= *)?{re.escape(name)}\(")
+        at = [k for k, line in enumerate(out) if head.match(line)]
+        if len(at) != 1:
+            raise RuntimeError(f"{RUNTIME.name}: expected one function {name}, found {len(at)}")
+        a = at[0]
+        b = next((k for k in range(a + 1, len(out))
+                  if out[k].startswith(("function ", "% --- "))), len(out))
+        while not out[b - 1].strip():
+            b -= 1
+        if out[b - 1] != "end":
+            raise RuntimeError(f"{RUNTIME.name}: function {name} does not end in 'end' "
+                               f"before the next function")
+        if b < len(out) and not out[b].strip():
+            b += 1                                  # its blank line
+        del out[a:b]
+    return out
 
 
 def matlab_name(text: str) -> str:
@@ -107,23 +133,43 @@ def _text(markdown: str) -> list[str]:
     return [f"%[text] {line}" if line else "%[text]" for line in markdown.split("\n")]
 
 
-def _chunks(text: str, size: int = 150) -> list[str]:
-    return [text[k:k + size] for k in range(0, len(text), size)] or [""]
+def _chunks(text: str, size: int = 100) -> list[str]:
+    """``text`` (compact JSON) in pieces of about ``size`` characters that join back
+    into it exactly, each ending after a comma where there is one to end on, so a
+    piece breaks between two items rather than inside a name or a number."""
+    out = []
+    while len(text) > size:
+        cut = text.rfind(",", 0, size) + 1 or text.find(",", size) + 1 or len(text)
+        out.append(text[:cut])
+        text = text[cut:]
+    return out + [text] if text or not out else out
 
 
-def _coastline_rows(min_step: float = 0.5) -> list[str]:
+def _coastline_rows(min_step: float = 0.5, per_row: int = 10) -> list[str]:
     """``assets/coastlines.json`` thinned to points at least ``min_step`` degrees
-    apart, as rows of a MATLAB matrix with NaN between polylines."""
-    rows = []
+    apart, as lines of a MATLAB row vector (``per_row`` points to a line, NaN NaN
+    between polylines) of alternating longitude and latitude."""
+    pairs = []
     for line in json.loads(COASTLINES.read_text(encoding="utf-8")):
         kept = [line[0]]
         for p in line[1:-1]:
             if math.dist(p, kept[-1]) >= min_step:
                 kept.append(p)
         kept.append(line[-1])
-        rows += [f"{p[0]:.1f} {p[1]:.1f}" for p in kept]
-        rows.append("NaN NaN")
-    return rows
+        pairs += [f"{p[0]:.1f} {p[1]:.1f}" for p in kept] + ["NaN NaN"]
+    return ["  ".join(pairs[k:k + per_row]) for k in range(0, len(pairs), per_row)]
+
+
+def _orbit_note(y) -> str:
+    """A few words on the orbit of state ``y`` (km, km/s) for a comment."""
+    el = rv2coe(y[:3], y[3:])
+    inc = math.degrees(el.i)
+    if not el.e < 1.0:
+        return f"escaping (e {el.e:.2f}), i {inc:.1f} deg"
+    hp, ha = el.rp - R_EARTH, el.ra - R_EARTH
+    if hp < 0:
+        return f"sub-orbital, apogee {ha:,.0f} km"
+    return f"{hp:,.0f} x {ha:,.0f} km, i {inc:.1f} deg"
 
 
 def _epoch_text(epoch: datetime) -> str:
@@ -213,7 +259,8 @@ def _launch(a) -> list[str]:
     out += [f"    {_num(s.thrust)} {_num(s.isp_vac)} {_num(s.isp_sl)} {_num(s.propellant)} "
             f"{_num(s.dry)}   % {s.name}" for s in v.stages] + ["];"]
     names = ", ".join(_str(s.name) for s in v.stages)
-    out += [f"L = satflightLaunch({_str(spec.name)}, satflightVehicle({_str(v.name)}, [{names}], "
+    names = names if len(v.stages) == 1 else f"[{names}]"
+    out += [f"L = satflightLaunch({_str(spec.name)}, satflightVehicle({_str(v.name)}, {names}, "
             f"stages, {_num(v.fairing)}, {_num(v.fairing_alt)}, {_num(v.diameter)}, {_num(v.cd)}, "
             f"{_num(v.max_g)}, {_num(v.stage_coast)}));   % fairing kg, jettison km, "
             "diameter m, Cd, g limit (0 none), s between stages",
@@ -333,9 +380,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     if rows:
         out += _text("Satellites at the epoch: ECI position (km) and velocity (km/s), mass (kg), "
                      "drag area (m^2) and drag coefficient.")
-        out += ["sim.names = ["] + [f"    {_str(s.name)}" for _, s in rows] + ["];"]
-        out += ["% x, y, z (km), vx, vy, vz (km/s)", "sim.y0 = ["]
-        out += ["    " + " ".join(_num(x) for x in src.y[i]) for i, _ in rows] + ["];"]
+        if len(rows) == 1:
+            out += [f"sim.names = {_str(rows[0][1].name)};"]
+        else:
+            out += ["sim.names = ["] + [f"    {_str(s.name)}" for _, s in rows] + ["];"]
+        out += ["% x, y, z (km), vx, vy, vz (km/s)   % the orbit: perigee x apogee altitude, "
+                "inclination", "sim.y0 = ["]
+        out += ["    " + " ".join(_num(x) for x in src.y[i])
+                + f"   % {s.name}: {_orbit_note(src.y[i])}" for i, s in rows] + ["];"]
         out += ["% mass (kg), area (m^2), Cd", "props = ["]
         out += [f"    {_num(s.mass)} {_num(s.area)} {_num(s.cd)}" for _, s in rows] + ["];"]
     else:
@@ -387,26 +439,35 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                      + "; ".join(scrubbed))
     out += ["%%"]
 
-    out += _text("## Run\nOne row per object per sample, in the columns of the simulator's "
-                 "ephemeris CSV (`satflight.readRun` reads the same); the event log, line for "
-                 "line as the simulator writes it (key events shown)"
-                 + ("; and per launch its outcome, insertion orbit, delta-v budget and ascent "
-                    "profile." if launches else "."))
+    out += _text("## Run\n`T` holds one row per object per sample, in the columns of the "
+                 "simulator's ephemeris CSV (`satflight.readRun` reads the same), and `events` "
+                 "the event log, line for line as the simulator writes it"
+                 + ("; `launches` per launch its outcome, insertion orbit, delta-v budget and "
+                    "ascent profile." if launches else ".")
+                 + "\nShown: the key events, where each object is at the end of the run"
+                 + (", and the launches." if launches else "."))
     plan = ", PlanLaunches=planLaunches" if launches else ""
     out += [f"[T, events, launches] = satflightRun(sim, duration, step{plan});",
-            'disp(events(ismember(events.kind, ["launch", "maneuver", "alert", "warn"]), :))',
-            "head(T, max(1, numel(sim.names)))"]
+            'keyEvents = events(ismember(events.kind, ["launch", "maneuver", "alert", "warn"]), :);',
+            "display(keyEvents)",
+            'atEnd = T(T.t_s == max(T.t_s), ["name", "status", "alt_km", "lat_deg", "lon_deg", '
+            '"a_km", "e", "i_deg"]);',
+            "display(atEnd)"]
     if launches:
-        out += ['struct2table(rmfield(launches, ["insertion", "losses_kms", "profile", "marks", '
-                '"planned", "plannedMarks"]), AsArray=true)']
+        out += ['launchTable = struct2table(rmfield(launches, ["insertion", "losses_kms", '
+                '"profile", "marks", "planned", "plannedMarks"]), AsArray=true);',
+                "display(launchTable)"]
     out += ["%%"]
     out += _text("## Plots\nGround track, altitude, orbital elements and the orbits in 3-D"
                  + (", and each launch's ascent" if launches else "")
-                 + ". Each takes a list of names, e.g. `satflightPlotAltitude(T, \"ISS\")`.")
-    out += ["satflightPlotGroundTrack(T, sim.stations);",
-            "satflightPlotAltitude(T);",
-            "satflightPlotElements(T);",
-            "satflightPlotOrbits(T);"]
+                 + ". `shown` is the objects they draw (at most 12, those still in orbit "
+                   "first); set it to the names you want, e.g. `shown = [\"ISS\", "
+                   "\"Hubble\"];`.")
+    out += ["shown = satflightPlotNames(T);",
+            "satflightPlotGroundTrack(T, sim.stations, shown);",
+            "satflightPlotAltitude(T, shown);",
+            "satflightPlotElements(T, shown);",
+            "satflightPlotOrbits(T, shown);"]
     if launches:
         out += ["satflightPlotAscent(launches);"]
     if compare:
@@ -420,9 +481,11 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                 "if crossCheck",
                 "    [P, E] = satflightRunSimulator(simulatorFolder, scenarioJson(), duration, "
                 "step);",
-                "    differences = satflightCompare(T, P)",
+                "    differences = satflightCompare(T, P);",
+                "    display(differences)",
                 "    eventDifferences = satflightCompareEvents(events, E);",
-                "    eventDifferences(~eventDifferences.same_text, :)",
+                "    eventsThatDiffer = eventDifferences(~eventDifferences.same_text, :);",
+                "    display(eventsThatDiffer)",
                 "end"]
     out += [""]
 
@@ -433,9 +496,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += [f"    {_str(c)}" for c in _chunks(json.dumps(data, separators=(",", ":")))]
         out += ['], "");', "end", ""]
     out += ["function c = satflightCoastline()",
-            "% coastlines (Natural Earth, public domain), thinned to 0.5 degree",
-            "c = ["] + [f"    {r}" for r in _coastline_rows()] + ["];", "end", ""]
-    out += runtime_lines(compare)
+            "% coastlines (Natural Earth, public domain), thinned to 0.5 degree: longitude,",
+            "% latitude pairs (deg), NaN NaN between coastlines",
+            "c = [ ..."] + [f"    {r} ..." for r in _coastline_rows()] + [
+            "    ];", "c = reshape(c, 2, []).';", "end", ""]
+    # the helpers this script's sections do not call: MATLAB would flag them as unused
+    unused = (["satflightNoBurns"] if maneuvers else []) + (
+        [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"])
+    out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]
     return out

@@ -82,6 +82,42 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
                 tc.verifyEmpty(low, script + ": " + formattedDisplayText(low));
                 tc.verifyTrue(issorted(P.aos), script + ": passes in the order they happen");
             end
+            % the coverage: a row per station, from its passes
+            if ~isempty(out.sim.stations)
+                V = out.coverage;
+                tc.verifyEqual(V.station, reshape([out.sim.stations.name], [], 1), script);
+                runMin = minutes(max(out.T.utc) - min(out.T.utc));
+                for k = 1:height(V)
+                    mine = out.passes(out.passes.station == V.station(k), :);
+                    tc.verifyEqual(V.passes(k), height(mine), script);
+                    tc.verifyEqual(V.objects(k), numel(unique(mine.name)), script);
+                    tc.verifyLessThanOrEqual(V.in_view_min(k), sum(mine.minutes) + 1e-9);
+                    tc.verifyLessThanOrEqual(V.in_view_min(k) + V.longest_gap_min(k), ...
+                        runMin + 1e-9, script + ": " + V.station(k));
+                end
+            end
+            % the beta angles: an object enters the shadow only where its beta is inside
+            % its limit (a degree's allowance for the penumbra and the samples between),
+            % and one outside it all the run has no eclipse
+            B = out.betaAngles;
+            tc.verifyTrue(all(abs(B.beta_deg) <= 90), script);
+            into = ev(endsWith(ev.text, " entered Earth's shadow"), :);
+            for k = 1:height(into)
+                nm = erase(into.text(k), " entered Earth's shadow");
+                mine = B(B.name == nm, :);
+                [~, j] = min(abs(mine.t_s - into.t_s(k)));
+                if ~isempty(j) && ~isnan(mine.limit_deg(j))
+                    tc.verifyLessThanOrEqual(abs(mine.beta_deg(j)), mine.limit_deg(j) + 1, ...
+                        script + ": " + into.text(k) + " at " + into.t_s(k) + " s");
+                end
+            end
+            for nm = unique(B.name)'
+                mine = B(B.name == nm, :);
+                if ~isempty(mine) && all(abs(mine.beta_deg) > mine.limit_deg + 1)
+                    tc.verifyEqual(out.eclipses.eclipses(out.eclipses.name == nm), 0, ...
+                        script + ": " + nm + " is in sunlight all round");
+                end
+            end
             % the sky plot: there when a pass of an object plotted has a sample to draw
             drawn = isfield(out, "passes") && any(ismember(out.passes.name, out.shown) & ...
                 ~isnan(out.passes.max_el_deg));
@@ -217,7 +253,7 @@ run(file);
 % A MATLAB-only script has no P, differences or eventDifferences.
 out = struct();
 for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim", ...
-        "passes", "eclipses", "maneuvers", "deltaV", "approaches", "drift", "shown"]
+        "passes", "eclipses", "maneuvers", "deltaV", "approaches", "drift", "shown", "coverage", "betaAngles"]
     if exist(name, "var") == 1
         out.(name) = eval(name);
     end

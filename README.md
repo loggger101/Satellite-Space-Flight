@@ -316,11 +316,13 @@ circularization), the launch planner, and the event log (burns, eclipses,
 station passes, close approaches, re-entries). It runs and plots the results
 and each ascent, tabulates the station passes and each object's time in the
 Earth's shadow on a timeline, draws each station's sky with the passes across
-it, lists the burns carried out with their delta-v and the close approaches,
+it and sums up its coverage, plots each orbit's beta angle to the Sun, lists
+the burns carried out with their delta-v and the close approaches,
 measures each orbit's decay and the drift of its node and perigee beside J2
 theory, and plays the run back as an animation (ground track with
 the night side beside the orbits around the turning Earth; in the Live Editor
-with playback controls, and it can also be saved as a GIF). You also choose
+with playback controls, and it can also be saved as a GIF), and can save the
+run and its tables to a MAT-file. You also choose
 what the script holds:
 
 - **With a cross-check** (the default): a last section runs the Python

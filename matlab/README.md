@@ -89,7 +89,7 @@ sections:
    `planLaunches` (false: fly the simulator's plan; true: find the launch
    window and search the pitch kick here, as the simulator does when a
    scenario loads, e.g. after editing a launch), `animate` and
-   `animationFile` (see Animation).
+   `animationFile` (see Animation), `resultsFile` (see Save).
 2. **Scenario**: epoch, force model, propagator, each satellite's exact ECI
    state (with a comment saying what orbit it is: perigee x apogee altitude
    and inclination, sub-orbital or escaping) and drag properties, the
@@ -115,11 +115,16 @@ sections:
    you want.
 6. **Passes and eclipses**, from the event log: `passes` (with ground
    stations) has each station pass in the order they happen, its AOS and LOS,
-   minutes in view and the highest elevation at the samples in between; `eclipses` each object's
-   number of eclipses, minutes in shadow, longest, and share of its time in
-   the run; a timeline draws both for the objects in `shown`, and a sky plot
-   (`satflightPlotSky`) each station's sky with their passes across it,
-   azimuth from north and elevation from the rim to overhead. A pass or
+   minutes in view and the highest elevation at the samples in between, and
+   `coverage` each station's passes, objects seen, minutes with at least one
+   in view (and their share of the run) and the longest wait with none;
+   `eclipses` each object's number of eclipses, minutes in shadow, longest,
+   and share of its time in the run; a timeline draws both for the objects in
+   `shown`, and a sky plot (`satflightPlotSky`) each station's sky with their
+   passes across it, azimuth from north and elevation from the rim to
+   overhead. `betaAngles` has each object's beta angle (the Sun's angle to its
+   orbit's plane) at its samples in orbit, with the limit beyond which a
+   near-circular orbit never enters the shadow, and a plot draws them. A pass or
    eclipse under way when the run (or the object) ends has LOS or stop `NaT`.
    The simulator logs these only while a run has at most 40 objects; past
    that the section says so.
@@ -144,7 +149,10 @@ sections:
    frames draw if that is slower; a `matlab -batch` run draws only the last
    frame. `animationFile = "run.gif"` also writes every frame to an animated
    GIF that plays in the same time; drawing and writing each frame takes a while.
-10. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
+10. **Save**: with `resultsFile = "run.mat"`, saves `sim`, `T`, `events` and
+   every table the sections before made to that MAT-file (`load("run.mat")`
+   brings them back).
+11. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
    It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.
@@ -170,8 +178,10 @@ nothing to mark (`codeIssues`), and its passes, eclipses, maneuvers and close
 approaches must match its event log line for line, with the highest elevation
 of every pass of 10 minutes or more above the station's mask (the elevation
 the simulator measures); its node and perigee drifts must be within 10% (or
-0.05 deg/day) of J2 theory, and the sky plot drawn exactly when a plotted pass
-has a sample. Both require the same objects at the same samples, the same
+0.05 deg/day) of J2 theory, the sky plot drawn exactly when a plotted pass
+has a sample, each station's coverage agree with its passes, and every eclipse
+begin where the object's beta angle is within its limit (one beyond it all the
+run has none). Both require the same objects at the same samples, the same
 statuses, positions within 10 m while in orbit, launch and maneuver events
 identical to the millisecond, and every other event within one integrator step.
 Three differences are expected. Events found at the end of a step (eclipses,

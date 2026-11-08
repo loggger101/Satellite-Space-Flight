@@ -138,14 +138,14 @@ def lone_satellite() -> Scenario:
 @pytest.mark.parametrize("scenario, compare, sections", [
     ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Plots",
                           "Passes and eclipses", "Maneuvers and close approaches", "Orbit evolution",
-                          "Animation", "Cross-check against the simulator"]),
+                          "Animation", "Save", "Cross-check against the simulator"]),
     ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
                                "Maneuvers and close approaches", "Orbit evolution",
-                               "Animation"]),
+                               "Animation", "Save"]),
     ("default", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
-                        "Close approaches", "Orbit evolution", "Animation"]),
+                        "Close approaches", "Orbit evolution", "Animation", "Save"]),
     (None, False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
-                   "Orbit evolution", "Animation"])])
+                   "Orbit evolution", "Animation", "Save"])])
 def test_sections_in_order(scenario, compare, sections, tmp_path):
     """Every section starts a new %% cell; the passes table only with stations, the
     maneuvers with maneuvers or launches (which schedule circularizations), the close
@@ -169,6 +169,25 @@ def test_sections_in_order(scenario, compare, sections, tmp_path):
     assert re.search(r'^animate = true;   % .+\nanimationFile = "";   % ', text, re.M)
     assert ("if animate\n    satflightAnimate(T, events, sim.stations, shown, "
             "File=animationFile);\nend") in text
+    assert ("coverage = satflightCoverage(T, passes, sim.stations);" in text) == bool(
+        sim.stations)
+    assert "betaAngles = satflightBeta(T);\nsatflightPlotBeta(betaAngles, shown);" in text
+    assert re.search(r'^resultsFile = "";   % ', text, re.M)
+    # the Save section saves exactly the variables the sections before it make, each
+    # named once, and says which in its text
+    save = re.search(r'if resultsFile ~= ""\n    save\(resultsFile, \.\.\.\n((?:        .+\n)+)',
+                     text).group(1)
+    saved = re.findall(r'"(\w+)"', save)
+    assert len(saved) == len(set(saved))
+    before = text[:text.index("## Save")]
+    made = {name for left in re.findall(r"^(\w+|\[[\w, ]+\]) = ", before, re.M)
+            for name in re.findall(r"\w+", left)}
+    assert set(saved) <= made
+    assert {"T", "events", "eclipses", "betaAngles", "drift"} <= set(saved)
+    assert ("passes" in saved) == ("coverage" in saved) == bool(sim.stations)
+    assert ("launchTable" in saved) == bool(sim.ascents)
+    assert "".join(f"`{v}`" for v in saved) == "".join(re.findall(
+        r"`\w+`", text[text.index("brings them back): "):text.index("if resultsFile")]))
 
 
 def test_the_introduction_counts_in_words(tmp_path):
@@ -187,7 +206,8 @@ def test_the_introduction_counts_in_words(tmp_path):
 
 @pytest.mark.parametrize("scenario, gone", [
     ("hohmann_to_geo", {"satflightNoBurns", "satflightPlan", "satflightPlotAscent",
-                        "mergeMarks", "satflightPasses", "elevationDeg", "satflightPlotSky"}),
+                        "mergeMarks", "satflightPasses", "elevationDeg", "satflightPlotSky",
+                        "satflightCoverage"}),
     # the maneuvers stay without burns: the orbit evolution reads them
     ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks"}),
     ("launch_day", set())])

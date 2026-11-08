@@ -2648,6 +2648,8 @@ ax = axes(fig);
 styleAxes(ax);
 hold(ax, "on");
 box(ax, "on");
+[night, sun] = drawNight(ax);       % as at the end markers
+moveNight(night, sun, julianAt(T, max(T.t_s)), satflightConstants());
 coast = satflightCoastline();
 plot(ax, coast(:, 1), coast(:, 2), Color=[0.55 0.55 0.55], LineWidth=0.5, ...
     HandleVisibility="off");
@@ -2847,6 +2849,36 @@ plot3(up * cos(lat) .* cos(lon), up * cos(lat) .* sin(lon), up * (1 - C.F) * sin
     Parent=earth, Color=[0.2 0.3 0.45], LineWidth=0.6, HandleVisibility="off");
 end
 
+function [night, sun] = drawNight(ax)
+% the night side of a longitude-latitude map and the point where the Sun is overhead;
+% moveNight places them. Call it first: the rest of the map is drawn over the night
+% side. Its colour is the axes' background tinted blue, so it reads on a light or a
+% dark theme without transparency (which would make each animation frame slow to draw).
+tint = 0.75 * ax.Color + 0.25 * [0.35 0.45 0.8];
+night = patch(ax, NaN, NaN, tint, EdgeColor="none", DisplayName="night side");
+sun = plot(ax, NaN, NaN, "p", Color=[0.55 0.35 0], MarkerSize=13, ...
+    MarkerFaceColor=[1 0.8 0.1], MarkerEdgeColor=[0.55 0.35 0], DisplayName="Sun overhead");
+end
+
+function moveNight(night, sun, jd, C)
+% the night side and the subsolar point at Julian date jd, in the map's longitudes (as
+% T's lon_deg: the Earth-fixed frame turned by gmst)
+rs = sunPosition(jd, C);
+theta = gmst(jd);
+x = cos(theta) * rs(1) + sin(theta) * rs(2);
+y = -sin(theta) * rs(1) + cos(theta) * rs(2);
+sunLon = atan2d(y, x);
+sunLat = atan2d(rs(3), hypot(x, y));
+% the terminator, where the Sun is on the horizon: tan(lat) = -cos(lon - sunLon) / tan(sunLat);
+% the night side holds the pole away from the Sun (the south pole when sunLat is 0)
+lat0 = sunLat + (sunLat == 0) * 1e-9;
+lon = (-180:2:180)';
+lat = atand(-cosd(lon - sunLon) / tand(lat0));
+pole = -90 * sign(lat0);
+set(night, XData=[lon; 180; -180], YData=[lat; pole; pole]);
+set(sun, XData=sunLon, YData=sunLat);
+end
+
 function jd = julianAt(T, t)
 % the Julian date t seconds into the run of T (the export's epoch is T's t = 0)
 k = find(T.t_s == T.t_s(1), 1);
@@ -2941,6 +2973,7 @@ for k = 1:height(S)
         P.max_el_deg(k) = max(elevationDeg(rows, g, C));
     end
 end
+P = sortrows(P, ["aos", "station", "name"]);     % in the order they happen
 end
 
 function el = elevationDeg(rows, g, C)
@@ -2981,6 +3014,69 @@ for k = 1:numel(names)
     if last > first
         S.shadow_pct(k) = 100 * S.shadow_min(k) * 60 / (last - first);
     end
+end
+end
+
+function M = satflightManeuvers(events)
+%SATFLIGHTMANEUVERS The maneuvers carried out in the run, from the event log: the
+%   object, when (UTC), what (the maneuver's label, or "finite burn" at a finite
+%   burn's burnout) and the delta-v (m/s). Skipped and cancelled ones are not in it
+%   (they are in the event log, as warnings).
+E = events(events.kind == "maneuver", :);
+% the lines that carry a delta-v: name, label (the first) and delta-v; the others
+% (scheduled, ignition) carry none
+executed = "^(.+): executed (.+) - dV ([\d.]+) m/s$";
+finite = ["^(.+): burnout - dV ([\d.]+) m/s, mass [\d.]+ kg$", "finite burn"
+    "^(.+): finite burn applied impulsively \(([\d.]+) m/s\) - switch to Cowell to " + ...
+    "integrate thrust$", "finite burn, applied at once"];
+other = "^Scheduled .+ for .+|^.+: ignition - [\d.]+ N for [\d.]+ s$";
+n = height(E);
+[name, what] = deal(strings(n, 1));
+dv = nan(n, 1);
+for k = 1:n
+    entry = E.text(k);
+    tok = regexp(entry, executed, "tokens", "once");
+    if ~isempty(tok)
+        [name(k), what(k), dv(k)] = deal(tok(1), tok(2), double(tok(3)));
+        continue
+    end
+    for j = 1:size(finite, 1)
+        tok = regexp(entry, finite(j, 1), "tokens", "once");
+        if ~isempty(tok)
+            [name(k), what(k), dv(k)] = deal(tok(1), finite(j, 2), double(tok(2)));
+            break
+        end
+    end
+    if isnan(dv(k)) && isempty(regexp(entry, other, "once"))
+        error("satflight:events", "Not a maneuver line of the event log: %s", entry);
+    end
+end
+carried = ~isnan(dv);
+% (row, column) indexing: a column of one row indexed by a scalar false would give 0x0,
+% which groupsummary rejects as a grouping variable
+M = table(name(carried, 1), E.utc(carried, 1), what(carried, 1), dv(carried, 1), ...
+    VariableNames=["name", "utc", "maneuver", "dv_ms"]);
+end
+
+function A = satflightApproaches(events)
+%SATFLIGHTAPPROACHES The close approaches of the run, from the event log: the two
+%   objects, the time of closest approach (UTC) and the distance then (km), closest
+%   first. The simulator logs a pair when it first comes within the alert distance.
+E = events(events.kind == "alert" & startsWith(events.text, "Close approach: "), :);
+tok = regexp(cellstr(E.text), "^Close approach: (.+) - (.+) ([\d.]+) km$", "tokens", "once");
+bad = cellfun(@isempty, tok);
+if any(bad)
+    error("satflight:events", "Not a close approach line of the event log: %s", ...
+        strjoin(E.text(bad), "; "));
+end
+tok = string(vertcat(tok{:}, cell(0, 3)));
+A = table(tok(:, 1), tok(:, 2), E.utc, double(tok(:, 3)), ...
+    VariableNames=["name", "other", "tca", "distance_km"]);
+A = sortrows(A, ["distance_km", "tca"]);
+if isempty(A)
+    C = satflightConstants();
+    fprintf("No two objects came within %g km of each other (a payload and the stages " + ...
+        "that carried it are not compared).\n", C.CONJUNCTION_KM);
 end
 end
 
@@ -3052,11 +3148,13 @@ function fig = satflightAnimate(T, events, stations, names, opts)
 %SATFLIGHTANIMATE Plays the run back: the ground track and the orbits about the
 %   turning Earth over each object's last orbit (one period back, all of an escape or
 %   suborbital path) up to each moment, each object where it is then (o in orbit,
-%   x come down or gone), and the latest lines of the event log underneath.
+%   x come down or gone), the night side of the Earth shaded on the map, and the
+%   latest lines of the event log underneath.
 %   Options: Frames - at most this many, spread evenly over the samples (240);
-%   Seconds - how long it plays (20). A figure that is not on screen, as in a batch
-%   run, is not paced and not drawn frame by frame. File - also write it to this
-%   animated GIF, every frame, to play in Seconds.
+%   Seconds - how long it plays in a figure window (20). In the Live Editor every
+%   frame is drawn and the output becomes an animation with its own playback
+%   controls. A batch run (matlab -batch) draws only the last frame. File - also
+%   write it to this animated GIF, every frame, to play in Seconds.
 arguments
     T table
     events table
@@ -3074,11 +3172,12 @@ epoch = T.utc(1) - seconds(T.t_s(1));
 logged = events(events.kind ~= "info", :);
 
 fig = figure(Name="Animation", Position=[100 100 1200 500]);
-layout = tiledlayout(fig, 1, 3, TileSpacing="compact", Padding="compact");
-map = nexttile(layout, [1 2]);
+layout = tiledlayout(fig, 1, 5, TileSpacing="compact", Padding="compact");
+map = nexttile(layout, [1 3]);
 styleAxes(map);
 hold(map, "on");
 box(map, "on");
+[night, sun] = drawNight(map);
 coast = satflightCoastline();
 plot(map, coast(:, 1), coast(:, 2), Color=[0.55 0.55 0.55], LineWidth=0.5, ...
     HandleVisibility="off");
@@ -3090,7 +3189,7 @@ xlim(map, [-180 180]); ylim(map, [-90 90]); daspect(map, [1 1 1]);
 xticks(map, -180:60:180); yticks(map, -90:30:90); grid(map, "on");
 xlabel(map, "Longitude (deg)"); ylabel(map, "Latitude (deg)");
 
-globe = nexttile(layout);
+globe = nexttile(layout, [1 2]);
 hold(globe, "on");
 earth = drawEarth(globe, C);
 shownRows = T(ismember(T.name, names), :);
@@ -3124,11 +3223,17 @@ for k = 1:n
     marker3(k) = plot3(globe, NaN, NaN, NaN, "o", MarkerSize=6, Color=lineColor(k), ...
         MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
 end
-lg = legend(map, Orientation="horizontal", NumColumns=min(n, 6), Interpreter="none");
+lg = legend(map, Orientation="horizontal", NumColumns=min(n + 2, 7),Interpreter="none");
 lg.Layout.Tile = "north";
 
 delay = opts.Seconds / numel(frames);
-onScreen = fig.Visible == "on";
+% a figure window shows each frame as it is drawn (paced to play in Seconds); the Live
+% Editor's figures are not on screen but it records each frame drawn, as an animation;
+% a batch run (whose figures report Visible "on" all the same) has no one to show the
+% frames to: only the last is drawn, by whatever draws or saves the figure next
+batch = batchStartupOptionUsed;
+onScreen = fig.Visible == "on" && ~batch;
+everyFrame = ~batch || opts.File ~= "";
 started = tic;
 for f = 1:numel(frames)
     t = frames(f);
@@ -3158,16 +3263,18 @@ for f = 1:numel(frames)
         set(marker3(k), XData=rows.x_km(i), YData=rows.y_km(i), ZData=rows.z_km(i), ...
             Marker=mark, Visible="on");
     end
-    earth.Matrix = makehgtform("zrotate", gmst(julianAt(T, t)));
+    jd = julianAt(T, t);
+    earth.Matrix = makehgtform("zrotate", gmst(jd));
+    moveNight(night, sun, jd, C);
     title(layout, sprintf("%s UTC   (T+%s)", string(epoch + seconds(t), ...
         "yyyy-MM-dd HH:mm:ss"), formatDuration(t)));
     recent = logged(logged.t_s <= t, :);
     recent = recent(max(1, end - 2):end, :);
     caption = string(recent.utc, "HH:mm:ss") + "  " + recent.text;
     xlabel(layout, [caption; strings(3 - numel(caption), 1)], Interpreter="none", FontSize=9);
-    if onScreen || opts.File ~= ""
-        drawnow              % every frame, as it is shown or written; a figure off screen
-    end                      % (a batch run) is drawn only when something draws it
+    if everyFrame
+        drawnow
+    end
     if opts.File ~= ""
         [img, map256] = rgb2ind(frame2im(getframe(fig)), 256);
         if f == 1

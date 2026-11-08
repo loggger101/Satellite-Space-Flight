@@ -130,22 +130,36 @@ def headings(text: str) -> list[str]:
     return re.findall(r"^%\[text\] ## (.+)$", text, re.M)
 
 
+def lone_satellite() -> Scenario:
+    return Scenario(name="Alone", satellites=[SatSpec("A", {"type": "elements",
+                                                            "altitude": 500})])
+
+
 @pytest.mark.parametrize("scenario, compare, sections", [
     ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Plots",
-                          "Passes and eclipses", "Animation",
+                          "Passes and eclipses", "Maneuvers and close approaches", "Animation",
                           "Cross-check against the simulator"]),
     ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
-                               "Animation"])])
+                               "Maneuvers and close approaches", "Animation"]),
+    ("default", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
+                        "Close approaches", "Animation"]),
+    (None, False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
+                   "Animation"])])
 def test_sections_in_order(scenario, compare, sections, tmp_path):
     """Every section starts a new %% cell; the passes table only with stations, the
-    animation always, behind its own setting."""
-    sim = Simulation(Scenario.load(ROOT / "scenarios" / f"{scenario}.json"))
+    maneuvers with maneuvers or launches (which schedule circularizations), the close
+    approaches with two objects or more, the animation always, behind its own setting."""
+    sc = Scenario.load(ROOT / "scenarios" / f"{scenario}.json") if scenario else lone_satellite()
+    sim = Simulation(sc)
     text = export_live_script(sim, tmp_path / "s.m", "start", 60, 60, compare=compare).read_text(
         encoding="utf-8")
     assert headings(text) == sections
     cells = text.split("\n%%\n")
     assert [re.match(r"%\[text\] ## (.+)", c).group(1) for c in cells[1:]] == sections
     assert ("passes = satflightPasses(T, events, sim.stations);" in text) == bool(sim.stations)
+    assert ("maneuvers = satflightManeuvers(events);" in text) == (scenario != "default"
+                                                                  and scenario is not None)
+    assert ("approaches = satflightApproaches(events);" in text) == (scenario is not None)
     assert "eclipses = satflightEclipses(T, events);" in text
     assert "satflightPlotTimeline(T, events, shown);" in text
     assert re.search(r'^animate = true;   % .+\nanimationFile = "";   % ', text, re.M)
@@ -170,7 +184,7 @@ def test_the_introduction_counts_in_words(tmp_path):
 @pytest.mark.parametrize("scenario, gone", [
     ("hohmann_to_geo", {"satflightNoBurns", "satflightPlan", "satflightPlotAscent",
                         "mergeMarks", "satflightPasses", "elevationDeg"}),
-    ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks"}),
+    ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks", "satflightManeuvers"}),
     ("launch_day", set())])
 def test_a_script_holds_only_the_helpers_it_calls(scenario, gone, tmp_path):
     """Helpers the sections never call are left out (MATLAB marks an unused local

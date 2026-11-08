@@ -485,12 +485,33 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += ["passes = satflightPasses(T, events, sim.stations);", "display(passes)"]
     out += ["eclipses = satflightEclipses(T, events);", "display(eclipses)",
             "satflightPlotTimeline(T, events, shown);"]
+    burns = bool(maneuvers or launches)       # a launch can schedule its circularization
+    pairs = len(rows) + len(launches) >= 2    # a launch adds its stages
+    if burns or pairs:
+        out += ["%%"]
+        out += _text("## " + " and ".join(["Maneuvers"] * burns + ["close approaches"] * pairs)
+                     .capitalize() + "\nFrom the event log: "
+                     + " and ".join(
+                         ["the maneuvers carried out (`maneuvers`: when, which, and the "
+                          "delta-v) with each object's total delta-v (`deltaV`)"] * burns
+                         + ["the close approaches (`approaches`: the two objects, the time of "
+                            "closest approach and the distance then, closest first)"] * pairs)
+                     + ".")
+        if burns:
+            out += ["maneuvers = satflightManeuvers(events);", "display(maneuvers)",
+                    'deltaV = groupsummary(maneuvers, "name", "sum", "dv_ms");',
+                    "display(deltaV)"]
+        if pairs:
+            out += ["approaches = satflightApproaches(events);", "display(approaches)"]
     out += ["%%"]
-    out += _text("## Animation\nPlays the run back (in 20 s in a figure window): the ground "
-                 "track and the orbits about the turning Earth, each over its last orbit, each "
-                 "object where it is then (o in orbit, x come down or gone) and the latest lines "
-                 "of the event log. Settings: `animate` to skip it, `animationFile` to save it "
-                 "as a GIF (every frame drawn and written, so it takes a while).")
+    out += _text("## Animation\nPlays the run back: the ground track, with the night side "
+                 "shaded, and the orbits about the turning Earth, each over its last orbit, "
+                 "each object where it is then (o in orbit, x come down or gone) and the "
+                 "latest lines of the event log. In the Live Editor it becomes an animation "
+                 "with playback controls (play, pause, step through the frames); in a "
+                 "figure window it plays in 20 s. Settings: `animate` to skip it, "
+                 "`animationFile` to save it as a GIF (every frame drawn and written, so it "
+                 "takes a while).")
     out += ["if animate",
             "    satflightAnimate(T, events, sim.stations, shown, File=animationFile);",
             "end"]
@@ -527,7 +548,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     # the helpers this script's sections do not call: MATLAB would flag them as unused
     unused = (["satflightNoBurns"] if maneuvers else []) + (
         [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"]) + (
-        [] if stations else ["satflightPasses", "elevationDeg"])
+        [] if stations else ["satflightPasses", "elevationDeg"]) + (
+        [] if burns else ["satflightManeuvers"]) + ([] if pairs else ["satflightApproaches"])
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]

@@ -104,26 +104,36 @@ sections:
    losses, max Q, and the ascent profile (`profile`, `marks`, and the plan's).
    Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
    at the end of the run) and `launchTable`.
-5. **Plots**: ground track, altitude, elements, 3-D orbits (around the Earth
-   with its coastlines, turned as it is at the end of the run), and each ascent
-   (`satflightPlotAscent`), of the objects in `shown`: all of them up to 12,
-   past that those still in orbit first. Set `shown` to the names you want.
+5. **Plots**: ground track (with the night side and the point where the Sun
+   is overhead at the end of the run), altitude, elements, 3-D orbits (around
+   the Earth with its coastlines, turned as it is at the end of the run), and
+   each ascent (`satflightPlotAscent`), of the objects in `shown`: all of them
+   up to 12, past that those still in orbit first. Set `shown` to the names
+   you want.
 6. **Passes and eclipses**, from the event log: `passes` (with ground
-   stations) has each station pass, its AOS and LOS, minutes in view and the
-   highest elevation at the samples in between; `eclipses` each object's
+   stations) has each station pass in the order they happen, its AOS and LOS,
+   minutes in view and the highest elevation at the samples in between; `eclipses` each object's
    number of eclipses, minutes in shadow, longest, and share of its time in
    the run; and a timeline draws both for the objects in `shown`. A pass or
    eclipse under way when the run (or the object) ends has LOS or stop `NaT`.
    The simulator logs these only while a run has at most 40 objects; past
    that the section says so.
-7. **Animation** (`animate = false` to skip it): plays the run back, the
-   ground track beside the orbits around the turning Earth, each object over
-   its last orbit and marked where it is (o in orbit, x come down or gone),
-   with the latest lines of the event log. In a figure window it plays in
-   20 s, or as fast as its frames draw if that is slower.
-   `animationFile = "run.gif"` also writes every frame to an animated GIF
-   that plays in the same time; drawing and writing each frame takes a while.
-8. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
+7. **Maneuvers and close approaches** (each part only where it can have
+   rows: maneuvers with scheduled burns or launches, which schedule their
+   circularization; approaches with two objects or more), from the event log:
+   `maneuvers` has each burn carried out, when, its label and delta-v, and
+   `deltaV` each object's total; `approaches` each pair that came within
+   10 km, the time of closest approach and the distance then, closest first.
+8. **Animation** (`animate = false` to skip it): plays the run back, the
+   ground track, with the night side shaded, beside the orbits around the
+   turning Earth, each object over its last orbit and marked where it is
+   (o in orbit, x come down or gone), with the latest lines of the event log.
+   In the Live Editor every frame is drawn and the output is an animation with
+   playback controls; in a figure window it plays in 20 s, or as fast as its
+   frames draw if that is slower; a `matlab -batch` run draws only the last
+   frame. `animationFile = "run.gif"` also writes every frame to an animated
+   GIF that plays in the same time; drawing and writing each frame takes a while.
+9. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
    It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.
@@ -145,10 +155,10 @@ the scenario's tolerances, starting, as the simulator's integrator does, with a
 feature (`launch_day.json` from the start and mid-ascent among them), and
 `tests/BundledExportTest.m` every scenario in `scenarios/`, from its start and
 an hour in. Every script they export must pass MATLAB's Code Analyzer with
-nothing to mark (`codeIssues`), and its passes and eclipses must match its
-event log line for line, with the highest elevation of every pass of 10
-minutes or more above the station's mask (the elevation the simulator
-measures). Both require the same objects at the same samples, the same
+nothing to mark (`codeIssues`), and its passes, eclipses, maneuvers and close
+approaches must match its event log line for line, with the highest elevation
+of every pass of 10 minutes or more above the station's mask (the elevation
+the simulator measures). Both require the same objects at the same samples, the same
 statuses, positions within 10 m while in orbit, launch and maneuver events
 identical to the millisecond, and every other event within one integrator step.
 Three differences are expected. Events found at the end of a step (eclipses,

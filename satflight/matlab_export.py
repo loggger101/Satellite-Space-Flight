@@ -480,11 +480,15 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                  + ("each station pass (`passes`: when it starts and ends, and the highest "
                     "elevation at the samples in between), " if stations else "")
                  + "each object's time in the Earth's shadow (`eclipses`), and a timeline of "
-                   "both for the objects in `shown`.")
+                   "both for the objects in `shown`"
+                 + (", and each station's sky with the paths of their passes across it."
+                    if stations else "."))
     if stations:
         out += ["passes = satflightPasses(T, events, sim.stations);", "display(passes)"]
     out += ["eclipses = satflightEclipses(T, events);", "display(eclipses)",
             "satflightPlotTimeline(T, events, shown);"]
+    if stations:
+        out += ["satflightPlotSky(T, events, sim.stations, shown);"]
     burns = bool(maneuvers or launches)       # a launch can schedule its circularization
     pairs = len(rows) + len(launches) >= 2    # a launch adds its stages
     if burns or pairs:
@@ -503,6 +507,13 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                     "display(deltaV)"]
         if pairs:
             out += ["approaches = satflightApproaches(events);", "display(approaches)"]
+    out += ["%%"]
+    out += _text("## Orbit evolution\nHow each orbit changes after the object's last burn, "
+                 "fitted over the samples while it is in orbit (`drift`): the mean semi-major "
+                 "axis per day (drag lowers it), and the drift of the node (RAAN) and of the "
+                 "perigee per day, measured from the run beside what J2 theory gives for that "
+                 "orbit. J3, J4, C22 and drag, where they are on, account for the difference.")
+    out += ["drift = satflightDrift(T, events, sim.forces);", "display(drift)"]
     out += ["%%"]
     out += _text("## Animation\nPlays the run back: the ground track, with the night side "
                  "shaded, and the orbits about the turning Earth, each over its last orbit, "
@@ -548,8 +559,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     # the helpers this script's sections do not call: MATLAB would flag them as unused
     unused = (["satflightNoBurns"] if maneuvers else []) + (
         [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"]) + (
-        [] if stations else ["satflightPasses", "elevationDeg"]) + (
-        [] if burns else ["satflightManeuvers"]) + ([] if pairs else ["satflightApproaches"])
+        [] if stations else ["satflightPasses", "elevationDeg", "satflightPlotSky"]) + (
+        [] if pairs else ["satflightApproaches"])
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]

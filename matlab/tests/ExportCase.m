@@ -55,8 +55,8 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
         end
 
         function checkSections(tc, script, out)
-            % the Passes and eclipses and the Animation sections: their tables agree
-            % with the event log and the stations, and the animation was drawn
+            % the analysis sections: their tables agree with the event log, the
+            % stations and J2 theory, and the sky plot and the animation were drawn
             ev = out.events;
             tc.verifyEqual(sort(out.eclipses.name), sort(unique(out.T.name)), script);
             tc.verifyEqual(sum(out.eclipses.eclipses), ...
@@ -81,6 +81,25 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
                 low = P(long & ~(P.max_el_deg >= mask - 1e-6 & P.max_el_deg <= 90), :);
                 tc.verifyEmpty(low, script + ": " + formattedDisplayText(low));
                 tc.verifyTrue(issorted(P.aos), script + ": passes in the order they happen");
+            end
+            % the sky plot: there when a pass of an object plotted has a sample to draw
+            drawn = isfield(out, "passes") && any(ismember(out.passes.name, out.shown) & ...
+                ~isnan(out.passes.max_el_deg));
+            tc.verifyEqual(~isempty(findobj(groot, "Type", "figure", "Name", "Sky plot")), ...
+                drawn, script + ": sky plot");
+            % the orbit evolution: over two orbits or more, and the node and perigee
+            % drifting as J2 theory has them, give or take what the other forces add
+            % (within 10%, or 0.05 deg/day for a drift near zero)
+            R = out.drift;
+            tc.verifyTrue(all(ismember(R.name, unique(out.T.name))), script);
+            tc.verifyTrue(all(R.days * 1440 >= 2 * R.period_min - 1e-6), script + ": span");
+            tc.verifyTrue(all(R.perigee_km <= R.apogee_km) && all(isfinite(R.da_km_day)), script);
+            for col = ["raan", "argp"]
+                got = R.(col + "_deg_day");
+                want = R.(col + "_j2_deg_day");
+                tc.verifyEqual(isnan(got), isnan(want), script);
+                off = R(abs(got - want) > 0.1 * abs(want) + 0.05, :);
+                tc.verifyEmpty(off, script + ": " + col + " drift: " + formattedDisplayText(off));
             end
             % the maneuvers and close approaches: a row for each line that carries one
             names = unique(out.T.name);
@@ -198,7 +217,7 @@ run(file);
 % A MATLAB-only script has no P, differences or eventDifferences.
 out = struct();
 for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim", ...
-        "passes", "eclipses", "maneuvers", "deltaV", "approaches"]
+        "passes", "eclipses", "maneuvers", "deltaV", "approaches", "drift", "shown"]
     if exist(name, "var") == 1
         out.(name) = eval(name);
     end

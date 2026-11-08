@@ -2528,6 +2528,11 @@ C.ASCENT_SYNC = 1.0;          % s
 C.EVENT_DETAIL_LIMIT = 40;
 C.ALL_PAIRS_LIMIT = 300;
 C.CONJUNCTION_KM = 10.0;
+% the exported scripts' analysis (not the simulator's): below these the node and the
+% perigee are not defined well enough to plot or to measure a drift of (J2 alone swings a
+% near-circular orbit's osculating e by about 0.001, and its perigee all the way round)
+C.I_DEFINED = 0.1;            % deg (or within it of 180)
+C.E_DEFINED = 0.01;
 % satflight/launch.py
 C.G0M = 9.80665;              % m/s^2
 C.P_SCALE_H = 7.0;            % km
@@ -2704,12 +2709,16 @@ arguments
     names = string.empty
 end
 names = plotNames(T, names);
+C = satflightConstants();
 panels = ["a_km", "Semi-major axis (km)"; "e", "Eccentricity"; "i_deg", "Inclination (deg)"; ...
-    "raan_deg", "RAAN, unwrapped (deg)"; "argp_deg", "Arg. of perigee, unwrapped (deg)"; ...
+    "raan_deg", sprintf("RAAN (deg), i \\geq %g\\circ", C.I_DEFINED); ...
+    "argp_deg", sprintf("Arg. of perigee (deg), e \\geq %g", C.E_DEFINED); ...
     "alt_km", "Altitude (km)"];
 fig = figure(Name="Orbital elements");
 layout = tiledlayout(fig, 2, 3, TileSpacing="compact");
 title(layout, "Osculating elements");
+subtitle(layout, "in orbit only: a gap where an object is on its way up or on a path " + ...
+    "that meets the Earth");
 for p = 1:size(panels, 1)
     ax = nexttile(layout);
     styleAxes(ax);
@@ -2717,8 +2726,20 @@ for p = 1:size(panels, 1)
     for nm = names
         rows = T(T.name == nm, :);
         y = rows.(panels(p, 1));
+        if panels(p, 1) ~= "alt_km"
+            y(~inOrbit(rows, C)) = NaN;
+        end
+        % the node of an orbit in the equator, and the perigee of a circular one, are
+        % not defined: they wander and would swamp the panel
+        if panels(p, 1) == "raan_deg"
+            y(~nodeDefined(rows, C)) = NaN;
+        elseif panels(p, 1) == "argp_deg"
+            % (an orbit in the equator measures its perigee from the x axis: not this)
+            y(rows.e < C.E_DEFINED | ~nodeDefined(rows, C)) = NaN;
+        end
         if ismember(panels(p, 1), ["raan_deg", "argp_deg"])
-            y = rad2deg(unwrap(deg2rad(y)));
+            ok = ~isnan(y);
+            y(ok) = rad2deg(unwrap(deg2rad(y(ok))));
         end
         plot(ax, rows.t_s / 3600, y, LineWidth=1.1, DisplayName=nm);
     end
@@ -2976,9 +2997,10 @@ end
 P = sortrows(P, ["aos", "station", "name"]);     % in the order they happen
 end
 
-function el = elevationDeg(rows, g, C)
+function [el, az] = elevationDeg(rows, g, C)
 % elevation (deg) of the samples rows of T above station g, as the simulator measures
-% it for AOS and LOS: over the plane at right angles to the station's geodetic up
+% it for AOS and LOS: over the plane at right angles to the station's geodetic up; and
+% azimuth (deg, clockwise from north)
 theta = gmst(juliandate(rows.utc));
 c = cos(theta);
 sn = sin(theta);
@@ -2988,6 +3010,166 @@ lon = deg2rad(g.lon);
 d = ecef - geodeticToEcef(lat, lon, g.alt, C);
 up = [cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat)];
 el = asind(min(max((d * up.') ./ vecnorm(d, 2, 2), -1), 1));
+east = [-sin(lon), cos(lon), 0];
+north = [-sin(lat) * cos(lon), -sin(lat) * sin(lon), cos(lat)];
+az = mod(atan2d(d * east.', d * north.'), 360);
+end
+
+function fig = satflightPlotSky(T, events, stations, names)
+%SATFLIGHTPLOTSKY Each station's sky: the path of every pass of the objects in names
+%   across it, azimuth clockwise from north and elevation from the horizon (the rim)
+%   to overhead (the centre), at the run's samples; o marks the first sample of a pass,
+%   the dashed circle the station's elevation mask. A pass between two samples has no
+%   path. No figure when no pass has one.
+arguments
+    T table
+    events table
+    stations struct
+    names = string.empty
+end
+C = satflightConstants();
+names = plotNames(T, names);
+S = eventSpans(T, events, "station");
+S = S(ismember(S.name, names), :);
+paths = {};
+for k = 1:height(S)
+    rows = T(T.name == S.name(k) & T.t_s >= S.t0(k) & T.t_s <= S.t1(k), :);
+    if ~isempty(rows)
+        g = stations(find([stations.name] == S.place(k), 1));
+        [el, az] = elevationDeg(rows, g, C);
+        paths(end + 1, :) = {S.place(k), S.name(k), az, el}; %#ok<AGROW>
+    end
+end
+fig = gobjects(0);
+if isempty(paths)
+    fprintf("No pass of the plotted objects spans a sample: no sky plot.\n");
+    return
+end
+places = [stations.name];
+places = places(ismember(places, [paths{:, 1}]));
+seen = names(ismember(names, [paths{:, 2}]));
+fig = figure(Name="Sky plot");
+layout = tiledlayout(fig, "flow", TileSpacing="compact");
+title(layout, "Passes across each station's sky");
+subtitle(layout, "elevation 0 at the rim, 90 overhead; o first sample of a pass; " + ...
+    "dashed the elevation mask");
+around = linspace(0, 2 * pi, 181);
+for j = 1:numel(places)
+    pax = polaraxes(layout);
+    pax.Layout.Tile = j;
+    hold(pax, "on");
+    set(pax, ThetaZeroLocation="top", ThetaDir="clockwise", RLim=[0 90], ...
+        RTick=30:30:90, RTickLabel=["60", "30", "0"], RAxisLocation=112);
+    g = stations(find([stations.name] == places(j), 1));
+    polarplot(pax, around, repmat(90 - g.minEl, size(around)), "--", Color=[0.5 0.5 0.5], ...
+        HandleVisibility="off");
+    for q = reshape(find([paths{:, 1}] == places(j)), 1, [])
+        color = lineColor(find(names == paths{q, 2}, 1));
+        theta = deg2rad(paths{q, 3});
+        r = 90 - paths{q, 4};
+        polarplot(pax, theta, r, Color=color, LineWidth=1.2, HandleVisibility="off");
+        polarplot(pax, theta(1), r(1), "o", Color=color, MarkerFaceColor=color, ...
+            MarkerSize=4, HandleVisibility="off");
+    end
+    title(pax, places(j), Interpreter="none");
+end
+% the legend: one entry per object with a path, in the last station's axes
+for nm = seen
+    polarplot(pax, NaN, NaN, Color=lineColor(find(names == nm, 1)), LineWidth=1.2, ...
+        DisplayName=nm);
+end
+polarplot(pax, NaN, NaN, "--", Color=[0.5 0.5 0.5], DisplayName="elevation mask");
+lg = legend(pax, Interpreter="none");
+lg.Layout.Tile = "east";
+end
+
+function ok = inOrbit(rows, C)
+% the samples of rows of T on an orbit that clears the Earth: bound, with its perigee
+% above the equator's radius. Not on a pad, on the way up, or on a path down.
+ok = rows.status == "active" & rows.e < 1 & rows.a_km .* (1 - rows.e) > C.RE;
+end
+
+function ok = nodeDefined(rows, C)
+% the samples of rows of T on an orbit out of the equator, whose node is defined
+ok = rows.i_deg >= C.I_DEFINED & rows.i_deg <= 180 - C.I_DEFINED;
+end
+
+function D = satflightDrift(T, events, forces)
+%SATFLIGHTDRIFT How each orbit changes in the run after the object's last burn, from
+%   the samples while it is in orbit (an orbit that clears the Earth), fitted with a
+%   straight line over at least two orbits: from (UTC) and over how many days, the
+%   period and the mean perigee and apogee altitudes; the change of the mean semi-major
+%   axis per day (drag lowers it; J2's short-period swing taken out when J2 is on), and
+%   the drift of the node and of the argument of perigee per day measured beside what
+%   the J2 secular theory gives for that orbit (0 without J2). A drift is NaN where it
+%   is not defined: the node of an orbit in the equator, the perigee of a circular one.
+C = satflightConstants();
+M = satflightManeuvers(events);
+epoch = T.utc(1) - seconds(T.t_s(1));
+names = unique(T.name, "stable");
+n = numel(names);
+D = table(names, NaT(n, 1, TimeZone="UTC"), nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), ...
+    nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), VariableNames=["name", "from", ...
+    "days", "period_min", "perigee_km", "apogee_km", "da_km_day", "raan_deg_day", ...
+    "raan_j2_deg_day", "argp_deg_day", "argp_j2_deg_day"]);
+fitted = false(n, 1);
+day = 86400;
+for k = 1:n
+    rows = T(T.name == names(k), :);
+    burns = M.utc(M.name == names(k));
+    if ~isempty(burns)
+        rows = rows(rows.utc > max(burns), :);
+    end
+    % a finite burn still going at the end of the run: the stretch before it
+    lit = events.utc(events.kind == "maneuver" & startsWith(events.text, names(k) + ...
+        ": ignition - "));
+    if ~isempty(lit) && (isempty(burns) || max(lit) > max(burns))
+        rows = rows(rows.utc < max(lit), :);
+    end
+    rows = rows(inOrbit(rows, C), :);
+    if height(rows) < 5
+        continue
+    end
+    t = rows.t_s;
+    a = rows.a_km;
+    e = rows.e;
+    i = deg2rad(rows.i_deg);
+    if forces.j2
+        a = osculatingToMeanA(a, e, i, deg2rad(rows.argp_deg), deg2rad(rows.nu_deg), C);
+    end
+    period = 2 * pi * sqrt(mean(a) ^ 3 / C.MU);
+    if t(end) - t(1) < 2 * period
+        continue
+    end
+    fitted(k) = true;
+    slope = @(y) day * ([t - t(1), ones(size(t))] \ y)';
+    s = slope(a);
+    D.da_km_day(k) = s(1);
+    D.from(k) = epoch + seconds(t(1));
+    D.days(k) = (t(end) - t(1)) / day;
+    D.period_min(k) = period / 60;
+    D.perigee_km(k) = mean(a .* (1 - e)) - C.RE;
+    D.apogee_km(k) = mean(a .* (1 + e)) - C.RE;
+    [raanJ2, argpJ2] = j2SecularRates(mean(a), mean(e), mean(i), C);
+    if ~forces.j2
+        [raanJ2, argpJ2] = deal(0);
+    end
+    if all(nodeDefined(rows, C))
+        s = slope(rad2deg(unwrap(deg2rad(rows.raan_deg))));
+        D.raan_deg_day(k) = s(1);
+        D.raan_j2_deg_day(k) = rad2deg(raanJ2) * day;
+    end
+    if all(e >= C.E_DEFINED & nodeDefined(rows, C))
+        s = slope(rad2deg(unwrap(deg2rad(rows.argp_deg))));
+        D.argp_deg_day(k) = s(1);
+        D.argp_j2_deg_day(k) = rad2deg(argpJ2) * day;
+    end
+end
+if ~all(fitted)
+    fprintf("Not in orbit for two orbits after its last burn, so left out: %s.\n", ...
+        strjoin(names(~fitted), ", "));
+end
+D = D(fitted, :);
 end
 
 function S = satflightEclipses(T, events)

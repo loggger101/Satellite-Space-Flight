@@ -315,8 +315,10 @@ gravity turn, closed-loop guidance, staging, fairing, spent stages as objects,
 circularization), the launch planner, and the event log (burns, eclipses,
 station passes, close approaches, re-entries). It runs and plots the results
 and each ascent, tabulates the station passes and each object's time in the
-Earth's shadow on a timeline, the burns carried out with their delta-v and the
-close approaches, and plays the run back as an animation (ground track with
+Earth's shadow on a timeline, draws each station's sky with the passes across
+it, lists the burns carried out with their delta-v and the close approaches,
+measures each orbit's decay and the drift of its node and perigee beside J2
+theory, and plays the run back as an animation (ground track with
 the night side beside the orbits around the turning Earth; in the Live Editor
 with playback controls, and it can also be saved as a GIF). You also choose
 what the script holds:

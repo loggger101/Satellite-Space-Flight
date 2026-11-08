@@ -80,6 +80,24 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
                 long = P.minutes >= 10;
                 low = P(long & ~(P.max_el_deg >= mask - 1e-6 & P.max_el_deg <= 90), :);
                 tc.verifyEmpty(low, script + ": " + formattedDisplayText(low));
+                tc.verifyTrue(issorted(P.aos), script + ": passes in the order they happen");
+            end
+            % the maneuvers and close approaches: a row for each line that carries one
+            names = unique(out.T.name);
+            if isfield(out, "maneuvers")
+                M = out.maneuvers;
+                burns = ev(ev.kind == "maneuver" & contains(ev.text, ...
+                    [": executed ", ": burnout - dV ", ": finite burn applied impulsively ("]), :);
+                tc.verifyEqual(height(M), height(burns), script);
+                tc.verifyEqual(M.utc, burns.utc, script);
+                tc.verifyTrue(all(ismember(M.name, names)) && all(M.dv_ms >= 0), script);
+                tc.verifyEqual(sum(out.deltaV.sum_dv_ms), sum(M.dv_ms), AbsTol=1e-9);
+            end
+            if isfield(out, "approaches")
+                A = out.approaches;
+                tc.verifyEqual(height(A), nnz(startsWith(ev.text, "Close approach: ")), script);
+                tc.verifyTrue(all(ismember([A.name; A.other], names)), script);
+                tc.verifyTrue(issorted(A.distance_km), script);
             end
             tc.verifyNotEmpty(findobj(groot, "Type", "figure", "Name", "Animation"), ...
                 script + ": no animation");
@@ -180,7 +198,7 @@ run(file);
 % A MATLAB-only script has no P, differences or eventDifferences.
 out = struct();
 for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim", ...
-        "passes", "eclipses"]
+        "passes", "eclipses", "maneuvers", "deltaV", "approaches"]
     if exist(name, "var") == 1
         out.(name) = eval(name);
     end

@@ -118,9 +118,21 @@ classdef ExportTest < ExportCase
             tc.assertNumElements(k, 1);
             gif = fullfile(tc.Tmp, "run.gif");
             text(k) = "animationFile = """ + gif + """;";
+            % and resultsFile: the run and its tables saved to a MAT-file
+            k = find(startsWith(text, "resultsFile = """";"));
+            tc.assertNumElements(k, 1);
+            mat = fullfile(tc.Tmp, "run.mat");
+            text(k) = "resultsFile = """ + mat + """;";
             here = fullfile(tc.Tmp, "gif_set.m");
             writelines(text, here);
             [~, out] = tc.check(here);
+            saved = load(mat);
+            tc.verifyEqual(sort(string(fieldnames(saved)))', sort(["sim", "T", "events", ...
+                "keyEvents", "atEnd", "passes", "coverage", "eclipses", "betaAngles", ...
+                "approaches", "drift"]));
+            for name = ["T", "events", "passes", "coverage", "eclipses", "betaAngles", "drift"]
+                tc.verifyEqual(saved.(name), out.(name), name);
+            end
             long = out.passes(out.passes.minutes >= 10, :);
             tc.verifyGreaterThanOrEqual(height(long), 2);
             tc.verifyTrue(all(ismember(["Geostationary", "GPS MEO"], long.name)));

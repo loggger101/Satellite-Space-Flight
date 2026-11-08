@@ -351,7 +351,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += ["planLaunches = false;   % true: plan the launches on their pads here (window, "
                 "pitch kick), e.g. after editing one"]
     out += ["animate = true;   % play the run back (Animation section)",
-            'animationFile = "";   % e.g. "run.gif": also save the animation as an animated GIF']
+            'animationFile = "";   % e.g. "run.gif": also save the animation as an animated GIF',
+            'resultsFile = "";   % e.g. "run.mat": save the tables to a MAT-file (Save section)']
     out += ["%%"]
 
     method = it.method
@@ -478,17 +479,24 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     out += ["%%"]
     out += _text("## Passes and eclipses\nFrom the event log: "
                  + ("each station pass (`passes`: when it starts and ends, and the highest "
-                    "elevation at the samples in between), " if stations else "")
+                    "elevation at the samples in between) and each station's coverage "
+                    "(`coverage`: time with something in view, and the longest wait), "
+                    if stations else "")
                  + "each object's time in the Earth's shadow (`eclipses`), and a timeline of "
                    "both for the objects in `shown`"
-                 + (", and each station's sky with the paths of their passes across it."
-                    if stations else "."))
+                 + (", and each station's sky with the paths of their passes across it"
+                    if stations else "")
+                 + ". The beta angle (`betaAngles`: the Sun's angle to each orbit's plane) "
+                   "says when an orbit has eclipses: beyond its limit a circular orbit stays "
+                   "in sunlight.")
     if stations:
-        out += ["passes = satflightPasses(T, events, sim.stations);", "display(passes)"]
+        out += ["passes = satflightPasses(T, events, sim.stations);", "display(passes)",
+                "coverage = satflightCoverage(T, passes, sim.stations);", "display(coverage)"]
     out += ["eclipses = satflightEclipses(T, events);", "display(eclipses)",
             "satflightPlotTimeline(T, events, shown);"]
     if stations:
         out += ["satflightPlotSky(T, events, sim.stations, shown);"]
+    out += ["betaAngles = satflightBeta(T);", "satflightPlotBeta(betaAngles, shown);"]
     burns = bool(maneuvers or launches)       # a launch can schedule its circularization
     pairs = len(rows) + len(launches) >= 2    # a launch adds its stages
     if burns or pairs:
@@ -526,6 +534,22 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     out += ["if animate",
             "    satflightAnimate(T, events, sim.stations, shown, File=animationFile);",
             "end"]
+    saved = (["sim", "T", "events", "keyEvents", "atEnd"]
+             + ["launches", "launchTable"] * bool(launches)
+             + ["passes", "coverage"] * bool(stations) + ["eclipses", "betaAngles"]
+             + ["maneuvers", "deltaV"] * burns + ["approaches"] * pairs + ["drift"])
+    out += ["%%"]
+    out += _text("## Save\nWith `resultsFile` set in Settings, saves the run and its tables "
+                 "to that MAT-file (`load` brings them back): "
+                 + ", ".join(f"`{v}`" for v in saved) + ".")
+    out += ['if resultsFile ~= ""',
+            "    save(resultsFile, ..."]
+    names = [_str(v) for v in saved]
+    out += ["        " + ", ".join(names[j:j + 7]) + (", ..." if j + 7 < len(names) else ");")
+            for j in range(0, len(names), 7)]
+    out += [
+            '    fprintf("Saved the results to %s\\n", resultsFile);',
+            "end"]
     if compare:
         out += ["%%"]
         out += _text("## Cross-check against the simulator\nRuns the Python simulator on the "
@@ -559,7 +583,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     # the helpers this script's sections do not call: MATLAB would flag them as unused
     unused = (["satflightNoBurns"] if maneuvers else []) + (
         [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"]) + (
-        [] if stations else ["satflightPasses", "elevationDeg", "satflightPlotSky"]) + (
+        [] if stations else ["satflightPasses", "elevationDeg", "satflightPlotSky",
+                             "satflightCoverage"]) + (
         [] if pairs else ["satflightApproaches"])
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",

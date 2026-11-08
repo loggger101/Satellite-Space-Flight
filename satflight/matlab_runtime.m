@@ -2997,6 +2997,93 @@ end
 P = sortrows(P, ["aos", "station", "name"]);     % in the order they happen
 end
 
+function V = satflightCoverage(T, passes, stations)
+%SATFLIGHTCOVERAGE Each station's coverage in the run, from its passes: the number
+%   of passes and of objects seen, the minutes with at least one object in view (the
+%   passes of all objects merged) and their share of the run, and the longest wait
+%   with none in view (minutes; from the start of the run and to its end too).
+stations = reshape([stations.name], [], 1);
+n = numel(stations);
+t0 = min(T.utc);
+t1 = max(T.utc);
+total = minutes(t1 - t0);
+V = table(stations, zeros(n, 1), zeros(n, 1), zeros(n, 1), zeros(n, 1), zeros(n, 1), ...
+    VariableNames=["station", "passes", "objects", "in_view_min", "in_view_pct", ...
+    "longest_gap_min"]);
+for k = 1:n
+    P = passes(passes.station == stations(k), :);
+    V.passes(k) = height(P);
+    V.objects(k) = numel(unique(P.name));
+    % the spans in view, merged where they overlap (an open pass runs its minutes)
+    span = sortrows([minutes(P.aos - t0), minutes(P.aos - t0) + P.minutes]);
+    merged = zeros(0, 2);
+    for j = 1:size(span, 1)
+        if ~isempty(merged) && span(j, 1) <= merged(end, 2)
+            merged(end, 2) = max(merged(end, 2), span(j, 2));
+        else
+            merged(end + 1, :) = span(j, :); %#ok<AGROW>
+        end
+    end
+    V.in_view_min(k) = sum(merged(:, 2) - merged(:, 1));
+    gaps = diff([0; reshape(merged', [], 1); total]);
+    V.longest_gap_min(k) = max(gaps(1:2:end));
+end
+if total > 0
+    V.in_view_pct = 100 * V.in_view_min / total;
+end
+end
+
+function B = satflightBeta(T)
+%SATFLIGHTBETA The beta angle of each object at its samples in orbit: the angle (deg)
+%   between its orbit's plane and the direction of the Sun, positive when the Sun is on
+%   the side the orbit turns about (its angular momentum). limit_deg is asin(RE / r)
+%   for a near-circular orbit (e < 0.05; NaN otherwise): with |beta| above it the
+%   object never passes through the Earth's shadow. Beta drifts as the node moves and
+%   the Earth goes round the Sun.
+C = satflightConstants();
+rows = T(inOrbit(T, C), :);
+r = [rows.x_km, rows.y_km, rows.z_km];
+h = cross(r, [rows.vx_kms, rows.vy_kms, rows.vz_kms], 2);
+[when, ~, at] = unique(rows.t_s);     % the Sun once per sample time
+jd = juliandate(rows.utc(1)) + (when - rows.t_s(1)) / 86400;
+sun = cell2mat(arrayfun(@(j) sunPosition(j, C), jd, UniformOutput=false));
+sun = sun(at, :);
+beta = asind(sum(h .* sun, 2) ./ (vecnorm(h, 2, 2) .* vecnorm(sun, 2, 2)));
+limit = asind(C.RE ./ vecnorm(r, 2, 2));
+limit(rows.e >= 0.05) = NaN;          % it holds for a circular orbit only
+B = table(rows.name, rows.t_s, rows.utc, beta, limit, ...
+    VariableNames=["name", "t_s", "utc", "beta_deg", "limit_deg"]);
+end
+
+function fig = satflightPlotBeta(B, names)
+%SATFLIGHTPLOTBETA The beta angles of satflightBeta for the objects in names against
+%   time, each with its limit (dashed, both signs): beyond it a circular orbit is in
+%   sunlight all the way round.
+fig = figure(Name="Beta angle");
+ax = axes(fig);
+styleAxes(ax);
+hold(ax, "on");
+for k = 1:numel(names)
+    rows = B(B.name == names(k), :);
+    if isempty(rows)
+        continue
+    end
+    t = rows.t_s / 3600;
+    plot(ax, t, rows.beta_deg, Color=lineColor(k), LineWidth=1.2, DisplayName=names(k));
+    plot(ax, [t; NaN; t], [rows.limit_deg; NaN; -rows.limit_deg], "--", ...
+        Color=lineColor(k), LineWidth=0.6, HandleVisibility="off");
+end
+yline(ax, 0, Color=[0.5 0.5 0.5], HandleVisibility="off");
+ylim(ax, [-90 90]);
+yticks(ax, -90:30:90);
+grid(ax, "on");
+xlabel(ax, "Time since epoch (h)");
+ylabel(ax, "Beta angle (deg)");
+title(ax, "Sun angle to each orbit's plane", "dashed: beyond it a near-circular " + ...
+    "orbit never enters the Earth's shadow");
+legend(ax, Location="eastoutside", Interpreter="none");
+end
+
 function [el, az] = elevationDeg(rows, g, C)
 % elevation (deg) of the samples rows of T above station g, as the simulator measures
 % it for AOS and LOS: over the plane at right angles to the station's geodetic up; and

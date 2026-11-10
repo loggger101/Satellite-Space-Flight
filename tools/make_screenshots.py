@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
@@ -109,8 +110,13 @@ def launch_ascent():
 
 
 def start_screen():
-    """The start menu as the simulator opens: nothing loaded yet."""
-    return App(size=(1400, 860), welcome=True)
+    """The start menu as the simulator opens: nothing loaded yet, and none of
+    this machine's saved simulations (scenarios/user/ is not in the repo)."""
+    app = App(size=(1400, 860), welcome=True)
+    app.user_scenario_dir = Path(tempfile.mkdtemp(prefix="satflight-shots-"))
+    app.dialogs.clear()
+    app.open("start")                   # listed again, from the empty folder
+    return app
 
 
 SCENES = {f.__name__: f for f in (overview, hohmann, starlink, molniya_ecef_map, j2_plot,

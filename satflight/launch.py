@@ -7,11 +7,13 @@ is integrated on its own (RK4, 1 s steps) under
 * gravity: point mass plus the zonal terms the scenario enables,
 * thrust ``T(h) = mdot g0 Isp(h)``: the mass flow is fixed by the vacuum
   rating, and Isp rises from its sea-level to its vacuum value as the ambient
-  pressure ``p/p0 = exp(-h / 7 km)`` falls,
+  pressure of the US Standard Atmosphere 1976 falls,
 * aerodynamic drag in the co-rotating atmosphere (always on during ascent,
   whatever the scenario's drag switch says: no rocket climbs without it),
-* a falling mass: propellant flows out, spent stages and the fairing drop off,
-* an optional acceleration limit that throttles the engines (40-100 %).
+* a falling mass: propellant flows out, spent stages and the fairing drop off
+  (at its jettison height, or at cutoff if the ascent never got that high),
+* an optional acceleration limit that throttles the engines (40-100 %); where
+  even 40 % is too much, the log says so once per stage.
 
 Steering, as flown by real launchers:
 
@@ -67,7 +69,7 @@ from .strict import (
 )
 
 G0_M = 9.80665            # m/s^2, standard gravity (defines Isp)
-P_SCALE_H = 7.0           # km, scale height of ambient pressure (thrust vs altitude)
+THROTTLE_MIN = 0.4        # lowest throttle setting the engines run at
 GUIDANCE_ALT = 50.0       # km: closed-loop guidance starts here or at the first staging
 H_POWERED = 1.0           # s, integration step of the ascent
 H_COAST = 5.0             # s, step for objects coasting until they join the ensemble
@@ -368,6 +370,43 @@ def _density(h: float) -> float:
     return _RHO0[k] * math.exp(-(hc - _H0[k]) / _SH[k])
 
 
+# US Standard Atmosphere 1976 below 86 km: (geopotential base km, base K, lapse K/km)
+_US76 = ((0.0, 288.15, -6.5), (11.0, 216.65, 0.0), (20.0, 216.65, 1.0), (32.0, 228.65, 2.8),
+         (47.0, 270.65, 0.0), (51.0, 270.65, -2.8), (71.0, 214.65, -2.0))
+_US76_TOP = 84.852        # km geopotential (86 km geometric)
+_GMR = 34.163195          # K/km: g0 M / R*, the hydrostatic constant
+_R0_GEOPOT = 6356.766     # km, the radius US76 converts geometric to geopotential height with
+
+
+def _us76_layer(k: int, dh: float) -> float:
+    """Pressure ratio across ``dh`` km above the base of US76 layer ``k``."""
+    _, tb, lapse = _US76[k]
+    if lapse == 0.0:
+        return math.exp(-_GMR * dh / tb)
+    return (tb / (tb + lapse * dh)) ** (_GMR / lapse)
+
+
+_US76_P = [1.0]           # pressure ratio p/p0 at the base of each layer
+for _k in range(1, len(_US76)):
+    _US76_P.append(_US76_P[-1] * _us76_layer(_k - 1, _US76[_k][0] - _US76[_k - 1][0]))
+_US76_P_TOP = _US76_P[-1] * _us76_layer(len(_US76) - 1, _US76_TOP - _US76[-1][0])
+_US76_T_TOP = _US76[-1][1] + _US76[-1][2] * (_US76_TOP - _US76[-1][0])
+
+
+def _pressure(h: float) -> float:
+    """Ambient pressure over its sea-level value, p/p0, at geometric height
+    ``h`` km: the US Standard Atmosphere 1976 (0 at the pad or below it is
+    taken as 0 km); above 86 km, where it is under 4e-6, isothermal decay."""
+    hc = h if h > 0.0 else 0.0
+    hg = _R0_GEOPOT * hc / (_R0_GEOPOT + hc)
+    if hg >= _US76_TOP:
+        return _US76_P_TOP * math.exp(-_GMR * (hg - _US76_TOP) / _US76_T_TOP)
+    k = len(_US76) - 1
+    while _US76[k][0] > hg:
+        k -= 1
+    return _US76_P[k] * _us76_layer(k, hg - _US76[k][0])
+
+
 def _altitude(x, y, z) -> float:
     """Float-only :func:`satflight.forces.approx_altitude`."""
     rm = math.sqrt(x * x + y * y + z * z)
@@ -421,8 +460,7 @@ def _deriv(s, tau, m0, mdot, stage, mode, fixed, cd_a, env):
         ay += k * wy
         az += k * wz
     if mdot > 0.0:
-        p = math.exp(-(alt if alt > 0.0 else 0.0) / P_SCALE_H)
-        a = mdot * G0_M * stage.isp(p) / m * 1e-3
+        a = mdot * G0_M * stage.isp(_pressure(alt)) / m * 1e-3
         if mode == "prograde" and sp > 1e-6:
             ax += a * wx / sp
             ay += a * wy / sp
@@ -686,6 +724,7 @@ class Ascent:
         self.burning = False
         self.coast_until = -math.inf
         self.throttle = 1.0
+        self._g_warned: set = set()     # stages whose g-limit overshoot has been logged
         self.thrust_dir = _unit(self.y[:3])
         self._ctrl = None               # (mdot, stage, mode, fixed) of the last step, for peek()
         self.hold = None
@@ -815,10 +854,13 @@ class Ascent:
     def _liftoff(self):
         """Ignite the first stage, or scrub if it cannot lift the vehicle."""
         st = self.veh.stages[0]
-        p = math.exp(-max(self.spec.alt, 0.0) / P_SCALE_H)
-        thrust = st.mdot * G0_M * st.isp(p)
-        r = math.sqrt(sum(c * c for c in self.y[:3]))
-        weight = self.mass * MU_EARTH / (r * r) * 1e3
+        thrust = st.mdot * G0_M * st.isp(_pressure(self.spec.alt))
+        # weight on the turning Earth: gravity less the centrifugal relief (0.3 % at
+        # the equator), along the plumb line
+        x, y, z = self.y[:3]
+        gx, gy, gz = _gravity(x, y, z, self.env)
+        w2 = OMEGA_EARTH * OMEGA_EARTH
+        weight = self.mass * math.sqrt((gx + w2 * x) ** 2 + (gy + w2 * y) ** 2 + gz * gz) * 1e3
         self.phase = "vertical"
         if thrust <= weight:
             self._release("no_liftoff", f"scrubbed - thrust/weight {thrust / weight:.2f} is "
@@ -831,12 +873,19 @@ class Ascent:
         self._sample(force=True)
 
     def _throttle(self, st: Stage, alt: float) -> float:
-        """Throttle setting (0.4-1) that respects the vehicle's acceleration limit."""
+        """Throttle setting (0.4-1) that respects the vehicle's acceleration limit,
+        as far as the engines can go down: past that the limit is exceeded, and
+        the log says so once per stage."""
         if self.veh.max_g <= 0:
             return 1.0
-        p = math.exp(-max(alt, 0.0) / P_SCALE_H)
-        a = st.mdot * G0_M * st.isp(p) / self.mass
-        return max(0.4, min(1.0, self.veh.max_g * G0_M / a))
+        a = st.mdot * G0_M * st.isp(_pressure(alt)) / self.mass
+        want = self.veh.max_g * G0_M / a
+        if want < THROTTLE_MIN and self.k not in self._g_warned:
+            self._g_warned.add(self.k)
+            self._event(f"{st.name} exceeds the {self.veh.max_g:g} g limit even at "
+                        f"{THROTTLE_MIN * 100:.0f} % throttle ({THROTTLE_MIN * a / G0_M:.2f} g)",
+                        "warn")
+        return max(THROTTLE_MIN, min(1.0, want))
 
     def _step(self, h: float):
         """One integration step of at most ``h`` s, shortened to land exactly on
@@ -892,8 +941,7 @@ class Ascent:
             drag = 0.5e3 * rho * self.cd_a / m * sp
             self.losses["drag"] += drag * _dot((wx, wy, wz), vh) * h
         if mdot > 0:
-            p = math.exp(-max(alt, 0.0) / P_SCALE_H)
-            a = mdot * G0_M * st.isp(p) / m
+            a = mdot * G0_M * st.isp(_pressure(alt)) / m
             self.accel = a
             d = _unit((wx, wy, wz)) if mode == "prograde" and sp > 1e-6 else fixed
             self.thrust_dir = d
@@ -976,6 +1024,10 @@ class Ascent:
             kind = "launch"
         self._mark("Cutoff" if outcome == "orbit" else "Burnout")
         self._sample(force=True)
+        if self.fairing_on:          # cut off below the jettison height: it goes now, alone
+            self.fairing_on = False
+            self.mass -= self.veh.fairing
+            self._event(f"fairing jettison at cutoff ({self.insertion['alt']:.0f} km)", "info")
         remaining = self.mass - self.spec.payload_mass
         self._drop(st.name, remaining)
         self.mass = self.spec.payload_mass
@@ -1072,7 +1124,7 @@ class Ascent:
             s_r, s_n = self.hold
         else:
             st = self.stage
-            p = math.exp(-max(_altitude(*r), 0.0) / P_SCALE_H)
+            p = _pressure(_altitude(*r))
             a_t = st.mdot * self.throttle * G0_M * st.isp(p) / self.mass * 1e-3
             b = -12.0 * (r_t - rm - 0.5 * vr * tgo) / tgo ** 3
             a = (-vr - 0.5 * b * tgo * tgo) / tgo

@@ -14,7 +14,7 @@ from ..constants import R_EARTH
 from ..eclipse import shadow_state
 from ..elements import rv2coe
 from ..ephemeris import sun_position
-from ..frames import OMEGA_VEC, ecef_to_geodetic, eci_to_ecef
+from ..frames import OMEGA_VEC, ecef_to_geodetic, eci_to_ecef, geodetic_height
 from ..simulation import ACTIVE, DECAYED, ESCAPED, IMPACTED, REENTRY_ALT, SCRUBBED
 from ..timeutil import format_duration, format_period
 from . import glossary, theme, tips
@@ -416,11 +416,11 @@ def _list_value(sim, k):
         return (f"T-{format_duration(asc.t0 - sim.t).split('.')[0]}", theme.WARN,
                 "a rocket on its pad; the countdown to liftoff")
     if asc is not None:
-        alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
+        alt = float(geodetic_height(sim.y[k, :3]))      # above the ground, as the tooltip
         return f"{alt:,.0f} km ^", theme.WARN, "a rocket climbing (^); its altitude"
     if s.status != ACTIVE:
         return s.status, theme.BAD, f"no longer flying ({s.status})"
-    alt = np.linalg.norm(sim.y[k, :3]) - R_EARTH
+    alt = float(geodetic_height(sim.y[k, :3]))
     txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
     if s.shadow > 0.5:
         return txt, theme.DIM, "altitude, gray in sunlight"

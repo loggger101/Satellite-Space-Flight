@@ -75,8 +75,8 @@ def rendezvous():
         name="Lambert rendezvous",
         description="A chaser 70 km below and 6 deg behind a station intercepts it with a "
                     "Lambert transfer (time of flight chosen for minimum delta-v with the arc "
-                    "kept above the atmosphere), then matches velocity.",
-        epoch=EPOCH, forces=ForceModel(j2=False), warp=30,
+                    "kept above the atmosphere), aimed through J2, then matches velocity.",
+        epoch=EPOCH, forces=ForceModel(j2=True), warp=30,
         satellites=[
             SatSpec("Station", el(altitude=420, i=51.6, raan=30, nu=40), mass=420000, area=1600),
             SatSpec("Chaser", el(altitude=350, i=51.6, raan=30, nu=34), mass=8000, area=20)],

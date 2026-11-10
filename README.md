@@ -120,9 +120,11 @@ taking shape and the time to cutoff.
   (the Earth's equatorial ellipticity, which makes geostationary satellites drift)
 - **Atmospheric drag** (piecewise-exponential atmosphere, co-rotating with the Earth,
   solar-activity scale factor)
-- Impulsive burns and **finite-thrust burns** with propellant use (Tsiolkovsky)
-- **Rocket launches**: multi-stage ascent with altitude-dependent thrust and Isp, drag,
-  staging, fairing jettison, an optional g-limit, a gravity turn and closed-loop guidance
+- Impulsive burns and **finite-thrust burns** with propellant use (Tsiolkovsky), and an
+  optional dry mass at which the propellant runs out
+- **Rocket launches**: multi-stage ascent with thrust and Isp following the US Standard
+  Atmosphere's pressure, drag, staging, fairing jettison, an optional g-limit, a gravity
+  turn and closed-loop guidance
 
 Only the Earth acts on the satellites. Sun and Moon gravity, solar radiation
 pressure and the Moon itself are **out of the present scope**; the Sun's
@@ -138,7 +140,8 @@ time. [docs/SCOPE.md](docs/SCOPE.md) lists everything that was removed.
 | `j2mean` | analytic two-body + J2 secular drift of RAAN, perigee, mean anomaly, timed by the mean semi-major axis | thousands of satellites |
 
 **Initial conditions** - classical elements (a/e, perigee/apogee, or circular
-altitude; `"i": "sso"` gives the sun-synchronous inclination), ECI state
+altitude, all mean values when J2 acts; `"i": "sso"` gives the sun-synchronous
+inclination, tuned to the run's zonal field), ECI state
 vectors, **launch from the surface** (lat/lon/alt, ground speed, azimuth,
 flight-path angle, including Earth-rotation velocity), geostationary slots,
 TLEs, copies spread along an orbit, and **Walker delta/star constellations**.
@@ -147,11 +150,15 @@ TLEs, copies spread along an orbit, and **Walker delta/star constellations**.
 plane changes at the nodes, **Lambert rendezvous** (with an automatic search
 for the cheapest time of flight whose arc stays above the atmosphere), and
 arbitrary V/N/B or RSW or ECI impulses, each schedulable now, after a delay, or
-at the next periapsis / apoapsis / ascending / descending node.
+at the next periapsis / apoapsis / ascending / descending node. Planners aim
+with the run's own forces: a rendezvous planned with J2 and drag on arrives
+within metres, a transfer's far apsis lands on the target radius, and
+"circularize" leaves no free eccentricity under J2.
 
 **Events** - maneuver execution, eclipse entry/exit, ground-station AOS/LOS,
 close approaches between satellites, re-entry, surface impact and escape from
-Earth's sphere of influence.
+Earth's sphere of influence, each stamped at the moment it happens (found
+between integration steps, not at their ends).
 
 **Displays**
 
@@ -270,8 +277,8 @@ python -m satflight.batch scenarios/hohmann_to_geo.json --duration 8h --step 60 
 
 (add `--events events.csv` for every line of the event log) prints a summary
 (final elements, delta-v, events) and writes position,
-velocity, geodetic coordinates and osculating elements for every satellite at
-every step. The engine is an ordinary library too:
+velocity (in the simulator's ECI frame, which is of date, not J2000), geodetic
+coordinates and osculating elements for every satellite at every step. The engine is an ordinary library too:
 
 ```python
 from satflight.scenario import Scenario
@@ -347,7 +354,9 @@ which opens in the Live Editor with its headings and inline figures.
 The physics is checked by the `pytest` suite, including textbook reference
 cases from Vallado's *Fundamentals of Astrodynamics and Applications*
 (RV to elements, 40-minute Kepler propagation, GMST, Hohmann transfer), the
-numerical integrator against the analytic solution (under 1 m after a day),
+numerical integrator against the analytic solution (under 1 m after a day at
+tight tolerances), rendezvous and transfers arriving on target under J2, J3,
+J4 and drag, event times against 1 s steps,
 energy conservation with J2-J4, zonal accelerations against numerical
 gradients of the geopotential, J2 nodal regression against theory
 (sun-synchronous 0.9856 deg/day), Lambert solutions against propagated

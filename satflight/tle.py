@@ -2,8 +2,9 @@
 
 When the optional ``sgp4`` package (the propagator skyfield uses) is
 installed, TLEs are initialized through SGP4 for the proper mean-to-
-osculating conversion; the TEME frame it returns is used as ECI (they differ
-by well under a milliradian). Without it the TLE's mean motion is read as
+osculating conversion; the TEME frame it returns is used as the simulator's
+ECI, which is itself an of-date frame (see ``frames``): the two differ by the
+nutation in right ascension, well under a milliradian. Without it the TLE's mean motion is read as
 the rate of the mean anomaly under J2 (true to first order in J2, as in
 SGP4), which gives the mean semi-major axis; the J2 short-period term turns
 that into the osculating one, and the analytic J2 propagator carries the
@@ -54,6 +55,16 @@ def _implied_decimal(field: str) -> float:
     return sign * float("0." + mant.strip()) * 10.0 ** int(exp)
 
 
+# what the sgp4 package's error codes mean (Vallado's SGP4 report, 2006)
+SGP4_ERRORS = {
+    1: "mean eccentricity out of range (the elements are not an orbit)",
+    2: "mean motion below zero",
+    3: "perturbed eccentricity out of range",
+    4: "semi-latus rectum below zero",
+    6: "the satellite has decayed before that time",
+}
+
+
 @dataclass
 class TLE:
     """A parsed two-line element set (mean elements at ``epoch``)."""
@@ -91,8 +102,11 @@ class TLE:
             jd = julian_date(when)
             jd_i = math.floor(jd - 0.5) + 0.5
             err, r, v = sat.sgp4(jd_i, jd - jd_i)
-            if err == 0:
-                return np.array(r), np.array(v)
+            if err:
+                # the J2 path would happily place an object SGP4 knows has decayed
+                raise ValueError(f"SGP4 cannot carry {self.name or 'this TLE'} to "
+                                 f"{when:%Y-%m-%d %H:%M} UTC: {SGP4_ERRORS.get(err, err)}")
+            return np.array(r), np.array(v)
         e, i = self.eccentricity, self.inclination
         nu = mean_to_true(self.mean_anomaly, e)
         a = float(mean_to_osculating_a(self.semi_major_axis, e, i, self.argp, nu))

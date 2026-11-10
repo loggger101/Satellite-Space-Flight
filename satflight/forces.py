@@ -22,8 +22,8 @@ from dataclasses import asdict, dataclass, fields
 import numpy as np
 
 from . import atmosphere
-from .constants import C22, F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, S22
-from .frames import OMEGA_VEC
+from .constants import C22, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, S22
+from .frames import OMEGA_VEC, geodetic_height
 from .strict import check_keys
 
 # --- Individual terms --------------------------------------------------------------
@@ -119,18 +119,10 @@ def zonal_potential(r, j2=True, j3=False, j4=False, mu: float = MU_EARTH,
     return mu / rm * phi
 
 
-def approx_altitude(r):
-    """Height above the WGS-84 ellipsoid using the local geocentric radius
-    (within ~20 m of the exact geodetic height; cheap enough for drag)."""
-    rm = np.linalg.norm(r, axis=-1)
-    s2 = (r[..., 2] / rm) ** 2
-    return rm - R_EARTH * (1.0 - F_EARTH * s2)
-
-
 def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0):
     """Drag. ``cd_a_over_m`` is Cd*A/m in m^2/kg, shape (N,)."""
     v_rel = v - np.cross(OMEGA_VEC, r)
-    rho = atmosphere.density(approx_altitude(r), density_scale)   # kg/m^3
+    rho = atmosphere.density(geodetic_height(r), density_scale)   # kg/m^3
     speed = np.linalg.norm(v_rel, axis=-1)
     # 0.5*rho*CdA/m*|v|v with v in m/s gives m/s^2; the km<->m factors net to 1e3
     k = -0.5e3 * rho * cd_a_over_m * speed

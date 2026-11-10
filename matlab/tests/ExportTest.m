@@ -48,7 +48,7 @@ classdef ExportTest < ExportCase
             tc.verifyEqual(numel(out.launches), 6);
             tc.verifyEqual([out.launches.outcome], [out.launches.plannedOutcome]);
             tc.verifyTrue(any(out.events.text == "Scheduled circularize at apogee for " + ...
-                "Rocket Lab sat in 00:45:46.3"), "the Electron payload's circularization");
+                "Rocket Lab sat in 00:45:13.8"), "the Electron payload's circularization");
         end
 
         function launchDayMidAscent(tc)

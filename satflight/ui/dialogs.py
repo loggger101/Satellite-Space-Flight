@@ -32,6 +32,7 @@ from ..scenario import (
     orbit_state,
     palette_color,
     walker_states,
+    zonal_terms,
 )
 from ..simulation import ACTIVE, PROPAGATORS
 from ..timeutil import format_duration, format_period
@@ -58,6 +59,8 @@ INC_TIP = ("Tilt of the orbit against the equator in degrees: 0 equatorial, 90 p
 RAAN_TIP = ("Right ascension of the ascending node: where, measured east from the vernal "
             "equinox, the orbit crosses the equator going north.")
 MASS_TIP = "Spacecraft mass; with the area and Cd it sets how strongly air drag slows it."
+DRY_TIP = ("Mass left once the propellant is gone. Burns stop there (the log says so). "
+           "0 means no limit: any delta-v can be spent.")
 AREA_TIP = "Cross-section facing the airflow, for air drag."
 CD_TIP = "Drag coefficient: about 2.2 for a typical satellite."
 
@@ -111,15 +114,18 @@ def add_satellite_dialog(app):
           tip="How you describe where the satellite starts. The fields below change to "
               "match.", option_tips=MODE_TIPS),
         F("alt", "Altitude (km)", "float", "550", visible=_mode("Circular altitude"),
-          tip="Height of the circular orbit above the surface. The ISS flies at about 420 km, "
+          tip="Height of the circular orbit above the equatorial radius (6,378 km), averaged "
+              "over a revolution when J2 acts. The ISS flies at about 420 km, "
               "geostationary satellites at 35,786 km."),
         F("hp", "Perigee altitude (km)", "float", "300", visible=_mode("Perigee / apogee"),
-          tip="Height of the orbit's lowest point above the surface."),
+          tip="Height of the orbit's lowest point above the equatorial radius (6,378 km); "
+              "a mean value when J2 acts."),
         F("ha", "Apogee altitude (km)", "float", "2000", visible=_mode("Perigee / apogee"),
-          tip="Height of the orbit's highest point above the surface."),
+          tip="Height of the orbit's highest point above the equatorial radius (6,378 km); "
+              "a mean value when J2 acts."),
         F("a", "Semi-major axis a (km)", "float", "8000", visible=_mode("Elements (a, e)"),
           tip="Half the long axis of the ellipse, from the Earth's center (the Earth's "
-              "radius is 6,378 km)."),
+              "radius is 6,378 km); the orbit-averaged (mean) value when J2 acts."),
         F("e", "Eccentricity e", "float", "0.1", visible=_mode("Elements (a, e)"),
           tip="0 is a circle; the nearer to 1, the longer and thinner the ellipse."),
         F("i", "Inclination (deg or 'sso')", "floatx", "51.6", visible=elements, tip=INC_TIP),
@@ -160,6 +166,7 @@ def add_satellite_dialog(app):
           tip="Add this many satellites on the same orbit, spaced evenly in time (mean "
               "anomaly)."),
         F("mass", "Mass (kg)", "float", "500", tip=MASS_TIP),
+        F("dry_mass", "Dry mass (kg)", "float", "0", tip=DRY_TIP),
         F("area", "Area (m^2)", "float", "5", tip=AREA_TIP),
         F("cd", "Drag coefficient Cd", "float", "2.2", tip=CD_TIP),
         F("preview", "", "info", "",
@@ -177,7 +184,10 @@ def add_satellite_dialog(app):
         props = dict(mass=v["mass"], area=v["area"], cd=v["cd"])
         if min(props.values()) <= 0:
             return "mass, area and coefficients must be positive"
-        added = sim.add_satellites(orbit, v["name"] or "Sat", count=v["count"], **props)
+        if not 0 <= v["dry_mass"] <= v["mass"]:
+            return "dry mass must be between 0 (no limit) and the mass"
+        added = sim.add_satellites(orbit, v["name"] or "Sat", count=v["count"],
+                                   dry_mass=v["dry_mass"], **props)
         app.select(sim.n - len(added))
         return None
 
@@ -223,7 +233,8 @@ def _preview(dlg):
     try:
         v = dlg.values()
         sim = dlg.app.sim
-        r, vv = orbit_state(_orbit_from(v), sim.clock, sim.t, j2_acts(sim.propagator, sim.forces))
+        r, vv = orbit_state(_orbit_from(v), sim.clock, sim.t, j2_acts(sim.propagator, sim.forces),
+                            zonal_terms(sim.propagator, sim.forces))
         el = rv2coe(r, vv)
         if el.e < 1:
             txt = (f"a {el.a:,.0f} km  e {el.e:.4f}  i {math.degrees(el.i):.2f} deg  "
@@ -247,7 +258,8 @@ def walker_dialog(app):
           tip="Base name; each satellite gets its plane and slot number added (-0102 is "
               "plane 1, slot 2)."),
         F("altitude", "Altitude (km)", "float", "1200",
-          tip="Height of every satellite's circular orbit."),
+          tip="Mean height of every satellite's circular orbit above the equatorial "
+              "radius (6,378 km)."),
         F("inclination", "Inclination (deg)", "float", "53",
           tip="Tilt of every plane against the equator."),
         F("total", "Total satellites t", "int", "24",
@@ -266,6 +278,7 @@ def walker_dialog(app):
         F("raan0", "First plane RAAN (deg)", "float", "0",
           tip="RAAN of the first plane; the others follow from it."),
         F("mass", "Mass each (kg)", "float", "260", tip=MASS_TIP),
+        F("dry_mass", "Dry mass each (kg)", "float", "0", tip=DRY_TIP),
         F("preview", "", "info", "",
           tip="The constellation in Walker notation i:t/p/f, satellites per plane and "
               "the orbital period."),
@@ -276,7 +289,7 @@ def walker_dialog(app):
         c = ConstellationSpec(name=v["name"] or "Walker", altitude=v["altitude"],
                               inclination=v["inclination"], total=v["total"], planes=v["planes"],
                               phasing=v["phasing"], pattern=v["pattern"], raan0=v["raan0"],
-                              mass=v["mass"])
+                              mass=v["mass"], dry_mass=v["dry_mass"])
         if c.total % c.planes:
             raise ValueError("total satellites must be a multiple of the number of planes")
         return c
@@ -293,9 +306,9 @@ def walker_dialog(app):
 
     def on_ok(v):
         c = spec(v)
-        states = walker_states(c)
+        states = walker_states(c, j2_acts(sim.propagator, sim.forces))
         color = palette_color(sim.n)
-        props = dict(mass=c.mass, area=c.area, cd=c.cd)
+        props = dict(mass=c.mass, area=c.area, cd=c.cd, dry_mass=c.dry_mass)
         n0 = sim.n
         sim.add_many([(name, color, props, r, v_) for name, r, v_ in states])
         app.select(n0)
@@ -416,16 +429,29 @@ def maneuver_dialog(app):
     ]
 
     scan_cache: dict = {}     # the rendezvous TOF scan is slow: reuse it while the form changes
+    plans: dict = {}          # planners fly the run's forces: one plan per form and state
+
+    def plan(v, aim=True):
+        key = (repr(sorted(v.items())), aim, sim.t, sim.n, hash(sim.y.tobytes()))
+        if key not in plans:
+            try:
+                plans[key] = _plan_maneuver(sim, v, scan_cache, aim)
+            except ValueError as exc:
+                plans[key] = exc
+        if isinstance(plans[key], ValueError):
+            raise plans[key]
+        burns, summary = plans[key]
+        return [Maneuver.from_dict(b.to_dict()) for b in burns], summary
 
     def on_change(dlg, key):
         try:
-            _, summary = _plan_maneuver(sim, dlg.values(), scan_cache)
+            _, summary = plan(dlg.values(), aim=False)     # quick, while typing
             dlg.info["preview"] = summary
         except ValueError as exc:
             dlg.info["preview"] = f"({exc})"
 
     def on_ok(v):
-        burns, _ = _plan_maneuver(sim, v, scan_cache)
+        burns, _ = plan(v)
         for b in burns:
             sim.schedule(b)
         return None
@@ -439,19 +465,21 @@ def maneuver_dialog(app):
     return dlg
 
 
-def _plan_maneuver(sim, v: dict, scan_cache: dict):
+def _plan_maneuver(sim, v: dict, scan_cache: dict, aim: bool = True):
     """(burns, summary) for the maneuver form values ``v``; raises ValueError
     if the maneuver is impossible. ``scan_cache`` keeps the automatic
-    rendezvous time of flight between calls."""
+    rendezvous time of flight between calls; without ``aim`` transfers are
+    the two-body estimate (the preview)."""
     kind = KINDS[v["kind"]]
     timing = TIMINGS[v["timing"]]
     delay = v.get("delay", 0.0)
     sat = v["sat"]
     common = dict(timing=timing, delay=delay, isp=v["isp"])
     if kind == "hohmann":
-        burns, summary = plan_hohmann(sim, sat, v["target_alt"], timing, delay)
+        burns, summary = plan_hohmann(sim, sat, v["target_alt"], timing, delay, aim)
     elif kind == "bielliptic":
-        burns, summary = plan_bielliptic(sim, sat, v["rb_alt"], v["target_alt"], timing, delay)
+        burns, summary = plan_bielliptic(sim, sat, v["rb_alt"], v["target_alt"], timing, delay,
+                                         aim)
     elif kind == "rendezvous":
         if v.get("auto_tof"):
             key = (sat, v["target"], timing, delay, round(sim.t, 1))
@@ -600,6 +628,7 @@ def physics_dialog(app):
         for s in sim.sats:
             s.energy_ref = None       # the conserved quantity changed with the model
         sim.log(f"Physics: {sim.forces.label()}, {sim.propagator}/{it.method}")
+        sim.warn_ignored()
         return None
 
     return FormDialog(app, "Physics & integrator", specs, on_ok, "Apply", width=520,
@@ -770,6 +799,7 @@ def edit_satellite_dialog(app):
         F("name", "Name", "text", s.name,
           tip="A new name; planned maneuvers follow the satellite."),
         F("mass", "Mass (kg)", "float", f"{s.mass:g}", tip=MASS_TIP),
+        F("dry_mass", "Dry mass (kg)", "float", f"{s.dry_mass:g}", tip=DRY_TIP),
         F("area", "Area (m^2)", "float", f"{s.area:g}", tip=AREA_TIP),
         F("cd", "Drag coefficient Cd", "float", f"{s.cd:g}", tip=CD_TIP),
     ]
@@ -777,8 +807,10 @@ def edit_satellite_dialog(app):
     def on_ok(v):
         if min(v["mass"], v["area"], v["cd"]) <= 0:
             return "values must be positive"
+        if not 0 <= v["dry_mass"] <= v["mass"]:
+            return "dry mass must be between 0 (no limit) and the mass"
         sim.rename(sim.sats.index(s), v["name"] or s.name)
-        s.mass, s.area, s.cd = v["mass"], v["area"], v["cd"]
+        s.mass, s.area, s.cd, s.dry_mass = v["mass"], v["area"], v["cd"], v["dry_mass"]
         return None
 
     return FormDialog(app, "Edit satellite", specs, on_ok, "Apply",

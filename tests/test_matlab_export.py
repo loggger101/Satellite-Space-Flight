@@ -137,8 +137,9 @@ def lone_satellite() -> Scenario:
 
 @pytest.mark.parametrize("scenario, compare, sections", [
     ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Plots",
-                          "Passes and eclipses", "Maneuvers and close approaches", "Orbit evolution",
-                          "Animation", "Save", "Cross-check against the simulator"]),
+                          "Passes and eclipses", "Maneuvers and close approaches",
+                          "Orbit evolution", "Animation", "Save",
+                          "Cross-check against the simulator"]),
     ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
                                "Maneuvers and close approaches", "Orbit evolution",
                                "Animation", "Save"]),
@@ -385,9 +386,16 @@ def test_runtime_constants_are_the_simulators():
     assert const("EVENT_DETAIL_LIMIT") == simulation.EVENT_DETAIL_LIMIT
     assert const("ALL_PAIRS_LIMIT") == simulation.ALL_PAIRS_LIMIT
     assert const("CONJUNCTION_KM") == Simulation(Scenario()).conjunction_km
-    for name in ("G0_M", "P_SCALE_H", "GUIDANCE_ALT", "H_POWERED", "H_COAST", "SAMPLE_DT",
+    for name in ("G0_M", "THROTTLE_MIN", "GUIDANCE_ALT", "H_POWERED", "H_COAST", "SAMPLE_DT",
                  "FREEZE_TGO", "MIN_PERIGEE", "MAX_BURN"):
         assert const(name.replace("G0_M", "G0M")) == getattr(launch, name), name
+    for name in ("APSIS_TIME_TOL", "CIRC_SAMPLES", "CIRC_TOL", "CIRC_ITER", "CIRC_STEP"):
+        assert const(name) == getattr(simulation, name), name
+    assert const("US76_TOP") == launch._US76_TOP and const("US76_GMR") == launch._GMR
+    assert const("US76_R0") == launch._R0_GEOPOT
+    us76 = re.search(r"C\.US76 = \[(.*?)\];", src, re.S).group(1)
+    rows = [[float(x) for x in r.split()] for r in us76.replace("...", "").split(";")]
+    assert rows == [list(r) for r in launch._US76]
     assert const("TOP_KM") == atmosphere.TOP_KM
     table = re.search(r"C\.ATM = \[(.*?)\];", src, re.S).group(1)
     atm = np.array([[float(x) for x in row.split()] for row in table.replace("...", "").split(";")])

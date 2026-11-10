@@ -75,6 +75,15 @@ MAX_SPAN = 100 * 365.25 * 86400.0   # s; the longest wait (delay) anything may a
 MAX_CDA_OVER_M = 100.0
 
 
+def check_dry_mass(dry, mass, what: str):
+    """Raise ValueError unless ``dry`` kg (0 = no propellant limit) is a mass the
+    spacecraft can burn down to from ``mass`` kg."""
+    finite(dry, f"{what} dry mass (kg)")
+    if not 0.0 <= dry <= mass:
+        raise ValueError(f"{what}: dry mass must be between 0 (no limit) and the mass "
+                         f"{mass:g} kg, got {dry:g} kg")
+
+
 def drag_props(mass, area, cd, what: str):
     """Raise ValueError unless mass (kg), area (m^2) and Cd describe a body the
     drag model can fly."""

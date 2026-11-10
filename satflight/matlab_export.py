@@ -399,6 +399,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += _text("No satellites in orbit at the epoch: everything starts on a launch pad.")
         out += ["sim.names = strings(0, 1);", "sim.y0 = zeros(0, 6);", "props = zeros(0, 3);"]
     out += ["sim.mass = props(:, 1);", "sim.area = props(:, 2);", "sim.cd = props(:, 3);"]
+    if any(s.dry_mass > 0 for _, s in rows):
+        out += _text("Dry masses (kg): burns stop when the propellant above them is gone "
+                     "(0: no limit).")
+        out += ["sim.dryMass = [" + " ".join(_num(s.dry_mass) for _, s in rows) + "];"]
 
     if maneuvers:
         out += _text("Scheduled maneuvers, in the order they execute. Columns: satellite, kind, "

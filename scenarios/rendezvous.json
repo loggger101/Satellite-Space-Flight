@@ -1,6 +1,6 @@
 {
   "name": "Lambert rendezvous",
-  "description": "A chaser 70 km below and 6 deg behind a station intercepts it with a Lambert transfer (time of flight chosen for minimum delta-v with the arc kept above the atmosphere), then matches velocity. Plan (TOF 69 min): dV1 84.6 m/s, dV2 ~42.2 m/s, total ~126.8 m/s.",
+  "description": "A chaser 70 km below and 6 deg behind a station intercepts it with a Lambert transfer (time of flight chosen for minimum delta-v with the arc kept above the atmosphere), aimed through J2, then matches velocity. Plan (TOF 67 min): dV1 83.8 m/s, dV2 ~43.2 m/s, total ~127.0 m/s.",
   "epoch": "2026-09-29T12:00:00Z",
   "propagator": "cowell",
   "integrator": {
@@ -11,7 +11,7 @@
     "h_fixed": 10.0
   },
   "forces": {
-    "j2": false,
+    "j2": true,
     "j3": false,
     "j4": false,
     "c22": false,
@@ -79,9 +79,9 @@
       "t": 300.0,
       "delay": 0.0,
       "dv": [
-        -0.019814128456927094,
-        -0.06144424550463323,
-        -0.05463758127272156
+        -0.019439445089464158,
+        -0.0617344110225444,
+        -0.053222132852586146
       ],
       "frame": "ECI",
       "delta_i": 0.0,
@@ -89,7 +89,7 @@
       "thrust": 0.0,
       "isp": 300.0,
       "duration": 0.0,
-      "label": "Intercept burn (84.6 m/s)",
+      "label": "Intercept burn (83.8 m/s)",
       "done": false,
       "result": ""
     },
@@ -97,7 +97,7 @@
       "sat": "Chaser",
       "kind": "match_velocity",
       "timing": "absolute",
-      "t": 4442.713567839196,
+      "t": 4346.231155778894,
       "delay": 0.0,
       "dv": [
         0.0,

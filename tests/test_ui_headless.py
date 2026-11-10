@@ -106,8 +106,9 @@ def test_add_satellite_dialog_with_preset(app):
     dlg.submit()
     assert not app.dialogs
     assert app.sim.n == 10
-    el = rv2coe(app.sim.y[-3, :3], app.sim.y[-3, 3:])            # the first copy as entered
-    assert el.a == pytest.approx(26554, rel=1e-9) and el.e == pytest.approx(0.72)
+    el = rv2coe(app.sim.y[-3, :3], app.sim.y[-3, 3:])            # the first copy as entered:
+    a_mean = osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)   # its mean a (J2 acts)
+    assert a_mean == pytest.approx(26554, rel=1e-9) and el.e == pytest.approx(0.72)
     el = rv2coe(app.sim.y[-3:, :3], app.sim.y[-3:, 3:])          # copies share the mean orbit
     assert np.ptp(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)) < 1e-6
     frame(app, 2)

@@ -42,7 +42,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .analysis import mean_to_osculating_a, osculating_to_mean_a
+from .analysis import (
+    mean_to_osculating_a,
+    mean_to_osculating_i,
+    osculating_to_mean_a,
+    tuned_sso_inclination,
+)
 from .constants import F_EARTH, J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO, SOI_EARTH
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
@@ -50,7 +55,7 @@ from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
 from .integrators import METHODS
 from .launch import LaunchSpec
 from .maneuvers import Maneuver, sun_synchronous_inclination
-from .strict import build, check_keys, drag_props, finite, one_of, whole, within
+from .strict import build, check_dry_mass, check_keys, drag_props, finite, one_of, whole, within
 from .timeutil import UTC, Clock, format_epoch, parse_epoch
 from .tle import parse_tle
 
@@ -76,7 +81,7 @@ PATTERNS = ("delta", "star")
 # the keys an orbit spec of each type may carry ("type" itself aside)
 ORBIT_KEYS = {
     "elements": ("a", "e", "altitude", "perigee_alt", "apogee_alt", "i", "raan", "argp", "nu",
-                 "M"),
+                 "M", "osculating"),
     "state": ("r", "v"),
     "surface": ("lat", "lon", "alt", "speed", "azimuth", "fpa"),
     "geo": ("lon",),
@@ -140,7 +145,11 @@ def _check_numbers(orbit, where: str):
     """Every number of an orbit spec is finite and physically possible."""
     kind = orbit.get("type", "elements")
     for k in ORBIT_KEYS[kind]:
-        if k in orbit and k not in ("r", "v", "line1", "line2") and orbit[k] != "sso":
+        if k == "osculating":
+            if k in orbit and not isinstance(orbit[k], bool):
+                raise ValueError(f"{where} osculating: expected true or false, "
+                                 f"got {orbit[k]!r}")
+        elif k in orbit and k not in ("r", "v", "line1", "line2") and orbit[k] != "sso":
             finite(orbit[k], f"{where} {k}")
     for k in ("altitude", "perigee_alt", "apogee_alt", "alt"):
         if k in orbit:
@@ -186,16 +195,20 @@ class SatSpec:
     area: float = 5.0        # m^2 (drag cross-section)
     cd: float = 2.2
     count: int = 1
+    dry_mass: float = 0.0    # kg left when the propellant is gone; 0 = no limit
 
     def __post_init__(self):
         drag_props(self.mass, self.area, self.cd, f"satellite {self.name!r}")
+        check_dry_mass(self.dry_mass, self.mass, f"satellite {self.name!r}")
         whole(self.count, 1, MAX_GROUP, f"satellite {self.name!r} count")
 
     def to_dict(self):
-        """JSON-ready dict (the color as a list)."""
+        """JSON-ready dict (the color as a list; no dry mass when there is no limit)."""
         d = asdict(self)
         if d["color"] is not None:
             d["color"] = list(d["color"])
+        if not d["dry_mass"]:
+            del d["dry_mass"]
         return d
 
 
@@ -215,6 +228,7 @@ class ConstellationSpec:
     area: float = 4.0
     cd: float = 2.2
     raan0: float = 0.0
+    dry_mass: float = 0.0    # kg each, 0 = no propellant limit
 
     def __post_init__(self):
         where = f"constellation {self.name!r}"
@@ -225,10 +239,14 @@ class ConstellationSpec:
         whole(self.phasing, 0, MAX_GROUP, f"{where} phasing")
         finite(self.raan0, f"{where} raan0")
         drag_props(self.mass, self.area, self.cd, where)
+        check_dry_mass(self.dry_mass, self.mass, where)
 
     def to_dict(self):
-        """JSON-ready dict of the constellation's fields."""
-        return asdict(self)
+        """JSON-ready dict of the constellation's fields (no dry mass when unlimited)."""
+        d = asdict(self)
+        if not d["dry_mass"]:
+            del d["dry_mass"]
+        return d
 
 
 @dataclass
@@ -400,19 +418,29 @@ def geostationary_radius(j2: bool = True) -> float:
     return r
 
 
-def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True):
+def zonal_terms(propagator: str, forces: ForceModel):
+    """(J3, J4) switches of a run that integrates J2 in full (Cowell with J2 on),
+    else None: what tunes an "sso" inclination to the run's own node drift."""
+    if propagator == "cowell" and forces.j2:
+        return (bool(forces.j3), bool(forces.j4))
+    return None
+
+
+def orbit_state(orbit: dict, clock: Clock, t: float = 0.0, j2: bool = True, zonal=None):
     """ECI (r, v) at simulation time ``t`` for an orbit spec. ``j2`` says
-    whether J2 acts in the run (it moves the geostationary radius). ValueError
-    if the spec is malformed or puts the satellite inside the Earth."""
+    whether J2 acts in the run (it moves the geostationary radius); ``zonal``
+    (see :func:`zonal_terms`) makes an "sso" inclination sun-synchronous under
+    the run's full zonal field rather than first-order J2. ValueError if the
+    spec is malformed or puts the satellite inside the Earth."""
     check_orbit(orbit)
-    r, v = _orbit_state(orbit, clock, t, j2)
+    r, v = _orbit_state(orbit, clock, t, j2, zonal)
     if float(np.linalg.norm(r)) < R_POLAR - 1.0:
         raise ValueError(f"the orbit puts the satellite {R_EARTH - float(np.linalg.norm(r)):,.0f} "
                          "km inside the Earth")
     return r, v
 
 
-def _orbit_state(orbit: dict, clock: Clock, t: float, j2: bool):
+def _orbit_state(orbit: dict, clock: Clock, t: float, j2: bool, zonal=None):
     """:func:`orbit_state` without the checks."""
     kind = orbit.get("type", "elements")
     if kind == "elements":
@@ -435,15 +463,29 @@ def _orbit_state(orbit: dict, clock: Clock, t: float, j2: bool):
             nu = mean_to_true(math.radians(float(orbit["M"])), e)
         else:
             nu = _deg(orbit, "nu")
+        # the size is the mean one (orbit-averaged), as for Walker shells, unless
+        # the spec asks for the osculating state: under J2 the osculating a of a
+        # given mean orbit swings ~6 km around each revolution in LEO. A path
+        # whose perigee is under the ground has no revolution to average over:
+        # it is taken as given
+        mean = (j2 and e < 1.0 and a * (1.0 - e) >= R_POLAR
+                and not orbit.get("osculating", False))
         inc = orbit.get("i", 0.0)
         if isinstance(inc, str) and inc.lower() == "sso":
-            # sun-synchronous for the mean orbit, which sets the node drift; the
-            # mean a itself depends a little on i, so settle the two together
-            i = sun_synchronous_inclination(a, e)
-            for _ in range(3):
-                i = sun_synchronous_inclination(float(osculating_to_mean_a(a, e, i, argp, nu)), e)
+            # sun-synchronous for the mean orbit, which sets the node drift
+            if mean:              # mean i, then this instant's osculating one around it
+                i_mean = (tuned_sso_inclination(a, e, argp, *zonal) if zonal
+                          else sun_synchronous_inclination(a, e))
+                i = float(mean_to_osculating_i(i_mean, a, e, argp, nu))
+            else:                 # the mean a depends a little on i: settle them together
+                i = sun_synchronous_inclination(a, e)
+                for _ in range(3):
+                    i = sun_synchronous_inclination(
+                        float(osculating_to_mean_a(a, e, i, argp, nu)), e)
         else:
             i = math.radians(float(inc))
+        if mean:
+            a = float(mean_to_osculating_a(a, e, i, argp, nu))
         r, v = coe2rv(a, e, i, raan, argp, nu)
         return np.asarray(r, float), np.asarray(v, float)
     if kind == "state":
@@ -493,10 +535,11 @@ def spread_along_orbit(r, v, count: int):
     return out
 
 
-def walker_states(c: ConstellationSpec):
+def walker_states(c: ConstellationSpec, j2: bool = True):
     """ECI states of a Walker i:t/p/f constellation (circular orbits). The
-    altitude is the mean one: each member's osculating semi-major axis carries
-    the J2 short-period term for its place in the orbit."""
+    altitude is the mean one: with ``j2`` (J2 acts in the run) each member's
+    osculating semi-major axis carries the J2 short-period term for its place
+    in the orbit; without it mean and osculating are the same."""
     if c.total % c.planes:
         raise ValueError("total satellites must be a multiple of the number of planes")
     per = c.total // c.planes
@@ -508,7 +551,8 @@ def walker_states(c: ConstellationSpec):
         raan = math.radians(c.raan0) + spread * p / c.planes
         for s in range(per):
             u = 2 * math.pi * s / per + 2 * math.pi * c.phasing * p / c.total
-            r, v = coe2rv(float(mean_to_osculating_a(a, 0.0, i, 0.0, u)), 0.0, i, raan, 0.0, u)
+            a_u = float(mean_to_osculating_a(a, 0.0, i, 0.0, u)) if j2 else a
+            r, v = coe2rv(a_u, 0.0, i, raan, 0.0, u)
             out.append((f"{c.name}-{p + 1:02d}{s + 1:02d}", np.asarray(r), np.asarray(v)))
     return out
 
@@ -518,18 +562,19 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
     out = []
     idx = 0
     for spec in scenario.satellites:
-        r, v = orbit_state(spec.orbit, clock, t, j2_acts(scenario.propagator, scenario.forces))
+        r, v = orbit_state(spec.orbit, clock, t, j2_acts(scenario.propagator, scenario.forces),
+                           zonal_terms(scenario.propagator, scenario.forces))
         states = spread_along_orbit(r, v, int(spec.count))
         for k, (rr, vv) in enumerate(states):
             name = spec.name if len(states) == 1 else f"{spec.name}-{k + 1}"
             color = tuple(spec.color) if spec.color else palette_color(idx)
-            props = dict(mass=spec.mass, area=spec.area, cd=spec.cd)
+            props = dict(mass=spec.mass, area=spec.area, cd=spec.cd, dry_mass=spec.dry_mass)
             out.append((name, color, props, rr, vv))
             idx += 1
     for c in scenario.constellations:
         color = tuple(c.color) if c.color else palette_color(idx)
-        props = dict(mass=c.mass, area=c.area, cd=c.cd)
-        for name, rr, vv in walker_states(c):
+        props = dict(mass=c.mass, area=c.area, cd=c.cd, dry_mass=c.dry_mass)
+        for name, rr, vv in walker_states(c, j2_acts(scenario.propagator, scenario.forces)):
             out.append((name, color, props, rr, vv))
         idx += 1
     return out

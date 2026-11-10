@@ -43,6 +43,10 @@ s.Y = reshape(sim.y0, n, 6);
 s.mass = reshape(sim.mass, [], 1);
 s.area = reshape(sim.area, [], 1);
 s.cd = reshape(sim.cd, [], 1);
+s.dry = zeros(n, 1);                     % kg left with the propellant gone; 0 = no limit
+if isfield(sim, "dryMass")
+    s.dry = reshape(sim.dryMass, [], 1);
+end
 s.status = repmat("active", n, 1);
 s.dvUsed = zeros(n, 1);
 s.family = strings(n, 1);
@@ -85,6 +89,11 @@ s = checkLeft(s, idx);
 s = stepEvents(s, 0, idx, s.Y);
 s = logEvent(s, 0, sprintf("Scenario '%s' loaded: %d satellites, %d stations, propagator %s", ...
     sim.name, numel(s.names), numel(s.st.name), sim.propagator), "info");
+left = ignoredTerms(sim);
+if ~isempty(left)
+    s = logEvent(s, 0, sprintf("Propagator %s ignores %s: switch to cowell to integrate them", ...
+        sim.propagator, strjoin(left, ", ")), "warn");
+end
 s = recordAt(s, 1, s.Y);                 % the first row is written before anything executes
 s = executeDue(s);
 
@@ -256,6 +265,20 @@ if neg
 end
 end
 
+function left = ignoredTerms(sim)
+% the enabled force terms the propagator cannot apply (the simulator's ignored_terms):
+% kepler carries two-body motion only, j2mean two-body plus J2
+left = strings(1, 0);
+if sim.propagator == "cowell"
+    return
+end
+F = sim.forces;
+on = [F.j2, F.j3, F.j4, F.c22, F.drag];
+terms = ["J2", "J3", "J4", "C22", "DRAG"];
+used = sim.propagator == "j2mean" & terms == "J2";
+left = terms(on & ~used);
+end
+
 function [s, row] = addRow(s, name, y, mass, area, cd, family)
 % a new object (a payload on its pad, a spent stage); its name made unique as the
 % simulator makes it
@@ -265,6 +288,7 @@ s.Y(row, :) = y;
 s.mass(row, 1) = mass;
 s.area(row, 1) = area;
 s.cd(row, 1) = cd;
+s.dry(row, 1) = 0;
 s.status(row, 1) = "active";
 s.dvUsed(row, 1) = 0;
 s.family(row, 1) = family;
@@ -322,11 +346,31 @@ for j = find(s.pending)
         end
         tv = s.Y(it, 4:6);
     end
-    dv = impulseEci(m, r, v, tv, C);
+    if m.kind == "circularize"
+        try
+            dv = circularVelocity(s, i) - v;
+        catch err
+            if err.identifier ~= "satflight:circular"
+                rethrow(err)
+            end
+            s = logEvent(s, s.t, sprintf("%s: %s skipped (%s)", m.sat, m.label, err.message), ...
+                "warn");
+            continue
+        end
+    else
+        dv = impulseEci(m, r, v, tv, C);
+    end
     dvm = norm(dv);
+    room = dvLeft(s, i, m.isp);
+    if dvm > room
+        s = logEvent(s, s.t, sprintf("%s: propellant ran out - %.2f of %.2f m/s delivered " + ...
+            "(dry mass %g kg)", m.sat, room * 1000, dvm * 1000, s.dry(i)), "warn");
+        dv = dv * (room / dvm);
+        dvm = room;
+    end
     s.Y(i, 4:6) = v + dv;
     s.dvUsed(i) = s.dvUsed(i) + dvm;
-    s.mass(i) = s.mass(i) * exp(-dvm / (m.isp * C.G0));
+    s.mass(i) = max(s.mass(i) * exp(-dvm / (m.isp * C.G0)), s.dry(i));
     s = logEvent(s, s.t, sprintf("%s: executed %s - dV %.2f m/s", m.sat, m.label, dvm * 1000), ...
         "maneuver");
 end
@@ -346,7 +390,21 @@ if m.isp > 0
 end
 duration = m.duration;
 if mdot > 0
-    duration = min(duration, 0.95 * s.mass(i) / mdot);
+    % the burn ends when the propellant does: at the dry mass, or with none set, at
+    % 95 % of the mass
+    if s.dry(i) > 0
+        floorMass = s.dry(i);
+        why = sprintf("dry mass %g kg", s.dry(i));
+    else
+        floorMass = 0.05 * s.mass(i);
+        why = "95 % of the mass, with no dry mass set";
+    end
+    burnable = max(s.mass(i) - floorMass, 0) / mdot;
+    if burnable < duration
+        s = logEvent(s, s.t, sprintf("%s: propellant for only %s of %s s of burn (%s)", m.sat, ...
+            commaNum(burnable), commaNum(duration), why), "warn");
+        duration = burnable;
+    end
 end
 if s.sim.propagator ~= "cowell"
     % the analytic propagators cannot integrate thrust: the same rocket-equation
@@ -395,7 +453,8 @@ end
 
 function s = scheduleAtApsis(s, i, m)
 % queue maneuver m for object i at its next apoapsis (the circularization a launch
-% asks for), as the simulator's schedule() resolves it
+% asks for), as the simulator's schedule() resolves it: the two-body estimate, then,
+% unless the run is two-body, the highest point of the trajectory the run will fly
 el = rv2coe(s.Y(i, 1:3), s.Y(i, 4:6), s.C.MU);
 if el.e >= 1
     error("satflight:maneuver", "open orbit has no apoapsis");
@@ -405,10 +464,167 @@ if ~isfinite(dt)
     error("satflight:maneuver", "orbit never reaches apoapsis");
 end
 m.t = s.t + dt;
+if s.sim.propagator ~= "kepler"
+    m.t = nextApsis(s, i, true);
+end
 s.man(end + 1) = m;
 s.pending(end + 1) = true;
 s = logEvent(s, s.t, sprintf("Scheduled %s for %s %s", m.label, m.sat, whenText(m.t, s.t)), ...
     "maneuver");
+end
+
+function t = nextApsis(s, i, highest)
+% time of the highest (or lowest) point of object i's coming revolution: the extreme of
+% 180 samples, then the root of r.v between its neighbours by bisection (the
+% simulator's _next_apsis)
+C = s.C;
+el = rv2coe(s.Y(i, 1:3), s.Y(i, 4:6), C.MU);
+times = s.t + linspace(0, 2 * pi / el.n, 181);
+times = times(2:end);
+track = coastTrack(s, i, s.Y(i, :), s.t, times, 0);
+rad = vecnorm(reshape(track(1, 1:3, :), 3, []), 2, 1);
+if highest
+    [~, k] = max(rad);
+else
+    [~, k] = min(rad);
+end
+k = min(max(k, 2), numel(times) - 1);
+a = times(k - 1);
+b = times(k + 1);
+% integration is a flow, so it may restart from the sample before; the analytic
+% j2mean is not (it re-reads mean elements), so it starts from now
+if s.sim.propagator == "cowell"
+    t0 = a;
+    y0 = reshape(track(1, :, k - 1), 1, 6);
+else
+    t0 = s.t;
+    y0 = s.Y(i, :);
+end
+g = @(t) radialDot(coastTo(s, i, y0, t0, t, 0));
+ga = g(a);
+yb = reshape(track(1, :, k + 1), 1, 6);
+gb = dot(yb(1:3), yb(4:6));
+if ga * gb > 0
+    t = times(k);
+    return
+end
+while b - a > C.APSIS_TIME_TOL
+    t = 0.5 * (a + b);
+    gt = g(t);
+    if (gt < 0) == (ga < 0)
+        a = t;
+        ga = gt;
+    else
+        b = t;
+    end
+end
+t = 0.5 * (a + b);
+end
+
+function d = radialDot(y)
+d = dot(y(1:3), y(4:6));
+end
+
+function Y = coastTo(s, rows, Y0, t0, t1, hMaxLong)
+% the states Y0 (objects rows) carried from t0 to t1 under the run's own forces,
+% coasting: no burns, no events, the run untouched (the simulator's coast_states)
+if t1 <= t0
+    Y = Y0;
+    return
+end
+if s.sim.propagator ~= "cowell"
+    Y = analyticStep(Y0, t1 - t0, s.sim.propagator, s.C);
+    return
+end
+n = numel(rows);
+cdam = s.cd(rows) .* s.area(rows) ./ s.mass(rows);
+it = s.sim.integrator;
+opts = odeset(RelTol=it.rtol, AbsTol=it.atol, MaxStep=max(it.hMax, hMaxLong));
+f = @(t, y) derivative(t, y, n, cdam, s.sim.forces, s.sim.jd0, s.man, zeros(0, 4), ...
+    zeros(0, 1), s.C);
+sol = ode45(f, [t0, t1], reshape(Y0, [], 1), opts);
+Y = reshape(sol.y(:, end), n, 6);
+end
+
+function track = coastTrack(s, rows, Y0, t0, times, hMaxLong)
+% the states (rows x 6 x times) of Y0 at the increasing times, coasting from t0
+n = numel(rows);
+track = zeros(n, 6, numel(times));
+Y = Y0;
+t = t0;
+for j = 1:numel(times)
+    if s.sim.propagator == "cowell"
+        Y = coastTo(s, rows, Y, t, times(j), hMaxLong);
+        t = times(j);
+    else
+        Y = analyticStep(Y0, times(j) - t0, s.sim.propagator, s.C);
+    end
+    track(:, :, j) = Y;
+end
+end
+
+function v = circularVelocity(s, i)
+% velocity that puts object i on a circular orbit through where it is, in its plane,
+% for this run's forces: no once-per-rev term in the radius over the coming
+% revolution (J2 leaves a ripple at twice the orbital frequency). Newton on the radial
+% and along-track speed (the simulator's circular_velocity)
+C = s.C;
+r = s.Y(i, 1:3);
+rm = norm(r);
+rh = r / rm;
+th = unit3(cross3(cross3(r, s.Y(i, 4:6)), rh));
+vc = sqrt(C.MU / rm);
+F = s.sim.forces;
+perturbed = s.sim.propagator == "j2mean" || (s.sim.propagator == "cowell" && ...
+    (F.j2 || F.j3 || F.j4 || F.c22 || F.drag));
+if ~perturbed
+    v = vc * th;
+    return
+end
+period = 2 * pi * rm / vc;
+times = s.t + linspace(0, period, C.CIRC_SAMPLES + 1);
+times = times(2:end);
+p = [0, vc];                                % radial, along-track km/s
+step = [0 0; C.CIRC_STEP 0; 0 C.CIRC_STEP];
+c = zeros(3, 2);
+for pass = 1:C.CIRC_ITER
+    trial = p + step;
+    Y0 = [repmat(r, 3, 1), trial(:, 1) * rh + trial(:, 2) * th];
+    track = coastTrack(s, [i; i; i], Y0, s.t, times, period / 360);
+    for k = 1:3
+        c(k, :) = oncePerRev(reshape(track(k, 1:3, :), 3, []).', rh, th, times - s.t);
+    end
+    if norm(c(1, :)) < C.CIRC_TOL
+        v = p(1) * rh + p(2) * th;
+        return
+    end
+    J = (c(2:3, :) - c(1, :)).' / C.CIRC_STEP;
+    p = p - (J \ c(1, :).').';
+end
+error("satflight:circular", "no circular orbit found within %.0f mm (still %.3f m of " + ...
+    "eccentricity)", C.CIRC_TOL * 1e6, norm(c(1, :)) * 1000);
+end
+
+function c = oncePerRev(P, rh, th, t)
+% cos u and sin u amplitudes (km) of the radius along positions P (one per row), u the
+% angle from rh toward th; the fit also takes a constant, a drift (drag) and the J2
+% ripple at 2u, so only free eccentricity is left
+u = atan2(P * th.', P * rh.');
+t = t(:);
+A = [ones(size(u)), t / t(end), cos(u), sin(u), cos(2 * u), sin(2 * u)];
+coef = A \ vecnorm(P, 2, 2);
+c = coef(3:4).';
+end
+
+function dv = dvLeft(s, i, isp)
+% delta-v (km/s) the propellant still on board gives at isp seconds; inf with no dry mass
+if s.dry(i) <= 0
+    dv = inf;
+elseif s.mass(i) > s.dry(i)
+    dv = isp * s.C.G0 * log(s.mass(i) / s.dry(i));
+else
+    dv = 0;
+end
 end
 
 function dt = timeToTrueAnomaly(r, v, nuTarget, mu)
@@ -568,13 +784,17 @@ theta = 0;
 if F.c22
     theta = gmst(jd0 + t / 86400);
 end
+masses = burnRows(:, 4) - mdots .* (t - burnRows(:, 3));
+if F.drag && ~isempty(burnRows)
+    % a burning craft gets lighter: its A/m grows (cdam holds Cd A / m at ignition)
+    cdam(burnRows(:, 1)) = cdam(burnRows(:, 1)) .* burnRows(:, 4) ./ masses;
+end
 a = acceleration(r, v, cdam, theta, F, C);
 for k = 1:size(burnRows, 1)
     row = burnRows(k, 1);
     m = man(burnRows(k, 2));
-    mass = burnRows(k, 4) - mdots(k) * (t - burnRows(k, 3));
     d = finiteDirection(m, r(row, :), v(row, :));
-    a(row, :) = a(row, :) + d * (m.thrust / mass) * 1e-3;
+    a(row, :) = a(row, :) + d * (m.thrust / masses(k)) * 1e-3;
 end
 dy = reshape([v, a], [], 1);
 end
@@ -586,7 +806,7 @@ function [value, terminal, direction] = leaveEvents(y, n, C)
 Y = reshape(y, n, 6);
 r = Y(:, 1:3);
 radialSpeed = sum(r .* Y(:, 4:6), 2) ./ vecnorm(r, 2, 2);
-value = [max(approxAltitude(r, C) - C.REENTRY_ALT, radialSpeed); vecnorm(r, 2, 2) - C.SOI];
+value = [max(geodeticHeight(r, C) - C.REENTRY_ALT, radialSpeed); vecnorm(r, 2, 2) - C.SOI];
 terminal = ones(2 * n, 1);
 direction = [-ones(n, 1); ones(n, 1)];
 end
@@ -597,7 +817,7 @@ function [s, gone] = checkLeft(s, idx)
 C = s.C;
 r = s.Y(idx, 1:3);
 v = s.Y(idx, 4:6);
-low = approxAltitude(r, C) < C.REENTRY_ALT & sum(r .* v, 2) < 0;
+low = geodeticHeight(r, C) < C.REENTRY_ALT & sum(r .* v, 2) < 0;
 far = vecnorm(r, 2, 2) > C.SOI;
 gone = any(low | far);
 for k = reshape(find(low | far), 1, [])
@@ -613,7 +833,7 @@ speed = norm(s.Y(i, 4:6));
 if escaped
     s.status(i) = "escaped";
     s = logEvent(s, s.t, sprintf("%s left Earth's sphere of influence", name), "alert");
-elseif approxAltitude(r, C) <= 0
+elseif geodeticHeight(r, C) <= 0
     s.status(i) = "impacted";
     s = logEvent(s, s.t, sprintf("%s impacted the surface at %.2f km/s", name, speed), "alert");
 else
@@ -720,6 +940,13 @@ end
 
 function a = meanToOsculatingA(aMean, e, i, argp, nu, C)
 a = aMean + 1.5 * C.J2 * C.RE ^ 2 * j2ShortPeriodShape(e, i, argp, nu) ./ aMean;
+end
+
+function i = osculatingToMeanI(iOsc, a, e, argp, nu, C)
+% Kozai's first-order J2 short-period term in the inclination, removed
+p = abs(a) .* (1 - e .* e);
+k = 0.375 * C.J2 * (C.RE ./ p) .^ 2 .* sin(2 * iOsc);
+i = iOsc - k .* (cos(2 * (argp + nu)) + e .* cos(2 * argp + nu) + e / 3 .* cos(2 * argp + 3 * nu));
 end
 
 function a = osculatingToMeanA(aOsc, e, i, argp, nu, C)
@@ -930,15 +1157,58 @@ if F.c22
 end
 if F.drag
     vRel = v - [-C.OMEGA * y, C.OMEGA * x, zeros(size(x))];
-    rho = density(approxAltitude(r, C), F.densityScale, C);
+    rho = density(geodeticHeight(r, C), F.densityScale, C);
     speed = vecnorm(vRel, 2, 2);
     a = a + (-0.5e3 * rho .* cdam .* speed) .* vRel;
 end
 end
 
-function h = approxAltitude(r, C)
-rm = vecnorm(r, 2, 2);
-h = rm - C.RE * (1 - C.F * (r(:, 3) ./ rm) .^ 2);
+function h = geodeticHeight(r, C)
+% height (km) above the WGS-84 ellipsoid of positions r (one per row), exact; ECI and
+% ECEF give the same (the ellipsoid is symmetric about the polar axis)
+[~, h] = heikkinen(hypot(r(:, 1), r(:, 2)), r(:, 3), C);
+end
+
+function [lat, h] = heikkinen(p, z, C)
+% geodetic latitude (rad) and height (km) at distance p from the polar axis and z along
+% it: Heikkinen's exact closed form (1982; Zhu 1993). Deeper than half an Earth radius
+% (an orbit's "perigee" far underground) its square roots fail, and the geocentric
+% estimate stands in (the simulator's frames._heikkinen)
+deep = p .* p + z .* z < (0.5 * C.RE) ^ 2;
+pIn = p;
+zIn = z;
+p(deep) = C.RE;
+z(deep) = 0;
+a = C.RE;
+e2 = C.E2;
+b2 = a * a * (1 - e2);
+ep2 = e2 / (1 - e2);
+z2 = z .* z;
+p2 = p .* p;
+f = 54 * b2 * z2;
+g = p2 + (1 - e2) * z2 - e2 * (a * a - b2);
+c = e2 * e2 * f .* p2 ./ (g .* g .* g);
+s = nthroot(1 + c + sqrt(c .* c + 2 * c), 3);
+k = s + 1 + 1 ./ s;
+pp = f ./ (3 * k .* k .* g .* g);
+q = sqrt(1 + 2 * e2 * e2 * pp);
+r0 = -pp * e2 .* p ./ (1 + q) + sqrt(max(0.5 * a * a * (1 + 1 ./ q) ...
+    - pp * (1 - e2) .* z2 ./ (q .* (1 + q)) - 0.5 * pp .* p2, 0));
+d2 = (p - e2 * r0) .^ 2;
+u = sqrt(d2 + z2);
+v = sqrt(d2 + (1 - e2) * z2);
+z0 = b2 * z ./ (a * v);
+lat = atan2(z + ep2 * z0, p);
+h = u .* (1 - b2 ./ (a * v));
+if any(deep)
+    zd = zIn(deep);
+    rm = hypot(pIn(deep), zd);
+    s2 = zeros(size(rm));
+    nz = rm > 0;
+    s2(nz) = zd(nz) .^ 2 ./ rm(nz) .^ 2;
+    lat(deep) = atan2(zd, pIn(deep) * (1 - e2));
+    h(deep) = rm - C.RE * (1 - C.F * s2);
+end
 end
 
 function rho = density(h, scale, C)
@@ -960,18 +1230,9 @@ theta = deg2rad(mod(sec, 86400) / 240);
 end
 
 function [lat, lon, h] = ecefToGeodetic(r, C)
-x = r(:, 1); y = r(:, 2); z = r(:, 3);
-lon = atan2(y, x);
-p = hypot(x, y);
-lat = atan2(z, p * (1 - C.E2));
-for k = 1:6
-    sl = sin(lat);
-    n = C.RE ./ sqrt(1 - C.E2 * sl .* sl);
-    lat = atan2(z + C.E2 * n .* sl, p);
-end
-sl = sin(lat);
-n = C.RE ./ sqrt(1 - C.E2 * sl .* sl);
-h = p .* cos(lat) + (z + C.E2 * n .* sl) .* sl - n;
+% ECEF km -> geodetic latitude, longitude (rad) and height (km), exact
+lon = atan2(r(:, 2), r(:, 1));
+[lat, h] = heikkinen(hypot(r(:, 1), r(:, 2)), r(:, 3), C);
 end
 
 % --- events (simulation.py: eclipses, station passes, close approaches) ----------------------
@@ -1087,7 +1348,7 @@ function s = approachEvents(s, t, idx, Y)
 % pair's relative motion over the step, and logged when they first do
 C = s.C;
 idx = idx(:);
-orbiting = idx(approxAltitude(Y(idx, 1:3), C) > 100);
+orbiting = idx(geodeticHeight(Y(idx, 1:3), C) > 100);
 if numel(orbiting) < 2
     s.lastSample = [];
     return
@@ -1437,7 +1698,10 @@ end
 F = s.sim.forces;
 rate = 0;
 if s.sim.propagator == "j2mean" || (s.sim.propagator == "cowell" && F.j2)
-    rate = j2SecularRates(el.a, el.e, el.i, s.C);
+    % the mean orbit sets the drift
+    a = osculatingToMeanA(el.a, el.e, el.i, el.argp, el.nu, s.C);
+    iMean = osculatingToMeanI(el.i, a, el.e, el.argp, el.nu, s.C);
+    rate = j2SecularRates(a, el.e, iMean, s.C);
 end
 tRef = s.t;
 inc = rad2deg(el.i);
@@ -1489,6 +1753,7 @@ A.fairingOn = V.fairing > 0;
 A.burning = false;
 A.coastUntil = -inf;
 A.throttle = 1;
+A.gWarned = zeros(1, 0);                   % stages whose g-limit overshoot is logged
 A.thrustDir = unit3(A.y(1:3));
 A.ctrl = [];                               % mdot, stage, mode, fixed of the last step
 A.hold = [];
@@ -1657,10 +1922,11 @@ end
 function A = ascLiftoff(A, C)
 % ignite the first stage, or scrub if it cannot lift the vehicle
 st = A.veh.stages(1, :);
-p = exp(-max(A.spec.alt, 0) / C.P_SCALE_H);
-thrust = stageMdot(st, C) * C.G0M * stageIsp(st, p);
-r = sqrt(A.y(1) ^ 2 + A.y(2) ^ 2 + A.y(3) ^ 2);
-weight = A.mass * C.MU / (r * r) * 1e3;
+thrust = stageMdot(st, C) * C.G0M * stageIsp(st, ascPressure(A.spec.alt, C));
+% weight on the turning Earth: gravity less the centrifugal relief, along the plumb line
+g = ascGravity(A.y(1), A.y(2), A.y(3), A.env, C);
+w2 = C.OMEGA * C.OMEGA;
+weight = A.mass * sqrt((g(1) + w2 * A.y(1)) ^ 2 + (g(2) + w2 * A.y(2)) ^ 2 + g(3) ^ 2) * 1e3;
 A.phase = "vertical";
 if thrust <= weight
     A = ascRelease(A, "no_liftoff", sprintf("scrubbed - thrust/weight %.2f is below 1, the " + ...
@@ -1678,15 +1944,43 @@ A = ascMark(A, "Liftoff", C);
 A = ascSample(A, true, C);
 end
 
-function th = ascThrottle(A, st, alt, C)
-% throttle (0.4-1) that keeps the vehicle within its acceleration limit
+function [A, th] = ascThrottle(A, st, alt, C)
+% throttle (0.4-1) that keeps the vehicle within its acceleration limit, as far as the
+% engines go down: past that the limit is exceeded, and the log says so once per stage
 if A.veh.maxG <= 0
     th = 1;
     return
 end
-p = exp(-max(alt, 0) / C.P_SCALE_H);
-a = stageMdot(st, C) * C.G0M * stageIsp(st, p) / A.mass;
-th = max(0.4, min(1, A.veh.maxG * C.G0M / a));
+a = stageMdot(st, C) * C.G0M * stageIsp(st, ascPressure(alt, C)) / A.mass;
+want = A.veh.maxG * C.G0M / a;
+if want < C.THROTTLE_MIN && ~any(A.gWarned == A.k)
+    A.gWarned(end + 1) = A.k;
+    A = ascEvent(A, sprintf("%s exceeds the %g g limit even at %.0f %% throttle (%.2f g)", ...
+        A.veh.stageNames(min(A.k, size(A.veh.stages, 1))), A.veh.maxG, C.THROTTLE_MIN * 100, ...
+        C.THROTTLE_MIN * a / C.G0M), "warn");
+end
+th = max(C.THROTTLE_MIN, min(1, want));
+end
+
+function p = ascPressure(h, C)
+% ambient pressure over its sea-level value at geometric height h km: the US Standard
+% Atmosphere 1976 (below 0 km as at 0 km; above 86 km isothermal decay)
+hg = C.US76_R0 * max(h, 0) / (C.US76_R0 + max(h, 0));
+if hg >= C.US76_TOP
+    p = C.US76_P_TOP * exp(-C.US76_GMR * (hg - C.US76_TOP) / C.US76_T_TOP);
+    return
+end
+k = find(C.US76(:, 1) <= hg, 1, "last");
+p = C.US76_P(k) * us76Layer(C.US76(k, :), hg - C.US76(k, 1), C.US76_GMR);
+end
+
+function r = us76Layer(layer, dh, gmr)
+% pressure ratio across dh km above the base of a US76 layer [base km, base K, lapse K/km]
+if layer(3) == 0
+    r = exp(-gmr * dh / layer(2));
+else
+    r = (layer(2) / (layer(2) + layer(3) * dh)) ^ (gmr / layer(3));
+end
 end
 
 function A = ascStep(A, h, C)
@@ -1710,7 +2004,7 @@ burnout = false;
 cutoff = false;
 if A.burning
     [A, mode, fixed] = ascSteer(A, s0, alt, C);
-    A.throttle = ascThrottle(A, st, alt, C);
+    [A, A.throttle] = ascThrottle(A, st, alt, C);
     mdot = stageMdot(st, C) * A.throttle;
     if mdot * h >= A.prop
         h = A.prop / mdot;
@@ -1764,8 +2058,7 @@ if m > 0 && sp > 0
     A.losses(2) = A.losses(2) + drag * dot3(w, vh) * h;
 end
 if mdot > 0
-    p = exp(-max(alt, 0) / C.P_SCALE_H);
-    a = mdot * C.G0M * stageIsp(st, p) / m;
+    a = mdot * C.G0M * stageIsp(st, ascPressure(alt, C)) / m;
     A.accel = a;
     if mode == 1 && sp > 1e-6
         d = unit3(w);
@@ -1888,6 +2181,11 @@ else
     A = ascMark(A, "Burnout", C);
 end
 A = ascSample(A, true, C);
+if A.fairingOn                % cut off below the jettison height: it goes now, alone
+    A.fairingOn = false;
+    A.mass = A.mass - A.veh.fairing;
+    A = ascEvent(A, sprintf("fairing jettison at cutoff (%.0f km)", A.insertion.alt), "info");
+end
 A = ascDrop(A, name, A.mass - A.spec.payloadMass);
 A.mass = A.spec.payloadMass;
 A = ascRelease(A, outcome, text, kind);
@@ -2018,7 +2316,7 @@ if tgo < C.FREEZE_TGO && ~isempty(A.hold)
     sN = A.hold(2);
 else
     st = A.veh.stages(min(A.k, size(A.veh.stages, 1)), :);
-    p = exp(-max(ascAltitude(r, C), 0) / C.P_SCALE_H);
+    p = ascPressure(ascAltitude(r, C), C);
     aT = stageMdot(st, C) * A.throttle * C.G0M * stageIsp(st, p) / A.mass * 1e-3;
     b = -12 * (rT - rm - 0.5 * vr * tgo) / tgo ^ 3;
     a = (-vr - 0.5 * b * tgo * tgo) / tgo;
@@ -2122,8 +2420,7 @@ if cdA > 0 && alt < C.TOP_KM
     g = g + (-0.5e3 * rho * cdA / m * sp) * w;
 end
 if mdot > 0
-    p = exp(-max(alt, 0) / C.P_SCALE_H);
-    a = mdot * C.G0M * stageIsp(st, p) / m * 1e-3;
+    a = mdot * C.G0M * stageIsp(st, ascPressure(alt, C)) / m * 1e-3;
     if mode == 1 && sp > 1e-6
         g = g + a * w / sp;
     else
@@ -2528,6 +2825,11 @@ C.ASCENT_SYNC = 1.0;          % s
 C.EVENT_DETAIL_LIMIT = 40;
 C.ALL_PAIRS_LIMIT = 300;
 C.CONJUNCTION_KM = 10.0;
+C.APSIS_TIME_TOL = 1e-6;      % s
+C.CIRC_SAMPLES = 72;
+C.CIRC_TOL = 1e-6;            % km
+C.CIRC_ITER = 8;
+C.CIRC_STEP = 1e-5;           % km/s
 % the exported scripts' analysis (not the simulator's): below these the node and the
 % perigee are not defined well enough to plot or to measure a drift of (J2 alone swings a
 % near-circular orbit's osculating e by about 0.001, and its perigee all the way round)
@@ -2535,7 +2837,20 @@ C.I_DEFINED = 0.1;            % deg (or within it of 180)
 C.E_DEFINED = 0.01;
 % satflight/launch.py
 C.G0M = 9.80665;              % m/s^2
-C.P_SCALE_H = 7.0;            % km
+C.THROTTLE_MIN = 0.4;
+% US Standard Atmosphere 1976 below 86 km: geopotential base km, base K, lapse K/km
+C.US76 = [0 288.15 -6.5; 11 216.65 0; 20 216.65 1.0; 32 228.65 2.8; 47 270.65 0;
+    51 270.65 -2.8; 71 214.65 -2.0];
+C.US76_TOP = 84.852;          % km geopotential (86 km geometric)
+C.US76_GMR = 34.163195;       % K/km
+C.US76_R0 = 6356.766;         % km
+C.US76_P = ones(size(C.US76, 1), 1);
+for k = 2:size(C.US76, 1)
+    C.US76_P(k) = C.US76_P(k - 1) * us76Layer(C.US76(k - 1, :), C.US76(k, 1) - C.US76(k - 1, 1), ...
+        C.US76_GMR);
+end
+C.US76_P_TOP = C.US76_P(end) * us76Layer(C.US76(end, :), C.US76_TOP - C.US76(end, 1), C.US76_GMR);
+C.US76_T_TOP = C.US76(end, 2) + C.US76(end, 3) * (C.US76_TOP - C.US76(end, 1));
 C.GUIDANCE_ALT = 50.0;        % km
 C.H_POWERED = 1.0;            % s
 C.H_COAST = 5.0;              % s

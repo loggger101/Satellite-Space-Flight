@@ -111,3 +111,20 @@ def test_conic_points_lie_on_orbit():
         # every point is in the orbit plane and between periapsis and the cap
         assert np.allclose(pts[k] @ h / np.linalg.norm(h), 0.0, atol=1e-6)
         assert rr.min() >= el.rp[k] - 1e-6
+
+
+def test_parabolic_anomalies_round_trip_through_barkers_equation():
+    # audit A16: mean_to_true divided by zero at e = 1
+    from satflight.elements import mean_to_true, true_to_mean
+    nu = np.radians([-150.0, -40.0, 0.0, 60.0, 170.0])
+    for e in (1.0, 1.0 + 5e-10, 1.0 - 5e-10):
+        back = np.asarray(mean_to_true(true_to_mean(nu, e), e))
+        assert np.allclose(np.remainder(back - nu + np.pi, 2 * np.pi) - np.pi, 0.0, atol=1e-9)
+
+
+def test_solvers_that_do_not_converge_say_so():
+    # audit A16: the last iterate used to come back as if it were the answer
+    from satflight.elements import coe2rv, kepler_propagate
+    r, v = coe2rv(7000.0, 0.3, 0.5, 0.1, 0.2, 0.3)
+    with pytest.raises(FloatingPointError, match="did not converge"):
+        kepler_propagate(r, v, 5000.0, max_iter=1)

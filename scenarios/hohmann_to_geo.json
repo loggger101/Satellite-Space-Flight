@@ -1,6 +1,6 @@
 {
   "name": "Hohmann transfer LEO to GEO",
-  "description": "Equatorial 300 km parking orbit raised to GEO with two scheduled burns; a companion stays behind for comparison. Plan: dV1 +2425.1 m/s, dV2 ~+1467.1 m/s, total ~3892.1 m/s, coast 5.27 h.",
+  "description": "Equatorial 300 km parking orbit raised to GEO with two scheduled burns; a companion stays behind for comparison. Plan: dV1 +2428.0 m/s, dV2 ~+1466.6 m/s, total ~3894.6 m/s, coast 5.28 h.",
   "epoch": "2026-09-29T12:00:00Z",
   "propagator": "cowell",
   "integrator": {
@@ -62,7 +62,7 @@
       "t": 600.0,
       "delay": 0.0,
       "dv": [
-        2.425057697538305,
+        2.428025691017374,
         0.0,
         0.0
       ],
@@ -72,7 +72,7 @@
       "thrust": 0.0,
       "isp": 300.0,
       "duration": 0.0,
-      "label": "Hohmann burn 1 (+2425.1 m/s)",
+      "label": "Hohmann burn 1 (+2428.0 m/s)",
       "done": false,
       "result": ""
     },
@@ -80,7 +80,7 @@
       "sat": "Transfer",
       "kind": "circularize",
       "timing": "absolute",
-      "t": 19588.876407328655,
+      "t": 19591.102596577806,
       "delay": 0.0,
       "dv": [
         0.0,

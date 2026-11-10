@@ -23,6 +23,7 @@ from ..eclipse import shadow_fraction
 from ..elements import perifocal_axes
 from ..ephemeris import sun_position
 from ..orbitinfo import OrbitInfo
+from ..simulation import dv_left
 from . import glossary, theme, tips
 from .theme import px
 
@@ -554,7 +555,7 @@ def draw_section(surf, fonts, x, y, w, title, rows) -> int:
     return y + px(6)
 
 
-def property_sections(info: OrbitInfo, dv_used: float):
+def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf):
     """The Orbit tab's property sheet: [(section title, [(label, value)])]."""
     el = info.el
     D = math.degrees
@@ -617,9 +618,12 @@ def property_sections(info: OrbitInfo, dv_used: float):
         ("Area-to-mass", num(info.area_to_mass, "m^2/kg", 4)),
         ("Ballistic coeff m/CdA", num(info.ballistic, "kg/m^2", 1)),
         ("Air density at perigee",
-         f"{info.rho_perigee:.3e} kg/m^3" if info.rho_perigee else "none"),
+         f"{info.rho_perigee:.3e} kg/m^3 at {info.perigee_height:,.0f} km"
+         if info.rho_perigee else "none"),
         ("Drag at perigee", f"{info.drag_perigee:.3e} m/s^2" if info.rho_perigee else "none"),
         ("Delta-v spent", num(dv_used * 1000, "m/s", 2)),
+        ("Delta-v left", f"{num(dv_left * 1000, 'm/s', 1)} at Isp 300 s"
+         if math.isfinite(dv_left) else "no dry mass set"),
         ("Horizon distance", num(info.horizon_km, "km", 0)),
         ("Coverage radius (10\N{DEGREE SIGN})", num(info.footprint_km, "km", 0)),
     ]
@@ -654,6 +658,6 @@ def draw_orbit_tab(surf, x, y, w, app, i) -> int:
         draw_gauge(surf, gauge.move(0, px(46)), fonts, "Speed (apogee -> perigee)",
                    info.v_apo, info.v_peri, info.speed, "km/s", 3, s.color)
         y += px(50)
-    for title, rows in property_sections(info, s.dv_used):
+    for title, rows in property_sections(info, s.dv_used, dv_left(s)):
         y = draw_section(surf, fonts, x, y, w, title, rows)
     return y

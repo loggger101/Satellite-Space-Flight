@@ -40,11 +40,11 @@ def _same(a: Simulation, b: Simulation):
     assert np.array_equal(ta, tb) and np.array_equal(ya, yb)
 
 
-def _orbits(propagator: str, method: str) -> Scenario:
+def _orbits(propagator: str, method: str, forces: ForceModel | None = None) -> Scenario:
     sats = [SatSpec("low", {"type": "elements", "altitude": 300, "i": 51.6}, mass=200, area=3),
             SatSpec("mid", {"type": "elements", "altitude": 1200, "i": 98, "e": 0.02})]
     return Scenario(name="frames", epoch=EPOCH, satellites=sats, propagator=propagator,
-                    forces=ForceModel(j2=True, drag=True),
+                    forces=forces or ForceModel(j2=True, drag=True),
                     integrator=IntegratorSettings(method=method))
 
 
@@ -80,9 +80,9 @@ def test_launch_does_not_depend_on_the_frame_rate():
 def test_a_frame_between_steps_reports_the_state_at_its_own_time():
     """The state shown between two physics steps is the integrated state at
     the requested time, not the last step's."""
-    sim = Simulation(_orbits("cowell", "rk4"))                # 10 s steps
-    ref = Simulation(_orbits("kepler", "dopri5"))
-    sim.forces = ref.forces = ForceModel(j2=False)
+    two_body = ForceModel(j2=False)              # both start from the same states
+    sim = Simulation(_orbits("cowell", "rk4", two_body))     # 10 s steps
+    ref = Simulation(_orbits("kepler", "dopri5", two_body))
     sim.advance(3.0)
     ref.advance(3.0)
     assert sim.t == 3.0

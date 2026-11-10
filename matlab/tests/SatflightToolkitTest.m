@@ -26,11 +26,14 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             sc = satflight.newScenario("MATLAB toolkit test", Description="built in MATLAB", ...
                 Epoch=datetime(2026, 9, 29, 12, 0, 0, TimeZone="UTC"), Drag=true, RecordDt=30);
             sc = satflight.addSatellite(sc, "Imager", ...
-                satflight.orbitElements(Altitude=550, I="sso", Raan=30), Mass=150, Area=1.2);
+                satflight.orbitElements(Altitude=550, I="sso", Raan=30), Mass=150, Area=1.2, ...
+                DryMass=120);
             sc = satflight.addSatellite(sc, "Molniya", satflight.orbitElements( ...
                 PerigeeAlt=600, ApogeeAlt=39700, I=63.4, Argp=270), Color=[255 120 200]);
             sc = satflight.addSatellite(sc, "Probe", ...
                 satflight.orbitState([7000 0 0], [0 7.546 0.5]));
+            sc = satflight.addSatellite(sc, "Raw", satflight.orbitElements(Altitude=700, I=40, ...
+                Osculating=true));
             sc = satflight.addSatellite(sc, "Relay", satflight.orbitGeo(-75));
             sc = satflight.addConstellation(sc, "Shell", Altitude=1200, Inclination=55, ...
                 Total=6, Planes=3, Phasing=1);
@@ -62,7 +65,7 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
         function builtScenarioIsAccepted(tc)
             path = satflight.saveScenario(tc.demoScenario(), fullfile(tc.Tmp, "demo.json"));
             report = satflight.checkScenario(path);
-            for name = ["Imager", "Molniya", "Probe", "Relay", "Shell"]
+            for name = ["Imager", "Molniya", "Probe", "Raw", "Relay", "Shell"]
                 tc.verifySubstring(report, name);
             end
             raw = jsondecode(fileread(path));
@@ -71,6 +74,8 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             tc.verifyFalse(isfield(raw.satellites{1}, "color"));     % unset: simulator default
             tc.verifyEqual(raw.satellites{2}.color', [255 120 200]);
             tc.verifyClass(raw.stations, "struct");                  % a one-entry list stays a list
+            tc.verifyEqual(raw.satellites{1}.dry_mass, 120);
+            tc.verifyTrue(raw.satellites{4}.orbit.osculating);
         end
 
         function loadedScenarioCanBeEdited(tc)

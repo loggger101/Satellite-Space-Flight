@@ -1,5 +1,8 @@
 """Headless batch runs: propagate a scenario and write ephemerides to CSV.
 
+Positions and velocities are in the simulator's ECI, an Earth-centred frame of
+date (TEME-like, see ``satflight.frames``), not J2000.
+
     python -m satflight.batch scenarios/hohmann_to_geo.json --duration 12h --step 60 --out run.csv
 """
 
@@ -14,9 +17,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .constants import R_EARTH
 from .elements import rv2coe
-from .frames import ecef_to_geodetic, eci_to_ecef
+from .frames import ecef_to_geodetic, eci_to_ecef, geodetic_height
 from .scenario import Scenario
 from .simulation import Simulation
 from .timeutil import format_duration, format_epoch
@@ -128,7 +130,7 @@ def summary(sim: Simulation, out=None):
     for i, s in enumerate(sim.sats):
         r, v = sim.y[i, :3], sim.y[i, 3:]
         el = rv2coe(r, v)
-        alt = np.linalg.norm(r) - R_EARTH
+        alt = float(geodetic_height(r))
         print(f"{s.name[:27]:<28}{s.status:<12}{alt:>11.1f}{el.a:>12.1f}{el.e:>10.5f}"
               f"{math.degrees(el.i):>9.3f}{s.dv_used * 1000:>9.1f}", file=out)
     events = [e for e in sim.events if e.kind in ("maneuver", "alert", "warn", "launch")]

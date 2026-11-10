@@ -35,13 +35,18 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .analysis import j2_mean_propagate, j2_secular_rates
-from .constants import SOI_EARTH
+from .analysis import (
+    j2_mean_propagate,
+    j2_secular_rates,
+    osculating_to_mean_a,
+    osculating_to_mean_i,
+)
+from .constants import MU_EARTH, SOI_EARTH
 from .eclipse import shadow_fraction
 from .elements import kepler_propagate, rv2coe
 from .ephemeris import sun_position
-from .forces import ForceModel, approx_altitude, conservative_energy
-from .frames import eci_to_ecef
+from .forces import ForceModel, conservative_energy
+from .frames import eci_to_ecef, geodetic_height, unit
 from .integrators import Propagator
 from .launch import Ascent, AscentEnv, LaunchSpec, coast, fly, plan_launch, plane_normal, validate
 from .maneuvers import G0, Maneuver, finite_direction, impulse_eci, propellant_after, resolve_time
@@ -55,8 +60,9 @@ from .scenario import (
     orbit_state,
     palette_color,
     spread_along_orbit,
+    zonal_terms,
 )
-from .strict import drag_props, one_of
+from .strict import check_dry_mass, drag_props, one_of
 from .timeutil import Clock, format_duration
 
 ACTIVE, DECAYED, IMPACTED, ESCAPED = "active", "re-entered", "impacted", "escaped"
@@ -66,6 +72,35 @@ REENTRY_ALT = 80.0        # km: below this the vehicle is considered lost
 ASCENT_SYNC = 1.0         # s: longest ensemble segment while a vehicle is in powered flight
 EVENT_DETAIL_LIMIT = 40   # log per-satellite eclipse/AOS events only below this N
 ALL_PAIRS_LIMIT = 300     # up to this N every pair is measured; above, a spatial grid
+DIP_MARGIN = 10.0         # km: satellites this close above re-entry height get a mid-step check
+DIP_CHECK_LIMIT = 2000    # above this N the mid-step dip check is skipped (cost)
+DEFAULT_ISP = 300.0       # s: the Isp a maneuver gets unless it names one
+APSIS_TIME_TOL = 1e-6      # s: how closely an apsis burn time is pinned down
+CIRC_SAMPLES = 72         # radius samples over the revolution a circularization looks at
+CIRC_TOL = 1e-6           # km: once-per-rev radius term a circularized orbit may keep
+CIRC_ITER = 8             # Newton passes before circularizing is given up
+CIRC_STEP = 1e-5          # km/s: finite-difference step of those passes
+
+
+def dv_left(sat, isp: float = DEFAULT_ISP) -> float:
+    """Delta-v (km/s) the propellant still on board gives at ``isp`` seconds
+    (the rocket equation down to the dry mass); inf with no dry mass set."""
+    if sat.dry_mass <= 0:
+        return math.inf
+    return isp * G0 * math.log(sat.mass / sat.dry_mass) if sat.mass > sat.dry_mass else 0.0
+
+
+def _once_per_rev(track: np.ndarray, rh: np.ndarray, th: np.ndarray, t: np.ndarray):
+    """Cos u and sin u amplitudes (km) of the radius along ``track``, u being the
+    angle from ``rh`` toward ``th`` in the starting plane. The fit also takes a
+    constant, a drift (drag) and the J2 ripple at 2u, so only free eccentricity
+    is left in the two returned numbers."""
+    pos = track[:, :3]
+    u = np.arctan2(pos @ th, pos @ rh)
+    a = np.stack([np.ones_like(u), t / t[-1], np.cos(u), np.sin(u),
+                  np.cos(2 * u), np.sin(2 * u)], axis=1)
+    coef = np.linalg.lstsq(a, np.linalg.norm(pos, axis=1), rcond=None)[0]
+    return coef[2:4]
 
 
 _HALF_SHELL = [(dx << 42) + (dy << 21) + dz
@@ -139,6 +174,38 @@ def _hermite_min(d0, c, m0, m1, samples: int = 17, iterations: int = 8):
     return t, np.sqrt((p * p).sum(axis=-1))
 
 
+def _hermite_at(y0: np.ndarray, y1: np.ndarray, h: float, s) -> np.ndarray:
+    """Positions at fractions ``s`` of a step of ``h`` s on the cubic Hermite curve
+    through states ``y0`` and ``y1`` (6,): sub-metre over a 60 s LEO step."""
+    s = np.asarray(s, dtype=float)[..., None]
+    s2, s3 = s * s, s * s * s
+    return ((2 * s3 - 3 * s2 + 1) * y0[:3] + (s3 - 2 * s2 + s) * h * y0[3:]
+            + (3 * s2 - 2 * s3) * y1[:3] + (s3 - s2) * h * y1[3:])
+
+
+def _hermite_speed(y0: np.ndarray, y1: np.ndarray, h: float, s: float) -> float:
+    """Speed (km/s) at fraction ``s`` of the step along the same Hermite curve."""
+    s2 = s * s
+    vel = ((6 * s2 - 6 * s) * y0[:3] / h + (3 * s2 - 4 * s + 1) * y0[3:]
+           + (6 * s - 6 * s2) * y1[:3] / h + (3 * s2 - 2 * s) * y1[3:])
+    return float(np.linalg.norm(vel))
+
+
+def _crossing(f, y0: np.ndarray, y1: np.ndarray, h: float, lo: float = 0.0,
+              hi: float = 1.0) -> float:
+    """Fraction of the step where ``f(position, fraction)`` changes sign between
+    ``lo`` and ``hi`` (it must), by bisection to ~1e-7 of the step."""
+    f_lo = f(_hermite_at(y0, y1, h, lo), lo)
+    for _ in range(24):
+        mid = 0.5 * (lo + hi)
+        f_mid = f(_hermite_at(y0, y1, h, mid), mid)
+        if (f_mid < 0) == (f_lo < 0):
+            lo, f_lo = mid, f_mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 @dataclass
 class Satellite:
     """Per-satellite bookkeeping; the state vector itself lives in ``Simulation.y``."""
@@ -148,6 +215,7 @@ class Satellite:
     mass: float = 500.0
     area: float = 5.0
     cd: float = 2.2
+    dry_mass: float = 0.0         # kg left with the propellant gone; 0 = no limit
     status: str = ACTIVE
     dv_used: float = 0.0          # km/s
     shadow: float = 1.0           # illuminated fraction
@@ -271,6 +339,7 @@ class Simulation:
                  f"{len(self.stations)} stations, propagator {self.propagator}")
         if scenario.out_of_scope:
             self.log("Ignored (out of scope): " + ", ".join(scenario.out_of_scope), "warn")
+        self.warn_ignored()
 
     # --- bookkeeping -----------------------------------------------------------------
     @property
@@ -327,6 +396,7 @@ class Simulation:
     def _append(self, name, color, props, r, v):
         sat = Satellite(self.unique_name(name), tuple(color), **props)
         drag_props(sat.mass, sat.area, sat.cd, sat.name)
+        check_dry_mass(sat.dry_mass, sat.mass, sat.name)
         self.sats.append(sat)
         self.y = np.vstack([self.y, np.concatenate([r, v])[None, :]])
         return sat
@@ -353,7 +423,8 @@ class Simulation:
     # --- adding / removing ---------------------------------------------------------------
     def add_satellites(self, orbit: dict, name: str, color=None, count: int = 1, **props):
         """Add satellites defined by an orbit spec evaluated at the current time."""
-        r, v = orbit_state(orbit, self.clock, self.t, j2_acts(self.propagator, self.forces))
+        r, v = orbit_state(orbit, self.clock, self.t, j2_acts(self.propagator, self.forces),
+                           zonal_terms(self.propagator, self.forces))
         rows = []
         for k, (rr, vv) in enumerate(spread_along_orbit(r, v, count)):
             nm = name if count == 1 else f"{name}-{k + 1}"
@@ -432,6 +503,21 @@ class Simulation:
         self.propagator = name
         self.log(f"Propagator -> {name}")
 
+    def ignored_terms(self) -> list:
+        """Enabled force terms the propagator cannot apply: the analytic ones
+        carry only two-body motion (kepler) or two-body plus J2 (j2mean)."""
+        if self.propagator == "cowell":
+            return []
+        used = ("j2",) if self.propagator == "j2mean" else ()
+        return [t.upper() for t in ForceModel.TERMS if getattr(self.forces, t) and t not in used]
+
+    def warn_ignored(self):
+        """Log a warning naming the enabled terms this propagator leaves out."""
+        left = self.ignored_terms()
+        if left:
+            self.log(f"Propagator {self.propagator} ignores {', '.join(left)}: switch to "
+                     "cowell to integrate them", "warn")
+
     # --- launches -----------------------------------------------------------------------
     def ascent_env(self) -> AscentEnv:
         """The Earth model ascents fly in, matching this run's forces and clock."""
@@ -444,8 +530,11 @@ class Simulation:
         el = rv2coe(self.y[i, :3], self.y[i, 3:])
         if el.e >= 1.0:
             raise ValueError(f"{name} is not on a closed orbit")
-        regresses = j2_acts(self.propagator, self.forces)
-        rate = float(j2_secular_rates(el.a, el.e, el.i)[0]) if regresses else 0.0
+        rate = 0.0
+        if j2_acts(self.propagator, self.forces):     # the mean orbit sets the drift
+            a = float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu))
+            i_mean = float(osculating_to_mean_i(el.i, a, el.e, el.argp, el.nu))
+            rate = float(j2_secular_rates(a, el.e, i_mean)[0])
         t_ref, inc, raan = self.t, float(el.i), float(el.raan)
         return math.degrees(inc), lambda t: plane_normal(inc, raan + rate * (t - t_ref))
 
@@ -569,9 +658,8 @@ class Simulation:
         if self.ascent_of(i) is not None:
             raise ValueError(f"{m.sat} is still on its launch vehicle; "
                              "maneuver it after separation")
-        r, v = self.y[i, :3], self.y[i, 3:]
         if m.timing != "absolute" or m.t is None:
-            m.t = resolve_time(m, self.t, r, v)
+            m.t = self.resolve_time(m)
         m.timing = "absolute"
         self.maneuvers.append(m)
         self.maneuvers.sort(key=lambda x: x.t)
@@ -601,11 +689,23 @@ class Simulation:
                              "warn")
                     continue
                 tv = self.y[self.index_of(m.target), 3:]
-            dv = impulse_eci(m, r, v, tv)
+            if m.kind == "circularize":
+                try:
+                    dv = self.circular_velocity(i) - v
+                except ValueError as exc:
+                    self.log(f"{m.sat}: {m.describe()} skipped ({exc})", "warn")
+                    continue
+            else:
+                dv = impulse_eci(m, r, v, tv)
             dvm = float(np.linalg.norm(dv))
+            room = dv_left(sat, m.isp)
+            if dvm > room:
+                self.log(f"{m.sat}: propellant ran out - {room * 1000:.2f} of "
+                         f"{dvm * 1000:.2f} m/s delivered (dry mass {sat.dry_mass:g} kg)", "warn")
+                dv, dvm = dv * (room / dvm), room
             self.y[i, 3:] = v + dv
             sat.dv_used += dvm
-            sat.mass = propellant_after(sat.mass, dvm, m.isp)
+            sat.mass = max(propellant_after(sat.mass, dvm, m.isp), sat.dry_mass)
             sat.energy_ref = None
             m.result = f"{dvm * 1000:.2f} m/s"
             self.log(f"{m.sat}: executed {m.describe()} - dV {dvm * 1000:.2f} m/s", "maneuver")
@@ -620,7 +720,14 @@ class Simulation:
         mdot = m.thrust / (m.isp * G0 * 1000.0) if m.isp > 0 else 0.0   # kg/s
         duration = m.duration
         if mdot > 0:
-            duration = min(duration, 0.95 * sat.mass / mdot)
+            floor = sat.dry_mass if sat.dry_mass > 0 else 0.05 * sat.mass
+            burnable = max(sat.mass - floor, 0.0) / mdot
+            if burnable < duration:
+                why = (f"dry mass {sat.dry_mass:g} kg" if sat.dry_mass > 0
+                       else "95 % of the mass, with no dry mass set")
+                self.log(f"{m.sat}: propellant for only {burnable:,.0f} of {duration:,.0f} s "
+                         f"of burn ({why})", "warn")
+                duration = burnable
         if self.propagator != "cowell":
             # analytic propagators cannot integrate thrust: apply the same
             # rocket-equation delta-v impulsively along the burn direction
@@ -659,13 +766,19 @@ class Simulation:
         """State derivative f(t, y) for satellites ``idx`` including active finite burns."""
         cd_am = self._props(idx)
         rows = {int(i): k for k, i in enumerate(idx)}
-        burn_rows = [(rows[j], b) for b in burns if (j := self.index_of(b.man.sat)) in rows]
+        burn_rows = [(rows[j], b, self.sats[j].cd * self.sats[j].area)
+                     for b in burns if (j := self.index_of(b.man.sat)) in rows]
         forces, clock = self.forces, self.clock
 
         def f(t, y):
             r, v = y[:, :3], y[:, 3:]
-            a = forces.acceleration(r, v, cd_am, float(clock.gmst(t)) if forces.c22 else 0.0)
-            for k, b in burn_rows:
+            ka = cd_am
+            if burn_rows and forces.drag:     # a burning craft gets lighter: A/m grows
+                ka = cd_am.copy()
+                for k, b, cda in burn_rows:
+                    ka[k] = cda / (b.m0 - b.mdot * (t - b.t0))
+            a = forces.acceleration(r, v, ka, float(clock.gmst(t)) if forces.c22 else 0.0)
+            for k, b, _ in burn_rows:
                 m = b.m0 - b.mdot * (t - b.t0)
                 d = finite_direction(b.man, r[k:k + 1], v[k:k + 1])[0]
                 a[k] += d * (b.man.thrust / m) * 1e-3
@@ -766,6 +879,166 @@ class Simulation:
         burns = [b for b in self.burns if b.t0 <= self.t + 1e-9 and t1 <= b.t1 + 1e-9]
         return scratch.integrate(self._derivative(idx, burns), self.t, y0.copy(), t1)[1]
 
+    def coast_states(self, idx, y0: np.ndarray, t0: float, t1: float) -> np.ndarray:
+        """States ``y0`` (one row per entry of ``idx``) carried from ``t0`` to ``t1``
+        under this run's own propagator and forces, coasting: no maneuvers, no
+        burns, no events, and the run itself is untouched. Row k flies with the
+        drag properties of satellite ``idx[k]``; an index may repeat, so several
+        trial states of one satellite can be flown together. Planners aim with
+        this, so their predictions carry the same J2, J3, J4, C22 and drag the
+        run will apply."""
+        idx = np.asarray(idx, dtype=int)
+        y0 = np.array(y0, dtype=float).reshape(len(idx), 6)
+        if t1 < t0:
+            raise ValueError("coast_states only predicts forward in time")
+        if t1 == t0 or not len(idx):
+            return y0
+        if self.propagator in ("kepler", "j2mean"):
+            prop = kepler_propagate if self.propagator == "kepler" else j2_mean_propagate
+            r, v = prop(y0[:, :3], y0[:, 3:], t1 - t0)
+            return np.concatenate([np.atleast_2d(r), np.atleast_2d(v)], axis=1)
+        s = self.integrator
+        scratch = Propagator(s.method, s.rtol, s.atol, s.h_max, s.h_fixed)
+        return scratch.integrate(self._derivative(idx, []), t0, y0, t1)[1]
+
+    def predict(self, name: str, t1: float) -> np.ndarray:
+        """State (6,) satellite ``name`` will have at time ``t1`` if it coasts
+        from now (see :meth:`coast_states`)."""
+        i = self.require(name)
+        return self.coast_states([i], self.y[i:i + 1], self.t, t1)[0]
+
+    def coast_track(self, i: int, times) -> np.ndarray:
+        """States ``(len(times), 6)`` of satellite ``i`` at the increasing absolute
+        ``times`` (all at or after now), coasting as in :meth:`coast_states`."""
+        return self._coast_samples([i], self.y[i:i + 1], self.t, times)[0]
+
+    def _coast_samples(self, idx, y0, t0: float, times, h_max: float | None = None):
+        """States ``(len(idx), len(times), 6)`` of the rows ``y0`` (satellites
+        ``idx``, as in :meth:`coast_states`) at the increasing absolute ``times``
+        >= ``t0``. ``h_max`` may lengthen the adaptive step limit for long looks
+        ahead (the tolerance still holds)."""
+        times = np.asarray(times, dtype=float)
+        if times.size and (times[0] < t0 or np.any(np.diff(times) < 0)):
+            raise ValueError("coasting needs increasing times from the start on")
+        idx = np.asarray(idx, dtype=int)
+        y0 = np.array(y0, dtype=float).reshape(len(idx), 6)
+        n, k = len(idx), len(times)
+        if self.propagator in ("kepler", "j2mean"):
+            prop = kepler_propagate if self.propagator == "kepler" else j2_mean_propagate
+            r, v = prop(np.repeat(y0[:, :3], k, 0), np.repeat(y0[:, 3:], k, 0),
+                        np.tile(times - t0, n))
+            return np.concatenate([np.atleast_2d(r), np.atleast_2d(v)], axis=1).reshape(n, k, 6)
+        s = self.integrator
+        scratch = Propagator(s.method, s.rtol, s.atol, max(s.h_max, h_max or 0.0), s.h_fixed)
+        f = self._derivative(idx, [])
+        out = np.empty((n, k, 6))
+        t, y = t0, y0
+        for j, tj in enumerate(times):
+            t, y = scratch.integrate(f, t, y, float(tj))   # the step size carries over
+            out[:, j] = y
+        return out
+
+    def _perturbed(self) -> bool:
+        """Whether anything but central gravity moves the satellites."""
+        f = self.forces
+        return self.propagator == "j2mean" or (
+            self.propagator == "cowell" and (f.j2 or f.j3 or f.j4 or f.c22 or f.drag))
+
+    def circular_velocity(self, i: int) -> np.ndarray:
+        """Velocity that puts satellite ``i`` on a circular orbit through where it is,
+        in its present plane, for this run's forces. Two-body that is sqrt(mu/r)
+        level; under J2 it is ~5 m/s faster at the equator and the orbit's radius
+        keeps a forced ripple at twice the orbital frequency. So "circular" means
+        what it does in practice: no free eccentricity, i.e. no once-per-rev term
+        in the radius over the coming revolution. Found by Newton on the radial
+        and along-track speed, the next revolution flown with the run's forces."""
+        r = self.y[i, :3].copy()
+        rm = float(np.linalg.norm(r))
+        rh = r / rm
+        th = unit(np.cross(np.cross(r, self.y[i, 3:]), rh))     # level, along the motion
+        vc = math.sqrt(MU_EARTH / rm)
+        if not self._perturbed():
+            return vc * th
+        period = 2.0 * math.pi * rm / vc
+        times = self.t + np.linspace(0.0, period, CIRC_SAMPLES + 1)[1:]
+        p = np.array([0.0, vc])                                  # radial, along-track km/s
+        step = np.array([[0.0, 0.0], [CIRC_STEP, 0.0], [0.0, CIRC_STEP]])
+        for _ in range(CIRC_ITER):
+            trial = p + step
+            y0 = np.concatenate([np.repeat(r[None], 3, 0),
+                                 trial[:, :1] * rh + trial[:, 1:] * th], axis=1)
+            track = self._coast_samples([i] * 3, y0, self.t, times, h_max=period / 360)
+            c = np.array([_once_per_rev(track[k], rh, th, times - self.t) for k in range(3)])
+            if np.linalg.norm(c[0]) < CIRC_TOL:
+                return p[0] * rh + p[1] * th
+            p = p - np.linalg.solve((c[1:] - c[0]).T / CIRC_STEP, c[0])
+        raise ValueError(f"no circular orbit found within {CIRC_TOL * 1e6:.0f} mm "
+                         f"(still {np.linalg.norm(c[0]) * 1000:,.3f} m of eccentricity)")
+
+    def resolve_time(self, m: Maneuver) -> float:
+        """Absolute time ``m`` should fire, from now. Apsis and node timings are
+        found on the trajectory this run will actually fly (J2, drag and all),
+        starting from the two-body estimate: under J2 a "circular" orbit has an
+        osculating eccentricity of ~1e-3 whose perigee can sit anywhere, and the
+        osculating node is seconds off the real equator crossing."""
+        i = self.require(m.sat)
+        r, v = self.y[i, :3], self.y[i, 3:]
+        t_est = resolve_time(m, self.t, r, v)
+        if m.timing in ("periapsis", "apoapsis") and self.propagator != "kepler":
+            return self._next_apsis(i, m.timing == "apoapsis", t_est)
+        if m.timing in ("ascending_node", "descending_node") and self.propagator != "kepler":
+            return self._next_node(i, t_est)
+        return t_est
+
+    def _next_apsis(self, i: int, highest: bool, t_est: float) -> float:
+        """Time of the lowest (or highest) point of satellite ``i``'s coming
+        revolution: the extreme of 180 samples, then the root of r.v (radial
+        speed) between its neighbours by bisection, to ``APSIS_TIME_TOL``.
+        Near-circular orbits make d(r.v)/dt ~ 0, which is why this is not
+        Newton."""
+        el = rv2coe(self.y[i, :3], self.y[i, 3:])
+        if el.e >= 1.0:
+            return t_est                    # an open path's periapsis is its only apsis
+        times = self.t + np.linspace(0.0, el.period, 181)[1:]
+        track = self.coast_track(i, times)
+        rad = np.linalg.norm(track[:, :3], axis=1)
+        k = int(np.argmax(rad) if highest else np.argmin(rad))
+        k = min(max(k, 1), len(times) - 2)
+        a, b = float(times[k - 1]), float(times[k + 1])
+        # integration is a flow, so it may restart from the sample before; the
+        # analytic j2mean is not (it re-reads mean elements), so it starts from now
+        t0, y0 = (a, track[k - 1]) if self.propagator == "cowell" else (self.t, self.y[i])
+
+        def g(t):
+            y = self.coast_states([i], y0[None], t0, t)[0]
+            return float(np.dot(y[:3], y[3:]))
+
+        ga, gb = g(a), float(np.dot(track[k + 1, :3], track[k + 1, 3:]))
+        if ga * gb > 0:
+            return float(times[k])          # no sign change: the sample is the extreme
+        while b - a > APSIS_TIME_TOL:       # bisection: ~26 halvings, each a short coast
+            t = 0.5 * (a + b)
+            gt = g(t)
+            if (gt < 0) == (ga < 0):
+                a, ga = t, gt
+            else:
+                b = t
+        return 0.5 * (a + b)
+
+    def _next_node(self, i: int, t_est: float) -> float:
+        """The real equator crossing nearest the two-body node estimate, by
+        Newton on z = 0 (forward from now, so never before it)."""
+        t = t_est
+        for _ in range(8):
+            y = self.coast_states([i], self.y[i:i + 1], self.t, t)[0]
+            if abs(y[5]) < 1e-9:
+                raise ValueError("the orbit runs along the equator: it has no node to burn at")
+            t_new = max(t - y[2] / y[5], self.t)
+            if abs(t_new - t) < 1e-3:
+                return t_new
+            t = t_new
+        return t
+
     def _propagate(self, idx: np.ndarray, t_seg: float, t_stop: float | None = None) -> bool:
         """Advance satellites ``idx`` toward ``t_seg``, landing on it, or with
         ``t_stop`` ending at the last whole step before that. Returns True if it
@@ -827,23 +1100,32 @@ class Simulation:
             r = self.y[idx, :3]
             v = self.y[idx, 3:]
             rm = np.linalg.norm(r, axis=1)
-            alt = approx_altitude(r)
+            alt = geodetic_height(r)
             # only a *descending* vehicle can re-enter: launches start low and climb
             descending = np.sum(r * v, axis=1) < 0
-            for k in np.flatnonzero(((alt < REENTRY_ALT) & descending) | (rm > SOI_EARTH)):
+            gone = ((alt < REENTRY_ALT) & descending) | (rm > SOI_EARTH)
+            dips = self._dips(t, idx, alt) if idx.size <= DIP_CHECK_LIMIT else {}
+            for k in np.flatnonzero(gone | np.isin(idx, list(dips))):
                 i = idx[k]
                 sat = self.sats[i]
                 speed = float(np.linalg.norm(v[k]))
                 if rm[k] > SOI_EARTH:
                     sat.status = ESCAPED
-                    self.log(f"{sat.name} left Earth's sphere of influence", "alert")
+                    when = self._when(t, i, lambda pos, _t: np.linalg.norm(pos) - SOI_EARTH)
+                    self.log(f"{sat.name} left Earth's sphere of influence", "alert", when)
                 elif alt[k] <= 0:
                     sat.status = IMPACTED
-                    self.log(f"{sat.name} impacted the surface at {speed:.2f} km/s", "alert")
+                    when = self._when(t, i, lambda pos, _t: geodetic_height(pos))
+                    speed = self._speed_at(t, i, when, speed)
+                    self.log(f"{sat.name} impacted the surface at {speed:.2f} km/s", "alert",
+                             when)
                 else:
                     sat.status = DECAYED
+                    when = dips.get(int(i)) or self._when(
+                        t, i, lambda pos, _t: geodetic_height(pos) - REENTRY_ALT)
+                    speed = self._speed_at(t, i, when, speed)
                     self.log(f"{sat.name} re-entered (below {REENTRY_ALT:.0f} km, "
-                             f"{speed:.2f} km/s)", "alert")
+                             f"{speed:.2f} km/s)", "alert", when)
                 dropped = [m for m in self.maneuvers if m.sat == sat.name]
                 if dropped:
                     self.log(f"{sat.name}: {len(dropped)} pending maneuver"
@@ -856,6 +1138,65 @@ class Simulation:
             self.history.record(t, self.y)
             self._last_record = t
         return changed
+
+    def _previous(self, t: float):
+        """``(t0, y0)`` of the step that just ended at ``t``, or None when nothing
+        continuous joins it to now (first step, a burn, a satellite added)."""
+        prev = self._last_sample
+        if prev is None or not prev[0] < t or prev[1].shape != self.y.shape:
+            return None
+        return prev[0], prev[1]
+
+    def _when(self, t: float, i: int, f) -> float:
+        """Time within the step just ended at ``t`` where ``f(position, time)``
+        changed sign for satellite ``i``, found on the step's Hermite curve; ``t``
+        itself when there is no previous state or no sign change on the curve."""
+        prev = self._previous(t)
+        if prev is None:
+            return t
+        t0, y0 = prev
+        h = t - t0
+        y_a, y_b = y0[i], self.y[i]
+
+        def g(pos, s):
+            return f(pos, t0 + s * h)
+
+        if (g(y_a[:3], 0.0) < 0) == (g(y_b[:3], 1.0) < 0):
+            return t
+        return t0 + h * _crossing(g, y_a, y_b, h)
+
+    def _speed_at(self, t: float, i: int, when: float, now: float) -> float:
+        """Speed of satellite ``i`` at ``when`` within the step just ended at ``t``
+        (``now``, its speed at the end, when there is no step to go back along)."""
+        prev = self._previous(t)
+        if prev is None or not when < t:
+            return now
+        t0, y0 = prev
+        return _hermite_speed(y0[i], self.y[i], t - t0, (when - t0) / (t - t0))
+
+    def _dips(self, t: float, idx: np.ndarray, alt: np.ndarray) -> dict:
+        """Satellites ``idx`` (heights ``alt`` now) that went below the re-entry
+        height during the step and came back up before it ended: {i: time}."""
+        prev = self._previous(t)
+        if prev is None:
+            return {}
+        t0, y0 = prev
+        h = t - t0
+        out = {}
+        s = np.linspace(0.0, 1.0, 17)
+
+        def low(pos, _s):
+            return geodetic_height(pos) - REENTRY_ALT
+
+        for k in np.flatnonzero(alt < REENTRY_ALT + DIP_MARGIN):
+            i = int(idx[k])
+            if not geodetic_height(y0[i, :3]) >= REENTRY_ALT:
+                continue                      # already below (climbing out): not a dip
+            heights = geodetic_height(_hermite_at(y0[i], self.y[i], h, s))
+            below = np.flatnonzero(heights < REENTRY_ALT)
+            if below.size:
+                out[i] = t0 + h * _crossing(low, y0[i], self.y[i], h, 0.0, s[below[0]])
+        return out
 
     def _events(self, t: float, idx: np.ndarray):
         """Log eclipse, station AOS/LOS and close-approach events."""
@@ -870,13 +1211,18 @@ class Simulation:
 
     def _eclipse_events(self, t: float, w: np.ndarray):
         """Log satellites ``w`` entering and leaving the Earth's shadow."""
-        frac = shadow_fraction(self.y[:, :3][w], sun_position(self.clock.jd(t)))
+        sun = sun_position(self.clock.jd(t))
+        frac = shadow_fraction(self.y[:, :3][w], sun)
+
+        def lit(pos, _t):                   # half the Sun's disc showing: the crossing
+            return float(np.ravel(shadow_fraction(pos, sun))[0]) - 0.5
+
         for i, fr in zip(w, frac, strict=True):
             sat = self.sats[i]
             if sat.shadow >= 0.5 > fr:
-                self.log(f"{sat.name} entered Earth's shadow", "eclipse")
+                self.log(f"{sat.name} entered Earth's shadow", "eclipse", self._when(t, i, lit))
             elif sat.shadow < 0.5 <= fr:
-                self.log(f"{sat.name} back in sunlight", "eclipse")
+                self.log(f"{sat.name} back in sunlight", "eclipse", self._when(t, i, lit))
             sat.shadow = float(fr)
 
     def _station_events(self, t: float, w: np.ndarray):
@@ -885,21 +1231,31 @@ class Simulation:
             self._resize_visible()
         r_ecef = eci_to_ecef(self.y[:, :3][w], self.clock.gmst(t))
         for s, st in enumerate(self.stations):
+            mask = math.radians(st.min_el)
+
+            def above(pos, tt, st=st, mask=mask):     # elevation over the mask, rad
+                elev = st.look_angles(eci_to_ecef(pos, self.clock.gmst(tt)))[1]
+                return float(np.ravel(elev)[0]) - mask
+
             for i, now in zip(w, st.sees(r_ecef), strict=True):
                 if now and not self._visible[s, i]:
-                    self.log(f"AOS {self.sats[i].name} @ {st.name}", "station")
+                    self.log(f"AOS {self.sats[i].name} @ {st.name}", "station",
+                             self._when(t, i, above))
                 elif not now and self._visible[s, i]:
-                    self.log(f"LOS {self.sats[i].name} @ {st.name}", "station")
+                    self.log(f"LOS {self.sats[i].name} @ {st.name}", "station",
+                             self._when(t, i, above))
                 self._visible[s, i] = now
 
     def _approach_events(self, t: float, idx: np.ndarray):
         """Update :attr:`closest` and log new close approaches among the satellites
         ``idx`` (vehicles still inside the atmosphere, e.g. on a launch pad, are ignored)."""
         r_all = self.y[:, :3]
-        orbiting = idx[approx_altitude(r_all[idx]) > 100.0]
+        orbiting = idx[geodetic_height(r_all[idx]) > 100.0]
         if orbiting.size < 2:
             self.closest = (math.inf, -1, -1)
-            self._last_sample = None
+            mask = np.zeros(self.n, dtype=bool)
+            mask[orbiting] = True
+            self._last_sample = (t, self.y.copy(), mask)   # event times still use it
             return
         r = r_all[orbiting]
         sweep = self._sweep(t, orbiting)
@@ -1046,7 +1402,7 @@ class Simulation:
             mass = s.mass if b is None else b.m0 - b.mdot * (self.t - b.t0)
             sc.satellites.append(SatSpec(
                 s.name, {"type": "state", "r": self.y[i, :3].tolist(), "v": self.y[i, 3:].tolist()},
-                list(s.color), mass, s.area, s.cd))
+                list(s.color), mass, s.area, s.cd, dry_mass=s.dry_mass))
         sc.stations = list(self.stations)
         sc.forces = ForceModel.from_dict(self.forces.to_dict())
         sc.propagator = self.propagator

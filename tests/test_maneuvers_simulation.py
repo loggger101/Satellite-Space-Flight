@@ -276,3 +276,20 @@ def test_c22_pulls_geostationary_satellites_toward_the_stable_longitudes(lon0, t
     moved = math.degrees(math.atan2(p[1], p[0])) - lon0
     assert math.copysign(1.0, moved) == math.copysign(1.0, toward - lon0)
     assert 2.5 < abs(moved) < 3.6
+
+
+def test_an_sgp4_error_is_reported_not_papered_over(monkeypatch):
+    """Audit A17: a decayed object used to fall back to the J2 path silently."""
+    class Decayed:
+        @staticmethod
+        def twoline2rv(line1, line2):
+            return Decayed()
+
+        def sgp4(self, jd, fr):
+            return 6, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(tle_module, "HAVE_SGP4", True)
+    monkeypatch.setattr(tle_module, "Satrec", Decayed)
+    tle = parse_tle("\n".join(ISS_TLE), "ISS")
+    with pytest.raises(ValueError, match="decayed"):
+        tle.state_at(tle.epoch + timedelta(days=400))

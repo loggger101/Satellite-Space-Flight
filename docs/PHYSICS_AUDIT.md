@@ -2,11 +2,19 @@
 
 **Date:** 2026-10-02 · **Code audited:** `main` at `f1e701b` · **No code was changed.**
 
+**Status (2026-11-10):** every Part A problem has been dealt with on the
+branch `physics-audit-fixes`: twenty fixed, one (A21) deliberately left. Each
+item below starts with its status; the [status table](#status-of-part-a) sums
+them up. Every engine change is mirrored in the MATLAB runtime, whose
+cross-check against the simulator still holds. Parts B and D are unchanged
+apart from what the fixes needed: B3 (a minimal propellant budget), B5, D50
+and D52.
+
 This is an audit of the physical calculations only. It covers forces, frames
 and time, orbital elements, the integrators and analytic propagators, maneuvers
 and planners, events, the launch model, and the derived readouts in the Orbit
 tab. UI code was checked only where it computes something physical. Nothing
-here has been fixed.
+here had been fixed when it was written (see the status above).
 
 The findings are in four parts:
 
@@ -53,6 +61,32 @@ Additions that would involve the Sun or the Moon are listed separately in
 
 # Part A: Problems in the existing code and physics
 
+## Status of Part A
+
+| ID | Status |
+|---|---|
+| A1 | Fixed |
+| A2 | Fixed, together with [B5](#b5-rendezvous-targeting-against-the-real-force-model) |
+| A3 | Fixed |
+| A4 | Fixed as proposed: frames.py, tle.py, ephemeris.py, batch.py and PHYSICS.md call the frame what it is (of-date, TEME-like) |
+| A5 | Fixed |
+| A6 | Fixed |
+| A7 | Fixed |
+| A8 | Fixed with a minimal [B3](#b3-propellant-budget): an optional `dry_mass` per satellite (scenario files, dialogs, snapshots, MATLAB export) |
+| A9 | Fixed |
+| A10 | Fixed |
+| A11 | Fixed |
+| A12 | Fixed |
+| A13 | Fixed |
+| A14 | Fixed |
+| A15 | Fixed |
+| A16 | Fixed |
+| A17 | Fixed |
+| A18 | Fixed in the docs: PHYSICS.md now says the drag coupling is first order and why it does not matter |
+| A19 | Fixed |
+| A20 | Fixed |
+| A21 | Left as is, by decision: 69 s of UTC vs TT moves the Sun 0.0008 deg, a twelfth of the series' own 0.01 deg, and Vallado's Algorithm 29 is given in UT1 |
+
 ## Summary of problems
 
 | ID | Area | Sev. | One line |
@@ -82,6 +116,11 @@ Additions that would involve the Sun or the Moon are listed separately in
 ## High severity
 
 ### A1. Lambert picks the wrong way round for polar orbits
+
+**Status (2026-11-10):** Fixed. `lambert` takes the transfer's turning
+direction as a vector, and the planner passes the chaser's angular momentum.
+At i = 90 deg the target on either side of the plane now costs the same
+(`tests/test_planners.py`).
 
 **Where:** [`maneuvers.py:65-68`](../satflight/maneuvers.py#L65),
 [`planner.py:94`](../satflight/planner.py#L94),
@@ -115,6 +154,15 @@ plane offset between chaser and target.
 - Add a regression test with i = 90 deg and a target on each side of the plane.
 
 ### A2. Planners predict with two-body motion while the run has J2
+
+**Status (2026-11-10):** Fixed, together with
+[B5](#b5-rendezvous-targeting-against-the-real-force-model).
+`Simulation.coast_states` / `predict` fly states with the run's own propagator
+and forces; every planner predicts with them. The rendezvous intercept starts
+from Lambert and is corrected by Newton on the arrival miss until it is under
+1 m: the measured miss is metres with J2, J3, J4 and drag (it was 11 km after
+1 h, 90 km after 3 h). `rendezvous.json` now runs with J2 on. Apsis and node
+timings are found on the real trajectory (`Simulation.resolve_time`).
 
 **Where:** [`planner.py:23-29`](../satflight/planner.py#L23) (`_burn_state`),
 [`planner.py:93`](../satflight/planner.py#L93),
@@ -152,6 +200,14 @@ misses its target by kilometres to tens of kilometres.
   (differential correction against the real force model).
 
 ### A3. Two different altitudes are used side by side
+
+**Status (2026-11-10):** Fixed. Every physical altitude (drag, re-entry,
+impact, CSV, batch table, tooltips, satellite list, perigee density) is the
+exact height above the ellipsoid, from Heikkinen's closed form
+([D50](#d50-closed-form-geodetic-conversion), `frames.geodetic_height`, 1e-7 m
+round trip). Orbit-shape quantities stay `r - R_eq` and say so. "Suborbital"
+is decided by the lowest height on the orbit. The batch table, the CSV and
+the satellite list agree with it (`tests/test_altitudes.py`).
 
 Two definitions of "altitude" are mixed:
 
@@ -206,6 +262,11 @@ near a pole, and the perigee drag readout is inflated accordingly.
 
 ### A4. The ECI frame is labelled J2000 but is of-date
 
+**Status (2026-11-10):** Fixed as proposed: frames.py, tle.py, ephemeris.py,
+batch.py and PHYSICS.md call the frame what it is (of-date, TEME-like). A
+J2000 export ([B8](#b8-import-and-export-j2000-states-and-ccsds-messages)) is
+still open.
+
 **Where:** [`frames.py:3-5`](../satflight/frames.py#L3),
 [`tle.py:4-6`](../satflight/tle.py#L4),
 [`ephemeris.py`](../satflight/ephemeris.py), PHYSICS.md "Frames and time"
@@ -233,6 +294,10 @@ addition: [B8](#b8-import-and-export-j2000-states-and-ccsds-messages).
 
 ### A5. LTAN is apparent solar time, so it swings through the year
 
+**Status (2026-11-10):** Fixed. LTAN is mean solar time, `UT + (RAAN - GMST)`;
+a sun-synchronous node keeps it to within a minute over a year (test). The
+glossary says "mean".
+
 **Where:** [`orbitinfo.py:129-132`](../satflight/orbitinfo.py#L129),
 `ui/glossary.py:81` ("A Sun-synchronous orbit keeps it the same all year")
 
@@ -252,6 +317,13 @@ contradicts the glossary text.
 - Add a test that an SSO keeps a constant LTAN over a year.
 
 ### A6. Hohmann and bi-elliptic plans assume the burn is at an apsis
+
+**Status (2026-11-10):** Fixed. Transfer burns leave the satellite moving
+level, so the burn point is an apsis; off an apsis the summary states what
+levelling costs. The far apsis is aimed with the run's forces (J2 alone put a
+LEO-to-GEO apogee 180 km short), and burn 2 fires there. Apsis timings are the
+extremes of the real trajectory, so a near-circular J2 orbit gets its actual
+highest/lowest point. The 300 x 1,500 km case now ends at 2,000 km.
 
 **Where:** [`planner.py:32-50`](../satflight/planner.py#L32),
 [`planner.py:53-80`](../satflight/planner.py#L53)
@@ -282,6 +354,13 @@ orbit, 90 km above the target, and nothing warned about it.
 
 ### A7. Circularize uses the two-body circular speed
 
+**Status (2026-11-10):** Fixed. Circularize solves for the velocity with no
+once-per-revolution radius term over the next revolution, flown with the run's
+forces (Hohmann burn 2 and the launch option use it). Equatorial swing: 19 km
+to 0; at 51.6 and 98 deg what remains is J2's real forced ripple (1.9 and 3.1
+km). Under j2mean the swing is that model's own a-only short-period term (see
+[B4](#b4-mean-elements-in-the-propagator-scenarios-and-readouts)).
+
 **Where:** [`maneuvers.py:207-211`](../satflight/maneuvers.py#L207)
 
 **What:** The target velocity is `sqrt(mu / r)` horizontal. Under J2 the
@@ -310,6 +389,13 @@ swing is pure error.
 
 ### A8. Burns can spend unlimited delta-v
 
+**Status (2026-11-10):** Fixed with a minimal [B3](#b3-propellant-budget): an
+optional `dry_mass` per satellite (scenario files, dialogs, snapshots, MATLAB
+export). Impulsive burns stop at it and finite burns end there, each with a
+warning; with no dry mass a finite burn still stops at 5 % of the mass and now
+says so. The Orbit tab shows the delta-v left. Per-satellite engines are still
+open.
+
 **Where:** [`simulation.py:565`](../satflight/simulation.py#L565),
 [`simulation.py:580`](../satflight/simulation.py#L580),
 [`maneuvers.py:243`](../satflight/maneuvers.py#L243)
@@ -324,6 +410,9 @@ see [B3](#b3-propellant-budget). Until then, at least warn when a burn takes
 the mass below some fraction of its starting value.
 
 ### A9. Orbit-tab drag readout uses inertial speed and spherical altitude
+
+**Status (2026-11-10):** Fixed. The perigee readout uses the air-relative
+speed and the density at the perigee point's real height (shown next to it).
 
 **Where:** [`orbitinfo.py:178-180`](../satflight/orbitinfo.py#L178),
 [`orbitinfo.py:203`](../satflight/orbitinfo.py#L203)
@@ -340,6 +429,12 @@ orbits. Retrograde orbits read low.
 Look up density at the ellipsoid height at the perigee latitude.
 
 ### A10. Most events are timed to the step, not to the crossing
+
+**Status (2026-11-10):** Fixed. Eclipse, AOS/LOS, re-entry, impact and escape
+are stamped at the crossing found on the step's Hermite curve (within 8 ms of
+a 1 s-step run, from up to 60 s), with the speed at that moment. A dip below
+80 km between two steps is caught (`tests/test_event_times.py`). Separate
+penumbra and umbra events are not logged.
 
 **Where:** [`simulation.py:812`](../satflight/simulation.py#L812) (eclipse),
 [`simulation.py:823`](../satflight/simulation.py#L823) (AOS/LOS),
@@ -365,6 +460,13 @@ be up to a minute late. The doc admits this for eclipse and AOS/LOS.
   boundaries separately.
 
 ### A11. Altitude means mean for Walker shells but osculating for single satellites
+
+**Status (2026-11-10):** Fixed. When J2 acts, an element spec's size is mean
+for single satellites as for Walker shells (a one-plane shell and a single
+satellite now start on the same orbit); `"osculating": true` keeps the raw
+state; without J2 no conversion is applied. The ~1e-3 osculating-start
+eccentricity remains
+([B4](#b4-mean-elements-in-the-propagator-scenarios-and-readouts)).
 
 **Where:** [`scenario.py:258-292`](../satflight/scenario.py#L258) vs
 [`scenario.py:337-354`](../satflight/scenario.py#L337)
@@ -395,6 +497,9 @@ this properly uses
 
 ### A12. Analytic propagators silently drop force terms
 
+**Status (2026-11-10):** Fixed. A run whose propagator leaves enabled terms
+out logs a warning naming them, at load and after a Physics change.
+
 `kepler` and `j2mean` ignore drag, J3, J4 and C22 whatever the Physics dialog
 says. The propagator tooltip says so, but the event log and the force label
 (`2B+J2+DRAG`) do not, so a `j2mean` run with drag "on" never decays.
@@ -403,6 +508,11 @@ says. The propagator tooltip says so, but the event log and the force label
 not apply.
 
 ### A13. Sun-synchronous inclination ignores J4
+
+**Status (2026-11-10):** Fixed. In a Cowell run with J2, an "sso" inclination
+is tuned numerically to the run's zonal field: one node-to-node revolution
+measures the secular drift, the secant method solves it. Drift from the mean
+Sun: 0.0008 -> 3e-5 deg/day (J2) and 0.003 -> 1e-5 deg/day (J2-J4).
 
 **Where:** [`maneuvers.py:102`](../satflight/maneuvers.py#L102)
 
@@ -415,6 +525,9 @@ enabled force model.
 
 ### A14. Launch window regression uses the osculating semi-major axis
 
+**Status (2026-11-10):** Fixed. `plane_of` uses the mean semi-major axis and
+the mean inclination.
+
 **Where:** [`simulation.py:420`](../satflight/simulation.py#L420)
 
 `plane_of` computes the J2 regression rate from the osculating a, where the
@@ -424,6 +537,12 @@ node over a 2-day window search (estimated).
 **Fix:** Use `osculating_to_mean_a`.
 
 ### A15. Launch bookkeeping details
+
+**Status (2026-11-10):** Fixed. The fairing goes alone at cutoff if still on;
+the throttle floor logs its overshoot once per stage; ambient pressure is the
+US Standard Atmosphere 1976 ([D52](#d52-us-standard-atmosphere-1976), within
+1e-4 of its table); the liftoff weight is along the plumb line, centrifugal
+relief included.
 
 - If cutoff happens below `fairing_alt`, the fairing's mass leaves with the
   last stage ([`launch.py:914`](../satflight/launch.py#L914)).
@@ -440,6 +559,12 @@ as density, or from the US Standard Atmosphere
 
 ### A16. Solver edge cases
 
+**Status (2026-11-10):** Fixed. The Kepler propagator and both Kepler
+equations raise when they do not converge; `mean_to_true` solves Barker's
+equation at e = 1; a rendezvous arc within 2 deg of half a turn is flagged,
+and one through the Earth refused. Lambert's psi bounds are unchanged; it
+still raises when they do not bracket.
+
 - `kepler_propagate` and `lambert` return the last iterate silently when they
   do not converge. Lambert raises only when it runs out of iterations.
 - `mean_to_true` with e exactly 1 divides by zero in the hyperbolic branch.
@@ -454,6 +579,9 @@ propagator that reports convergence are standalone additions:
 
 ### A17. SGP4 errors fall back silently
 
+**Status (2026-11-10):** Fixed. An SGP4 error is raised with its meaning (e.g.
+"the satellite has decayed before that time") instead of falling back.
+
 **Where:** [`tle.py:90-96`](../satflight/tle.py#L90)
 
 A non-zero SGP4 error code (e.g. a decayed object) silently falls back to the
@@ -462,6 +590,9 @@ J2 path.
 **Fix:** Warn in the event log.
 
 ### A18. Wisdom-Holman with drag is first order in the drag term
+
+**Status (2026-11-10):** Fixed in the docs: PHYSICS.md now says the drag
+coupling is first order and why it does not matter.
 
 **Where:** [`integrators.py:86`](../satflight/integrators.py#L86)
 
@@ -476,6 +607,10 @@ iteration) for the drag kick.
 
 ### A19. One DOPRI5 tolerance for km and km/s
 
+**Status (2026-11-10):** Fixed. The error norm weighs velocities by each
+orbit's `sqrt(r^3/mu)`. The one-day error at 600 s maximum steps fell from 27
+to 10 m (HEO) and from 4.8 to 1.9 m (GTO), for 2-18 % more steps.
+
 **Where:** [`integrators.py:98`](../satflight/integrators.py#L98)
 
 `atol` = 1e-6 applies to both position (1 mm) and velocity (1 mm/s). With
@@ -489,6 +624,9 @@ give separate atols.
 
 ### A20. Drag during finite burns uses the mass at ignition
 
+**Status (2026-11-10):** Fixed. A burning satellite's `Cd A / m` follows its
+falling mass.
+
 **Where:** [`simulation.py:614`](../satflight/simulation.py#L614)
 
 `Cd·A/m` is evaluated once per segment, so A/m stays at its ignition value
@@ -499,6 +637,10 @@ long, low-thrust burns at low altitude.
 that are burning.
 
 ### A21. Sun ephemeris time scale
+
+**Status (2026-11-10):** Left as is, by decision: 69 s of UTC vs TT moves the
+Sun 0.0008 deg, a twelfth of the series' own 0.01 deg, and Vallado's Algorithm
+29 is given in UT1. PHYSICS.md says so.
 
 The Sun series is fed UTC where it expects TT (69 s, 0.0008 deg). There is no
 aberration or light-time correction (20"). Lighting and eclipses only;

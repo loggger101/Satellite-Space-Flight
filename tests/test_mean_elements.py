@@ -5,6 +5,7 @@ the term itself, the j2mean propagator that relies on it, and formations
 import math
 
 import numpy as np
+import pytest
 
 from satflight.analysis import j2_mean_propagate, mean_to_osculating_a, osculating_to_mean_a
 from satflight.constants import MU_EARTH, R_EARTH
@@ -100,3 +101,39 @@ def test_copies_along_an_orbit_share_the_mean_semi_major_axis():
         el = rv2coe(rr, vv)
         means.append(float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu)))
     assert np.ptp(means) < 1e-6
+
+
+def test_a_single_satellite_and_a_one_plane_walker_share_the_mean_orbit():
+    # audit A11: "altitude" was mean for Walker shells but osculating for single ones,
+    # so the two drifted apart by degrees a day
+    from datetime import datetime, timezone
+
+    from satflight.scenario import SatSpec, Scenario, expand
+    from satflight.timeutil import Clock
+    walker = ConstellationSpec("W", 550.0, 53.0, total=4, planes=1, phasing=0)
+    sc = Scenario(name="t", constellations=[walker], satellites=[
+        SatSpec("S", {"type": "elements", "altitude": 550.0, "i": 53.0, "nu": 90.0})])
+    rows = expand(sc, Clock(datetime(2026, 9, 29, tzinfo=timezone.utc)))
+    single = next(r for r in rows if r[0] == "S")
+    member = next(r for r in rows if r[0] == "W-0102")        # u = 90 deg too
+    assert np.allclose(single[3], member[3], atol=1e-9)
+    assert np.allclose(single[4], member[4], atol=1e-12)
+    raw = SatSpec("R", {"type": "elements", "altitude": 550.0, "i": 53.0, "nu": 90.0,
+                        "osculating": True})
+    sc.satellites = [raw]
+    r = next(x for x in expand(sc, Clock(datetime(2026, 9, 29, tzinfo=timezone.utc)))
+             if x[0] == "R")[3]
+    assert np.linalg.norm(r) == pytest.approx(R_EARTH + 550.0, abs=1e-9)
+
+
+def test_without_j2_mean_and_osculating_are_the_same():
+    from datetime import datetime, timezone
+
+    from satflight.forces import ForceModel
+    from satflight.scenario import SatSpec, Scenario, expand
+    from satflight.timeutil import Clock
+    sc = Scenario(name="t", forces=ForceModel(j2=False),
+                  constellations=[ConstellationSpec("W", 550.0, 53.0, total=4, planes=1)],
+                  satellites=[SatSpec("S", {"type": "elements", "altitude": 550.0, "nu": 30})])
+    for row in expand(sc, Clock(datetime(2026, 9, 29, tzinfo=timezone.utc))):
+        assert np.linalg.norm(row[3]) == pytest.approx(R_EARTH + 550.0, abs=1e-9)

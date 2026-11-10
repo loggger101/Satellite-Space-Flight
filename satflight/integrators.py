@@ -97,9 +97,16 @@ def wh_step(f: Deriv, t: float, y: np.ndarray, h: float) -> np.ndarray:
 
 
 def _error_norm(err, y0, y1, rtol, atol):
-    """Scaled RMS error of the worst satellite (<= 1 means the step is accepted)."""
-    sc = atol + rtol * np.maximum(np.abs(y0), np.abs(y1))
-    per_sat = np.sqrt(np.mean((err / sc) ** 2, axis=1))
+    """Scaled RMS error of the worst satellite (<= 1 means the step is accepted).
+
+    Velocities are weighed in km by each orbit's own time scale sqrt(r^3/mu)
+    (~900 s in LEO), so one ``atol`` means the same for km and km/s: taken
+    as is, 1e-6 km/s would let the velocity be ~100x less accurate, relative
+    to itself, than the position."""
+    tau = np.sqrt(np.sum(y0[:, :3] ** 2, axis=1) ** 1.5 / MU_EARTH)[:, None]
+    w = np.concatenate([np.ones((len(y0), 3)), np.repeat(tau, 3, axis=1)], axis=1)
+    sc = atol + rtol * np.maximum(np.abs(y0 * w), np.abs(y1 * w))
+    per_sat = np.sqrt(np.mean((err * w / sc) ** 2, axis=1))
     return float(np.max(per_sat)) if per_sat.size else 0.0
 
 

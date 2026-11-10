@@ -206,6 +206,10 @@ def mean_to_eccentric(M, e, tol: float = 1e-14, max_iter: int = 50):
         E = E - dE
         if np.all(np.abs(dE) < tol):
             break
+    else:
+        if not np.all(np.abs(dE) < 1e-9):
+            raise FloatingPointError("Kepler's equation did not converge "
+                                     f"(e up to {float(np.max(e)):.6g})")
     return _scalarize(E)
 
 
@@ -220,18 +224,34 @@ def mean_to_hyperbolic(M, e, tol: float = 1e-14, max_iter: int = 80):
         F = F - dF
         if np.all(np.abs(dF) < tol * np.maximum(1.0, np.abs(F))):
             break
+    else:
+        if not np.all(np.abs(dF) < 1e-9 * np.maximum(1.0, np.abs(F))):
+            raise FloatingPointError("the hyperbolic Kepler equation did not converge")
     return _scalarize(F)
 
 
 def mean_to_true(M, e):
-    """Mean anomaly -> true anomaly (elliptic or hyperbolic)."""
+    """Mean anomaly -> true anomaly for any conic, the inverse of
+    :func:`true_to_mean` (a parabola, e within 1e-9 of 1, by Barker's equation)."""
     e = np.asarray(e, dtype=float)
-    if np.all(e < 1.0):
+    if np.all(e < 1.0 - 1e-9):
         E = np.asarray(mean_to_eccentric(M, e))
         nu = np.arctan2(np.sqrt(1.0 - e * e) * np.sin(E), np.cos(E) - e)
         return _scalarize(np.mod(nu, TWO_PI))
-    F = np.asarray(mean_to_hyperbolic(M, e))
-    nu = 2.0 * np.arctan(np.sqrt((e + 1.0) / (e - 1.0)) * np.tanh(F / 2.0))
+    M, e = np.broadcast_arrays(np.asarray(M, dtype=float), e)
+    nu = np.empty(M.shape)
+    ell = e < 1.0 - 1e-9
+    hyp = e > 1.0 + 1e-9
+    par = ~(ell | hyp)
+    if np.any(ell):
+        nu[ell] = np.atleast_1d(mean_to_true(M[ell], e[ell]))
+    if np.any(hyp):
+        F = np.asarray(mean_to_hyperbolic(M[hyp], e[hyp]))
+        nu[hyp] = 2.0 * np.arctan(np.sqrt((e[hyp] + 1.0) / (e[hyp] - 1.0)) * np.tanh(F / 2.0))
+    if np.any(par):            # Barker: M = D + D^3/3 with D = tan(nu/2), solved exactly
+        b = 1.5 * M[par]
+        y = np.cbrt(b + np.sqrt(b * b + 1.0))
+        nu[par] = 2.0 * np.arctan(y - 1.0 / y)
     return _scalarize(np.mod(nu, TWO_PI))
 
 
@@ -282,6 +302,11 @@ def kepler_propagate(r0, v0, dt, mu: float = MU_EARTH, tol: float = 1e-12,
         chi = chi - delta
         if np.all(np.abs(delta) <= tol * np.maximum(1.0, np.abs(chi))):
             break
+    else:
+        bad = ~(np.abs(delta) <= 1e-8 * np.maximum(1.0, np.abs(chi)))
+        if np.any(bad):
+            raise FloatingPointError(f"two-body propagation did not converge for {int(bad.sum())} "
+                                     f"of {len(chi)} states (dt up to {np.max(np.abs(dt)):,.0f} s)")
 
     psi = chi * chi * alpha
     c2, c3 = stumpff(psi)

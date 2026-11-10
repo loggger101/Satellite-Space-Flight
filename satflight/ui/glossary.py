@@ -55,15 +55,17 @@ ROWS = {
                       "ellipse, 1 or more an open escape path.",
     "Semi-latus rectum p": "The orbit's radius when the satellite is 90 degrees from "
                            "perigee. It sets the shape through r = p / (1 + e cos(nu)).",
-    "Perigee alt / radius": "Lowest point of the orbit: its height above the surface, then "
-                            "its distance from the Earth's center.",
-    "Apogee alt / radius": "Highest point of the orbit: its height above the surface, then "
-                           "its distance from the Earth's center.",
+    "Perigee alt / radius": "Lowest point of the orbit: its distance from the Earth's center "
+                            "minus the equatorial radius (6378 km), as orbits are quoted, then "
+                            "that distance itself. Over the poles the ground is 21 km lower.",
+    "Apogee alt / radius": "Highest point of the orbit: its distance from the Earth's center "
+                           "minus the equatorial radius (6378 km), then that distance itself.",
     "Focus offset c = ae": "How far the ellipse's center sits from the Earth's center (the "
                            "Earth is at one focus, not in the middle).",
-    "Perigee / apogee alt": "Height of the orbit's lowest and highest points above the "
-                            "surface.",
-    "Perigee alt": "Height of the lowest point of the trajectory above the surface.",
+    "Perigee / apogee alt": "The orbit's lowest and highest points as distances from the "
+                            "Earth's center minus the equatorial radius (6378 km).",
+    "Perigee alt": "Lowest point of the trajectory: its distance from the Earth's center "
+                   "minus the equatorial radius (6378 km).",
     # --- orientation
     "Inclination i": "Tilt of the orbit against the equator: 0 is equatorial, 90 polar, "
                      "more than 90 retrograde (against the Earth's spin).",
@@ -78,8 +80,9 @@ ROWS = {
                         "It is used for circular orbits, which have no perigee.",
     "Arg. of latitude u": "Angle from the ascending node to the satellite along the orbit. "
                           "It is used for circular orbits, which have no perigee.",
-    "Local time of AN":"Local solar time on the ground under the ascending node. A "
-                        "Sun-synchronous orbit keeps it the same all year.",
+    "Local time of AN":"Local mean solar time on the ground under the ascending node "
+                        "(LTAN). A Sun-synchronous orbit keeps it the same all year; a "
+                        "sundial there would read up to 16 min off it.",
     # --- timing
     "Period": "Time for one full revolution.",
     "Nodal period (J2)": "Time from one ascending node to the next, including the Earth's "
@@ -119,7 +122,9 @@ ROWS = {
                         "caused by the Earth's equatorial bulge.",
     "Sun-sync inclination": "The inclination at which the J2 node drift would match the "
                             "Earth's yearly trip around the Sun (0.9856 degrees a day) for "
-                            "this a and e. The orbit then keeps the same angle to the Sun.",
+                            "this a and e (first-order J2; an \"sso\" orbit in a Cowell run "
+                            "is tuned to the full field, a few hundredths of a degree more). "
+                            "The orbit then keeps the same angle to the Sun.",
     "Beta angle": "Angle between the orbital plane and the direction of the Sun. Near 0 the "
                   "orbit passes through the Earth's shadow; high values mean little or no "
                   "eclipse.",
@@ -138,11 +143,16 @@ ROWS = {
                              "spacecraft resists drag.",
     "Air density at perigee": "Density of the thin upper atmosphere at the orbit's lowest "
                               "point, from the exponential model with the chosen solar "
-                              "activity scale.",
-    "Drag at perigee": "Deceleration from air drag at perigee.",
+                              "activity scale, at that point's real height above the "
+                              "ground (shown after it).",
+    "Drag at perigee": "Deceleration from air drag at perigee, from the speed through the "
+                       "air, which turns with the Earth.",
     "Delta-v spent": "Total change of velocity from all burns so far: the usual measure of "
                      "propellant used.",
     "dV spent": "Total change of velocity from all burns so far.",
+    "Delta-v left": "Change of velocity the propellant still on board can give, by the "
+                    "rocket equation down to the dry mass, for an engine of Isp 300 s. "
+                    "With no dry mass set there is no limit.",
     "Horizon distance": "Distance to the horizon as seen from the satellite.",
     "Coverage radius": "Ground distance from the point below the satellite to where it "
                        "stands 10 degrees above the horizon (the footprint drawn on the "

@@ -9,6 +9,8 @@ function orbit = orbitElements(opts)
 %     Raan   right ascension of the ascending node (deg)
 %     Argp   argument of perigee (deg)
 %     Nu     true anomaly (deg), or M for the mean anomaly - not both
+%   When J2 acts in the run, the size is the mean (orbit-averaged) one;
+%   Osculating=true places the satellite exactly as given instead.
 %
 %   Examples:
 %     satflight.orbitElements(Altitude=550, I="sso", Raan=30)
@@ -24,6 +26,7 @@ arguments
     opts.Argp (1,1) double
     opts.Nu (1,1) double
     opts.M (1,1) double
+    opts.Osculating (1,1) logical
 end
 if isfield(opts, "I") && ~(isnumeric(opts.I) && isscalar(opts.I)) ...
         && ~(isStringScalar(opts.I) || ischar(opts.I))
@@ -32,5 +35,5 @@ end
 orbit = struct("type", "elements");
 orbit = copyOptions(orbit, opts, ["A", "a"; "E", "e"; "Altitude", "altitude"; ...
     "PerigeeAlt", "perigee_alt"; "ApogeeAlt", "apogee_alt"; "I", "i"; "Raan", "raan"; ...
-    "Argp", "argp"; "Nu", "nu"; "M", "M"]);
+    "Argp", "argp"; "Nu", "nu"; "M", "M"; "Osculating", "osculating"]);
 end

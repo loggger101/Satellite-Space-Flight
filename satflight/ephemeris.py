@@ -4,7 +4,7 @@ Astronomical Almanac series (Vallado Alg. 29), ~0.01 deg accuracy - the
 series skyfield/astropy users reach for when a JPL DE kernel would be
 overkill. It is used only for lighting, eclipses, beta angle and local solar
 time; the Sun exerts no force on the satellites (docs/SCOPE.md). Results are
-geocentric ECI (mean equator of date, treated as J2000) in km.
+geocentric ECI (mean equator and equinox of date, the simulator's ECI) in km.
 """
 
 from __future__ import annotations

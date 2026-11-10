@@ -5,16 +5,18 @@ import math
 import numpy as np
 import pytest
 
-from satflight.constants import MU_EARTH, R_EARTH
+from satflight.constants import MU_EARTH, OMEGA_EARTH, R_EARTH
 from satflight.elements import coe2rv, kepler_propagate, rv2coe, vis_viva
 from satflight.ephemeris import sun_position
 from satflight.forces import ForceModel
 from satflight.orbitinfo import local_time_of_node, orbit_info
-from satflight.scenario import ConstellationSpec, Scenario, preset_spec, walker_states
+from satflight.scenario import ConstellationSpec, Scenario, orbit_state, preset_spec, walker_states
 from satflight.simulation import Satellite, Simulation
+from satflight.timeutil import Clock, datetime_from_jd, gmst
 
 D = np.radians
 JD = 2461313.0          # 2026-09-29 12:00 UTC
+EPOCH = datetime_from_jd(JD)
 
 
 def molniya(nu=10.0):
@@ -91,20 +93,27 @@ def test_high_beta_orbit_never_eclipses():
 
 
 def test_ltan_and_sun_synchronous_inclination():
+    # at 12:00 UT the mean Sun is over Greenwich: right ascension = GMST
+    ra_sun = gmst(JD)
+    assert local_time_of_node(ra_sun, JD) == pytest.approx(12.0)
+    assert local_time_of_node(ra_sun + D(90), JD) == pytest.approx(18.0)
+    assert local_time_of_node(ra_sun - D(90), JD) == pytest.approx(6.0)
+    # the true Sun is within the equation of time (+-16.5 min) of the mean one
     s = sun_position(JD)
-    ra_sun = math.atan2(s[1], s[0])
-    assert local_time_of_node(ra_sun, s) == pytest.approx(12.0)
-    assert local_time_of_node(ra_sun + D(90), s) == pytest.approx(18.0)
-    assert local_time_of_node(ra_sun - D(90), s) == pytest.approx(6.0)
+    assert abs(math.degrees(math.remainder(math.atan2(s[1], s[0]) - ra_sun, 2 * math.pi))
+               ) < 16.5 / 4
     r, v = coe2rv(R_EARTH + 700, 0.0, D(98.19), ra_sun + D(-67.5), 0, 0.3)
     info = orbit_info(r, v, JD)
     assert info.ltan == pytest.approx(7.5, abs=1e-6)
     # the mean orbit sits ~7 km below this instant's osculating one, so it needs a
     # little less than the textbook 98.19 deg for a 700 km radius
     assert math.degrees(info.sso_inclination) == pytest.approx(98.157, abs=0.005)
-    r, v = coe2rv(R_EARTH + 700, 0.0, info.sso_inclination, ra_sun + D(-67.5), 0, 0.3)
-    info = orbit_info(r, v, JD)
-    assert math.degrees(info.raan_dot) * 86400 == pytest.approx(0.98565, abs=1e-4)
+    # an "sso" orbit spec is sun-synchronous in its mean elements, wherever it starts
+    for nu in (0.0, 17.2, 45.0, 90.0):
+        orbit = {"type": "elements", "altitude": 700, "i": "sso", "raan": 30, "nu": nu}
+        r, v = orbit_state(orbit, Clock(EPOCH), 0.0, j2=True)
+        info = orbit_info(r, v, JD)
+        assert math.degrees(info.raan_dot) * 86400 == pytest.approx(0.98565, abs=1e-4)
 
 
 def test_secular_rates_follow_the_simulation():
@@ -113,10 +122,14 @@ def test_secular_rates_follow_the_simulation():
                   forces=ForceModel(j2=True))
     sim = Simulation(sc)
     info = orbit_info(sim.y[0, :3], sim.y[0, 3:], JD)
-    el0 = rv2coe(sim.y[0, :3], sim.y[0, 3:])
-    sim.advance(5 * 86400.0)
-    el1 = rv2coe(sim.y[0, :3], sim.y[0, 3:])
-    measured = math.remainder(el1.raan - el0.raan, 2 * math.pi) / (5 * 86400.0)
+    # the drift of the osculating node, fitted over 5 days: two end points alone
+    # carry its short-period J2 wobble, ~1e-3 of the drift
+    ts, raans = [], []
+    for _ in range(5 * 48):
+        ts.append(sim.t)
+        raans.append(rv2coe(sim.y[0, :3], sim.y[0, 3:]).raan)
+        sim.advance(1800.0)
+    measured = np.polyfit(ts, np.unwrap(raans), 1)[0]
     assert info.raan_dot == pytest.approx(measured, rel=1e-3)      # osculating a: 3e-3 off
 
 
@@ -126,8 +139,12 @@ def test_physical_properties():
     info = orbit_info(r, v, JD, sat)
     assert info.area_to_mass == pytest.approx(0.01)
     assert info.ballistic == pytest.approx(400 / (2.2 * 4))
-    # 0.5 rho v^2 Cd A/m with rho(400 km) = 3.725e-12
-    expected = 0.5 * 3.725e-12 * (info.v_peri * 1e3) ** 2 * 2.2 * 0.01
+    # 0.5 rho v^2 Cd A/m with rho(400 km) = 3.725e-12 and v the speed through the
+    # air: perigee is on the equator at the node, where the air moves east at w r
+    # and the orbit crosses it at 51.6 deg
+    wr, vp = OMEGA_EARTH * (R_EARTH + 400), info.v_peri
+    v_air2 = vp * vp - 2 * vp * wr * math.cos(D(51.6)) + wr * wr
+    expected = 0.5 * 3.725e-12 * v_air2 * 1e6 * 2.2 * 0.01
     assert info.drag_perigee == pytest.approx(expected, rel=1e-2)
     assert 1000 < info.footprint_km < 2500
     # ground track moves west by ~ (earth rate) * period, ~23 deg for the ISS
@@ -150,3 +167,13 @@ def test_mean_semi_major_axis_is_shown():
         info = orbit_info(r, v, 2461041.5)
         assert info.a_mean == pytest.approx(R_EARTH + 550.0, abs=1e-6)
         assert abs(info.el.a - info.a_mean) < 10.0
+
+
+def test_a_sun_synchronous_node_keeps_its_ltan_all_year():
+    # audit A5: against the true Sun this read 10:16 to 10:46 over 2026
+    rate = 2 * math.pi / 365.2421897                     # rad/day, the mean Sun's
+    raan0 = gmst(JD) + D(15 * (10.5 - 12.0))             # 10:30 at JD (12:00 UT)
+    days = np.arange(0, 366, 5.0)
+    ltan = [local_time_of_node(raan0 + rate * d, JD + d) for d in days]
+    assert max(ltan) - min(ltan) < 1 / 60                # under a minute
+    assert np.mean(ltan) == pytest.approx(10.5, abs=1 / 60)

@@ -21,14 +21,16 @@ from .analysis import (
     coverage_half_angle,
     j2_secular_rates,
     osculating_to_mean_a,
+    osculating_to_mean_i,
 )
 from .atmosphere import density
 from .constants import MU_EARTH, OMEGA_EARTH, R_EARTH
 from .eclipse import shadow_fraction
 from .elements import Elements, coe2rv, mean_to_true, rv2coe, time_to_true_anomaly
 from .ephemeris import sun_position
-from .forces import approx_altitude
+from .frames import OMEGA_VEC, geodetic_height
 from .maneuvers import sun_synchronous_inclination
+from .timeutil import gmst
 
 CIRCULAR_E = 1e-3        # below this, apsides are not meaningful for display
 EQUATORIAL_SIN_I = 1e-3  # below this, nodes are not meaningful
@@ -54,8 +56,9 @@ class OrbitInfo:
     b: float                 # semi-minor axis (km); nan if open
     c: float                 # center-to-focus distance a*e (km); nan if open
     a_mean: float            # J2 orbit-averaged semi-major axis (km); nan if open
-    rp_alt: float            # km
-    ra_alt: float            # km (inf if open)
+    rp_alt: float            # km, r_p - R_eq: the orbit's shape, as orbits are quoted
+    ra_alt: float            # km, r_a - R_eq (inf if open)
+    perigee_height: float    # km above the ellipsoid at the perigee point itself
     # speeds
     v_peri: float
     v_apo: float             # nan if open
@@ -89,8 +92,8 @@ class OrbitInfo:
     cd: float
     area_to_mass: float      # m^2/kg
     ballistic: float         # m / (Cd A), kg/m^2
-    rho_perigee: float       # kg/m^3 at perigee altitude
-    drag_perigee: float      # m/s^2 drag deceleration at perigee
+    rho_perigee: float       # kg/m^3 at the perigee's height above the ellipsoid
+    drag_perigee: float      # m/s^2 drag deceleration at perigee, from the air-relative speed
 
     @property
     def eclipse_duration(self) -> float:
@@ -126,10 +129,14 @@ def sunlight_timeline(el: Elements, r_sun, samples: int = TIMELINE_SAMPLES):
     return t, shadow_fraction(pos, r_sun)
 
 
-def local_time_of_node(raan: float, r_sun) -> float:
-    """Local (apparent) solar time, hours, at the ascending node."""
-    ra_sun = math.atan2(r_sun[1], r_sun[0])
-    return (12.0 + math.degrees(raan - ra_sun) / 15.0) % 24.0
+def local_time_of_node(raan: float, jd: float) -> float:
+    """Local *mean* solar time, hours, at the ascending node: UT plus the
+    node's longitude, which is RAAN - GMST. LTAN is quoted against the mean
+    Sun because that is what a sun-synchronous node follows, uniformly at
+    0.9856 deg/day; the true Sun runs up to 16 min ahead or behind it over the
+    year (the equation of time)."""
+    ut = ((jd - 0.5) % 1.0) * 24.0
+    return (ut + math.degrees(raan - gmst(jd)) / 15.0) % 24.0
 
 
 def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitInfo:
@@ -152,8 +159,9 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         # the secular J2 drifts follow the mean orbit, not the osculating ellipse
         # of this instant (whose a swings by several km around each revolution)
         a_mean = float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu))
+        i_mean = float(osculating_to_mean_i(el.i, a_mean, el.e, el.argp, el.nu))
         n_mean = math.sqrt(MU_EARTH / a_mean ** 3)
-        rd, wd, md = (float(x) for x in j2_secular_rates(a_mean, el.e, el.i))
+        rd, wd, md = (float(x) for x in j2_secular_rates(a_mean, el.e, i_mean))
         nodal_period = nan if equatorial else 2 * math.pi / (n_mean + md + wd)
         rev = el.period if equatorial else nodal_period
         ground_shift = (math.degrees((OMEGA_EARTH - rd) * rev) + 180.0) % 360.0 - 180.0
@@ -177,14 +185,21 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
     am = area / mass if mass else nan
     rp_alt = el.rp - R_EARTH
     v_peri = el.h / el.rp
-    rho_p = float(density(rp_alt, density_scale))
-    alt = float(approx_altitude(r))
+    # drag at perigee: the air's density at the real height of that point (not
+    # r_p - R_eq, up to 21 km lower near the poles) and the speed through the
+    # air, which turns with the Earth (inertial speed is ~8 % high in LEO)
+    rpv, vpv = coe2rv(el.a, el.e, el.i, el.raan, el.argp, 0.0, p=el.p)
+    hp = float(geodetic_height(rpv))
+    v_air = float(np.linalg.norm(vpv - np.cross(OMEGA_VEC, rpv)))
+    rho_p = float(density(hp, density_scale))
+    alt = float(geodetic_height(r))
     return OrbitInfo(
         el=el, regime=classify(el), closed=closed, circular=circular, equatorial=equatorial,
         retrograde=bool(el.i > math.pi / 2),
         radius=rm, altitude=alt, speed=vm,
         fpa=math.asin(float(np.clip(np.dot(r, v) / (rm * vm), -1, 1))),
         b=b, c=c, rp_alt=rp_alt, ra_alt=(el.ra - R_EARTH) if closed else inf,
+        perigee_height=hp,
         a_mean=a_mean,
         v_peri=v_peri, v_apo=v_apo,
         v_circ=math.sqrt(MU_EARTH / rm), v_esc=math.sqrt(2 * MU_EARTH / rm), c3=2 * el.energy,
@@ -192,7 +207,7 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         revs_per_day=86400.0 / el.period if closed else nan, ground_shift=ground_shift,
         t_peri=t_peri, t_apo=t_apo, t_an=t_an, t_dn=t_dn,
         raan_dot=rd, argp_dot=wd, sso_inclination=sso,
-        ltan=nan if equatorial else local_time_of_node(el.raan, r_sun),
+        ltan=nan if equatorial else local_time_of_node(el.raan, jd),
         beta=beta_angle(r, v, r_sun),
         timeline_t=t_line, timeline_lit=lit, eclipse_fraction=eclipse,
         horizon_km=math.sqrt(max(rm * rm - R_EARTH * R_EARTH, 0.0)),
@@ -200,7 +215,7 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
         mass=mass, area=area, cd=cd, area_to_mass=am,
         ballistic=mass / (cd * area) if cd and area else nan,
         rho_perigee=rho_p,
-        drag_perigee=0.5 * rho_p * (v_peri * 1e3) ** 2 * cd * am,
+        drag_perigee=0.5 * rho_p * (v_air * 1e3) ** 2 * cd * am,
     )
 
 

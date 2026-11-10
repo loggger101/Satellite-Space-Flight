@@ -12,6 +12,7 @@ import numpy as np
 import pygame
 
 from ..constants import R_EARTH
+from ..frames import geodetic_height
 from ..orbitinfo import orbit_info
 from ..scenario import Scenario, orbit_state, palette_color
 from ..simulation import ACTIVE, Simulation
@@ -536,7 +537,7 @@ class App:
             rect = pygame.Rect(0, 0, px(20), px(20))
             rect.center = (int(sx[k]), int(sy[k]))
             if s.status == ACTIVE:
-                alt = float(np.linalg.norm(self.sim.y[k, :3])) - R_EARTH
+                alt = float(geodetic_height(self.sim.y[k, :3]))
                 state = f"{alt:,.0f} km up, {'in sunlight' if s.shadow > 0.5 else 'in shadow'}"
             else:
                 state = s.status

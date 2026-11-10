@@ -55,17 +55,25 @@ def plane_change_dv(speed: float, delta_i: float) -> float:
     return 2.0 * speed * math.sin(abs(delta_i) / 2.0)
 
 
-def lambert(r1, r2, tof: float, mu: float = MU_EARTH, prograde: bool = True,
+def lambert(r1, r2, tof: float, mu: float = MU_EARTH, normal=(0.0, 0.0, 1.0),
             tol: float = 1e-10, max_iter: int = 1000):
     """Zero-revolution Lambert problem by universal variables with bisection
-    (Vallado Alg. 58 / Curtis Alg. 5.2). Returns (v1, v2) in km/s."""
+    (Vallado Alg. 58 / Curtis Alg. 5.2). Returns (v1, v2) in km/s.
+
+    ``normal`` says which way round to go: the transfer turns about it
+    counter-clockwise. Pass the chaser's angular momentum r x v to fly the
+    way it already orbits. The default +Z is "prograde" in the old sense, which
+    is ambiguous for polar orbits: there h_z is ~0 and the sign of
+    (r1 x r2)_z only says which side of the plane the target lies on."""
     r1 = np.asarray(r1, dtype=float)
     r2 = np.asarray(r2, dtype=float)
     r1m, r2m = np.linalg.norm(r1), np.linalg.norm(r2)
     cos_dnu = np.clip(np.dot(r1, r2) / (r1m * r2m), -1.0, 1.0)
-    cz = np.cross(r1, r2)[2]
+    n = np.asarray(normal, dtype=float)
+    if not np.linalg.norm(n) > 0:
+        raise ValueError("Lambert: the transfer direction needs a nonzero normal")
     dnu = math.acos(cos_dnu)
-    if (prograde and cz < 0) or (not prograde and cz >= 0):
+    if np.dot(np.cross(r1, r2), n) < 0:
         dnu = 2 * math.pi - dnu
     if abs(1.0 - cos_dnu) < 1e-14:
         raise ValueError("Lambert: transfer angle of 0 deg is degenerate")

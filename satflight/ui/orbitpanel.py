@@ -541,18 +541,36 @@ def draw_gauge(surf, rect, fonts, label, lo, hi, val, unit, prec, color):
 
 # --- property sheet ----------------------------------------------------------------------------
 
+ROW_GAP = 8          # px between a label and its value on one line
+
+
+def place_row(font, x, y, w, label, value):
+    """Where one property row goes: ``(label_rect, value_rect, height)``. The
+    value is right-aligned at ``x + w`` beside its label; if the two would
+    run into each other (a wide font, such as the bundled DejaVu Sans Mono
+    where Consolas is missing), it goes on its own line below the label."""
+    line = px(16)
+    lw, lh = font.size(label)
+    vw, vh = font.size(value)
+    lab = pygame.Rect(x + px(4), y, lw, lh)
+    if lab.right + px(ROW_GAP) + vw <= x + w:
+        return lab, pygame.Rect(x + w - vw, y, vw, vh), line
+    return lab, pygame.Rect(x + w - vw, y + line, vw, vh), 2 * line
+
+
 def draw_section(surf, fonts, x, y, w, title, rows) -> int:
-    """A titled block of (label, value) rows, values right-aligned at ``x + w``;
+    """A titled block of (label, value) rows (see :func:`place_row`);
     returns the y just below it."""
     clip = surf.get_clip()                      # the panel's scrolled body
     about = glossary.section(title)
     tips.add(fonts.draw(surf, title, (x, y), theme.ACCENT, fonts.small), about, clip=clip)
     y += px(18)
     for label, value in rows:
-        fonts.draw(surf, label, (x + px(4), y), theme.DIM, fonts.small)
-        fonts.draw(surf, value, (x + w, y), theme.TEXT, fonts.small, "topright")
-        tips.add(pygame.Rect(x, y, w, px(16)), glossary.row(label) or about, clip=clip)
-        y += px(16)
+        lab, val, h = place_row(fonts.small, x, y, w, label, value)
+        fonts.draw(surf, label, lab.topleft, theme.DIM, fonts.small)
+        fonts.draw(surf, value, val.topleft, theme.TEXT, fonts.small)
+        tips.add(pygame.Rect(x, y, w, h), glossary.row(label) or about, clip=clip)
+        y += h
     return y + px(6)
 
 

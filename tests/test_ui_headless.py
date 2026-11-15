@@ -998,17 +998,27 @@ def test_every_part_of_the_window_has_a_tip_that_fits(scaled_app):
                         (state, line)
 
 
-def test_every_property_row_fits_beside_its_value(scaled_app):
-    """No row of the right panel (both tabs, every bundled orbit, the longest
-    lifetime rows) runs into its right-aligned value."""
+def test_no_property_row_runs_into_its_value(scaled_app):
+    """Every row of the right panel (both tabs, every bundled orbit, every
+    lifetime answer) is placed so its label and value do not overlap and the
+    value stays inside the panel: with this system's font and with the
+    bundled DejaVu Sans Mono, which is wider than Consolas and is what Linux
+    and macOS draw with (many rows then take two lines)."""
     from satflight.lifetime import YEAR
-    from satflight.ui.orbitpanel import lifetime_rows, property_sections
+    from satflight.ui.orbitpanel import ROW_GAP, lifetime_rows, place_row, property_sections
     app = scaled_app
-    small, width = app.fonts.small, px(panels.RIGHT_W) - px(24)
-    lives = [lifetime_rows(x, 1.0) for x in (9.9 * YEAR, 15 * 86400, math.inf,
+    fonts = [app.fonts.small]
+    if os.environ.get("SATFLIGHT_FONTS") != "bundled":
+        os.environ["SATFLIGHT_FONTS"] = "bundled"
+        try:
+            fonts.append(theme.load_font("mono", px(13)))
+        finally:
+            del os.environ["SATFLIGHT_FONTS"]
+    x, width = 0, px(panels.RIGHT_W) - px(24)
+    lives = [lifetime_rows(t, 1.0) for t in (9.9 * YEAR, 15 * 86400, math.inf,
                                              "no drag in this run", "suborbital: falls back",
-                                         "escaping: never", "estimating...")]
-    too_long = set()
+                                             "escaping: never", "estimating...")]
+    bad = set()
     for path in sorted(app.scenario_dir.glob("*.json")):
         app.load_scenario(path)
         app.sim.advance(900)
@@ -1019,9 +1029,13 @@ def test_every_property_row_fits_beside_its_value(scaled_app):
             if info is not None:
                 rows += [r for _, rs in property_sections(info, 12.345, 1.234) for r in rs]
                 rows += [r for life in lives for r in life]
-            too_long |= {(path.stem, label, value) for label, value in rows
-                         if px(4) + small.size(label)[0] + px(8) + small.size(value)[0] > width}
-    assert not too_long, sorted(too_long)
+            for font in fonts:
+                for label, value in rows:
+                    lab, val, _ = place_row(font, x, 0, width, label, value)
+                    if (lab.inflate(2 * px(ROW_GAP), 0).colliderect(val) or val.x < x
+                            or lab.right > x + width):
+                        bad.add((path.stem, label, value))
+    assert not bad, sorted(bad)
 
 
 def test_every_property_row_and_form_field_is_explained(app):

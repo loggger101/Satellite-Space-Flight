@@ -1,6 +1,7 @@
 """Drive the pygame front end headlessly (SDL dummy driver) through its
 dialogs, keyboard shortcuts and panels."""
 
+import math
 import os
 import time
 from pathlib import Path
@@ -18,7 +19,7 @@ from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.scenario import Scenario
 from satflight.simulation import Simulation
-from satflight.ui import glossary, theme, tips
+from satflight.ui import glossary, panels, theme, tips
 from satflight.ui.app import REST_AFTER, RESTING_FPS, App
 from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
@@ -995,6 +996,32 @@ def test_every_part_of_the_window_has_a_tip_that_fits(scaled_app):
                 for line in tips.wrap(text, app.fonts.ui, px(tips.MAX_W)):
                     assert app.fonts.ui.size(line)[0] <= px(tips.MAX_W) or " " not in line, \
                         (state, line)
+
+
+def test_every_property_row_fits_beside_its_value(scaled_app):
+    """No row of the right panel (both tabs, every bundled orbit, the longest
+    lifetime rows) runs into its right-aligned value."""
+    from satflight.lifetime import YEAR
+    from satflight.ui.orbitpanel import lifetime_rows, property_sections
+    app = scaled_app
+    small, width = app.fonts.small, px(panels.RIGHT_W) - px(24)
+    lives = [lifetime_rows(x, 1.0) for x in (9.9 * YEAR, 15 * 86400, math.inf,
+                                             "no drag in this run", "suborbital: falls back",
+                                         "escaping: never", "estimating...")]
+    too_long = set()
+    for path in sorted(app.scenario_dir.glob("*.json")):
+        app.load_scenario(path)
+        app.sim.advance(900)
+        for i in range(app.sim.n):
+            app.select(i)
+            rows = [r for _, rs in app.info.report(i) for r in rs]
+            info = app.orbit_info()
+            if info is not None:
+                rows += [r for _, rs in property_sections(info, 12.345, 1.234) for r in rs]
+                rows += [r for life in lives for r in life]
+            too_long |= {(path.stem, label, value) for label, value in rows
+                         if px(4) + small.size(label)[0] + px(8) + small.size(value)[0] > width}
+    assert not too_long, sorted(too_long)
 
 
 def test_every_property_row_and_form_field_is_explained(app):

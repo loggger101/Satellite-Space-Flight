@@ -141,12 +141,21 @@ ROWS = {
                     "slows the spacecraft.",
     "Ballistic coeff m/CdA": "Mass over drag area. The higher it is, the longer the "
                              "spacecraft resists drag.",
-    "Air density at perigee": "Density of the thin upper atmosphere at the orbit's lowest "
-                              "point, from the exponential model with the chosen solar "
-                              "activity scale, at that point's real height above the "
-                              "ground (shown after it).",
+    "Perigee density": "Density of the thin upper atmosphere at the orbit's lowest "
+                       "point, from the exponential model with the chosen solar "
+                       "activity scale, at that point's real height above the "
+                       "ground (shown after it).",
     "Drag at perigee": "Deceleration from air drag at perigee, from the speed through the "
                        "air, which turns with the Earth.",
+    "Lifetime": "Roughly how long until drag brings the satellite down, from its orbit "
+                "now: the orbit is shrunk revolution by revolution with this run's "
+                "atmosphere and the spacecraft's Cd*A/m. Real air is up to ten times "
+                "thicker or thinner with the Sun's activity, so treat it as a guide.",
+    "At solar max / min": "The estimated lifetime with the air of a busy Sun (three times "
+                          "the mean density) and of a quiet one (three tenths of it).",
+    "Deorbit rules": "Whether the estimated lifetime meets the rules for clearing low Earth "
+                     "orbit: the FCC's 5 years for US-licensed satellites and the IADC's "
+                     "25-year guideline.",
     "Delta-v spent": "Total change of velocity from all burns so far: the usual measure of "
                      "propellant used.",
     "dV spent": "Total change of velocity from all burns so far.",

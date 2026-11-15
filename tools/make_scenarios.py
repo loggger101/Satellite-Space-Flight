@@ -125,7 +125,8 @@ def drag():
     return Scenario(
         name="Atmospheric drag decay",
         description="Three spacecraft at 300 km with different ballistic coefficients: a "
-                    "dense probe, a CubeSat and a balloon. The balloon re-enters in about a day.",
+                    "dense probe, a CubeSat and a balloon. The balloon re-enters within about "
+                    "eight hours.",
         epoch=EPOCH, forces=ForceModel(j2=True, drag=True), warp=3600,
         satellites=[
             SatSpec("Dense probe", el(altitude=300, i=51.6, raan=0, nu=0), mass=2000, area=1.0),

@@ -1045,6 +1045,14 @@ have to be worked out by hand.
 
 ### B18. Orbital lifetime readout
 
+**Status (2026-11-15):** Done with the run's own atmosphere
+(satflight/lifetime.py, an orbit-averaged decay; PHYSICS.md "Orbital
+lifetime"). The Orbit tab shows the estimate, the range from solar maximum to
+minimum as x3 and x0.3 of the density, and the FCC 5-year and IADC 25-year
+check. Measured against runs flown to re-entry: within 2 % (circular) and 8 %
+(eccentric). A solar-cycle forecast (D37) and a better atmosphere (B2) are
+still open.
+
 **Why:** Decay is visible only by running the simulation for months or years
 at high warp.
 

@@ -22,6 +22,7 @@ from ..constants import R_EARTH
 from ..eclipse import shadow_fraction
 from ..elements import perifocal_axes
 from ..ephemeris import sun_position
+from ..lifetime import YEAR, rule_check
 from ..orbitinfo import OrbitInfo
 from ..simulation import dv_left
 from . import glossary, theme, tips
@@ -555,11 +556,46 @@ def draw_section(surf, fonts, x, y, w, title, rows) -> int:
     return y + px(6)
 
 
-def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf):
-    """The Orbit tab's property sheet: [(section title, [(label, value)])]."""
+def span(seconds: float) -> str:
+    """A long time span, in the unit that reads best: hours, days or years."""
+    if seconds == math.inf:
+        return "over 1,000 years"
+    if seconds < 2 * 86400:
+        return f"{seconds / 3600:.0f} hours"
+    if seconds < 120 * 86400:
+        return f"{seconds / 86400:.0f} days"
+    years = seconds / YEAR
+    return f"{years:.1f} years" if years < 10 else f"{years:,.0f} years"
+
+
+def lifetime_rows(life, density_scale: float):
+    """Rows for the estimated lifetime: ``life`` is seconds left under the
+    run's air (see App.lifetime), or a phrase saying why there is none."""
+    if life is None:
+        return []
+    if isinstance(life, str):
+        return [("Lifetime", life)]
+    rows = [("Lifetime", span(life))]
+    if 0 < life < math.inf and density_scale > 0:
+        mean = life * density_scale            # the lifetime goes as 1 / density
+        rows.append(("At solar max / min", f"{span(mean / 3.0)} / {span(mean / 0.3)}"))
+    rows.append(("Deorbit rules", rule_check(life)))
+    return rows
+
+
+def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf,
+                      life=None, density_scale: float = 1.0):
+    """The Orbit tab's property sheet: [(section title, [(label, value)])].
+    ``life`` and ``density_scale``: see :func:`lifetime_rows`."""
     el = info.el
     D = math.degrees
     closed = info.closed
+    # an arc whose perigee is underground never flies a revolution: no drifts, and
+    # no air "at perigee" to speak of
+    arc = closed and info.perigee_height <= 0
+
+    def unless_arc(text):
+        return "- (suborbital)" if arc else text
     shape = [
         ("Regime", info.regime),
         ("Semi-major axis a", num(el.a, "km", 1) if closed else f"{el.a:,.1f} km (open)"),
@@ -606,8 +642,8 @@ def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf
     if math.isfinite(sso) and abs(sso - el.i) < math.radians(0.05):
         sso_txt += "  (SSO)"
     pert = [
-        ("J2 node drift", num(D(info.raan_dot) * 86400, "deg/day", 4)),
-        ("J2 perigee drift", num(D(info.argp_dot) * 86400, "deg/day", 4)),
+        ("J2 node drift", unless_arc(num(D(info.raan_dot) * 86400, "deg/day", 4))),
+        ("J2 perigee drift", unless_arc(num(D(info.argp_dot) * 86400, "deg/day", 4))),
         ("Sun-sync inclination", sso_txt),
         ("Beta angle", deg(info.beta, 2)),
         ("Time in shadow / rev", f"{info.eclipse_fraction * 100:.1f}%" if closed else "-"),
@@ -617,10 +653,12 @@ def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf
         ("Area / Cd", f"{info.area:g} m^2 / {info.cd:g}"),
         ("Area-to-mass", num(info.area_to_mass, "m^2/kg", 4)),
         ("Ballistic coeff m/CdA", num(info.ballistic, "kg/m^2", 1)),
-        ("Air density at perigee",
-         f"{info.rho_perigee:.3e} kg/m^3 at {info.perigee_height:,.0f} km"
-         if info.rho_perigee else "none"),
-        ("Drag at perigee", f"{info.drag_perigee:.3e} m/s^2" if info.rho_perigee else "none"),
+        ("Perigee density", unless_arc(
+            f"{info.rho_perigee:.2e} kg/m^3, {info.perigee_height:,.0f} km"
+            if info.rho_perigee else "none")),
+        ("Drag at perigee", unless_arc(f"{info.drag_perigee:.3e} m/s^2"
+                                       if info.rho_perigee else "none")),
+        *lifetime_rows(life, density_scale),
         ("Delta-v spent", num(dv_used * 1000, "m/s", 2)),
         ("Delta-v left", f"{num(dv_left * 1000, 'm/s', 1)} at Isp 300 s"
          if math.isfinite(dv_left) else "no dry mass set"),
@@ -658,6 +696,7 @@ def draw_orbit_tab(surf, x, y, w, app, i) -> int:
         draw_gauge(surf, gauge.move(0, px(46)), fonts, "Speed (apogee -> perigee)",
                    info.v_apo, info.v_peri, info.speed, "km/s", 3, s.color)
         y += px(50)
-    for title, rows in property_sections(info, s.dv_used, dv_left(s)):
+    for title, rows in property_sections(info, s.dv_used, dv_left(s), app.lifetime(),
+                                         sim.forces.density_scale):
         y = draw_section(surf, fonts, x, y, w, title, rows)
     return y

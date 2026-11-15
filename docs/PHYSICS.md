@@ -386,6 +386,30 @@ public numbers: performance is realistic in kind, not for mission design.
   satellites, otherwise for the selected one), so an entry can reach the log
   up to one step after the view shows it, stamped with the time it happened.
 
+## Orbital lifetime
+
+The Orbit tab estimates how long a satellite has left before drag brings it
+down, without flying the run forward (satflight/lifetime.py):
+
+- Gauss's equations for a and e are averaged over each revolution, with the
+  run's own drag (`forces.accel_drag`): the same density table, height above
+  the ellipsoid, air turning with the Earth and Cd*A/m. The perigee is
+  averaged over every direction in the plane, since J2 turns it through all
+  of them many times in a lifetime.
+- With J2, the drag is sampled where a near-circular orbit actually flies:
+  r = a [1 - 3/2 k (1 - 3/2 sin^2 i) + 1/4 k sin^2 i cos 2u], k = J2 (Re/a)^2
+  (Kozai's short-period terms; a polar orbit flies ~5 km above its mean
+  semi-major axis). This is faded out once a e passes ~10 k a.
+- The estimate ends when the apogee is below 120 km; from there the object
+  comes down within hours.
+- Against runs flown to re-entry with J2 and drag (tests/test_lifetime.py),
+  circular orbits come out within 2 % and eccentric ones within 8 %.
+- It is only as good as the atmosphere. The table is for mean solar
+  activity; real air is ~3x denser at solar maximum and ~0.3x at minimum, and
+  the lifetime goes as exactly 1 / density, so the tab also shows both. The
+  deorbit-rule check compares the estimate with the FCC's 5 years and the
+  IADC's 25 years.
+
 ## Known simplifications
 
 - Of the non-zonal harmonics only C22/S22 (no C21/S21, C31, ...).

@@ -11,13 +11,14 @@ from pathlib import Path
 import numpy as np
 import pygame
 
+from .. import lifetime
 from ..constants import R_EARTH
 from ..frames import geodetic_height
 from ..orbitinfo import orbit_info
-from ..scenario import Scenario, orbit_state, palette_color
+from ..scenario import Scenario, j2_acts, orbit_state, palette_color
 from ..simulation import ACTIVE, Simulation
 from ..tle import split_tles
-from . import dialogs, launchui, theme, tips, welcome
+from . import background, dialogs, launchui, theme, tips, welcome
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .orbitviz import MODES as GEOMETRY_MODES
@@ -129,6 +130,10 @@ class App:
         self.scenario_path: Path | None = None
         self._info_key = None
         self._info = None
+        self._life_key = None              # what the shown lifetime was asked for
+        self._life_pending = None          # what is being estimated now
+        self._life = None                  # (key, (t0, seconds) or a reason) last estimated
+        self._life_worker = background.Latest()
         self.mouse = None            # where the mouse is (None: outside the window)
         self._tip_hidden = False     # a click hides the tip until the mouse moves on
         self.tip_rect = None         # where this frame's hover tip went (tests read it)
@@ -314,6 +319,53 @@ class App:
                                     self.sim.forces.density_scale)
             self._info_key = key
         return self._info
+
+    def lifetime(self):
+        """Estimated time left before the selected satellite comes down:
+        seconds under the run's air, or a phrase saying why there is none (no
+        drag in the run, an open orbit). ``None`` when there is no orbit.
+
+        The estimate takes 0.1-0.5 s, so it runs in the background, and is
+        redone only when the orbit has shrunk by ~2 % (or the satellite, its
+        Cd*A/m or the run's air changes). Until a new one arrives, the last
+        one for this satellite is shown with the time flown since taken off
+        ("estimating" if there is none yet)."""
+        info = self.orbit_info()
+        if info is None:
+            return None
+        sim = self.sim
+        if not sim.forces.drag or "DRAG" in sim.ignored_terms():
+            return "no drag in this run"
+        if not info.closed:
+            return "escaping: never"
+        if info.perigee_height <= 0:
+            return "suborbital: falls back"
+        s = sim.sats[self.selected]
+        cda_m = s.cd * s.area / s.mass
+        j2 = j2_acts(sim.propagator, sim.forces)
+        size = (max(info.rp_alt - lifetime.END_KM, 1.0), max(info.ra_alt - lifetime.END_KM, 1.0))
+        who = (self.selected, id(sim))
+        key = (*who, *(round(50 * math.log(x)) for x in size), round(math.degrees(info.el.i)),
+               cda_m, sim.forces.density_scale, j2)
+        done = self._life_worker.poll()
+        if done is not None:
+            if done[2] is not None and not isinstance(done[2], ValueError):
+                raise done[2]               # a bug in the estimate, not an odd orbit
+            self._life = (done[0], done[1] if done[2] is None else str(done[2]))
+        if key not in (self._life_key, self._life_pending):
+            args = (info.a_mean, info.el.e, info.el.i, cda_m, sim.forces.density_scale, j2)
+            t0 = sim.t
+            self._life_worker.submit(key, lambda: (t0, lifetime.lifetime(*args)))
+            self._life_pending = key
+        if self._life is not None and self._life[0] == self._life_pending:
+            self._life_key, self._life_pending = self._life_pending, None
+        if self._life is None or self._life[0][:2] != who:
+            return "estimating..."
+        result = self._life[1]
+        if isinstance(result, str):
+            return result
+        t0, life = result
+        return max(life - (sim.t - t0), 0.0)
 
     def cycle_orbits(self):
         """Step through which orbits are drawn (``ORBIT_MODES``)."""

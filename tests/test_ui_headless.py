@@ -1,6 +1,7 @@
 """Drive the pygame front end headlessly (SDL dummy driver) through its
 dialogs, keyboard shortcuts and panels."""
 
+import math
 import os
 import time
 from pathlib import Path
@@ -18,7 +19,7 @@ from satflight.constants import R_EARTH
 from satflight.elements import rv2coe
 from satflight.scenario import Scenario
 from satflight.simulation import Simulation
-from satflight.ui import glossary, theme, tips
+from satflight.ui import glossary, panels, theme, tips
 from satflight.ui.app import REST_AFTER, RESTING_FPS, App
 from satflight.ui.panels import HELP, draw_help, help_layout
 from satflight.ui.theme import px
@@ -995,6 +996,46 @@ def test_every_part_of_the_window_has_a_tip_that_fits(scaled_app):
                 for line in tips.wrap(text, app.fonts.ui, px(tips.MAX_W)):
                     assert app.fonts.ui.size(line)[0] <= px(tips.MAX_W) or " " not in line, \
                         (state, line)
+
+
+def test_no_property_row_runs_into_its_value(scaled_app):
+    """Every row of the right panel (both tabs, every bundled orbit, every
+    lifetime answer) is placed so its label and value do not overlap and the
+    value stays inside the panel: with this system's font and with the
+    bundled DejaVu Sans Mono, which is wider than Consolas and is what Linux
+    and macOS draw with (many rows then take two lines)."""
+    from satflight.lifetime import YEAR
+    from satflight.ui.orbitpanel import ROW_GAP, lifetime_rows, place_row, property_sections
+    app = scaled_app
+    fonts = [app.fonts.small]
+    if os.environ.get("SATFLIGHT_FONTS") != "bundled":
+        os.environ["SATFLIGHT_FONTS"] = "bundled"
+        try:
+            fonts.append(theme.load_font("mono", px(13)))
+        finally:
+            del os.environ["SATFLIGHT_FONTS"]
+    x, width = 0, px(panels.RIGHT_W) - px(24)
+    lives = [lifetime_rows(t, 1.0) for t in (9.9 * YEAR, 15 * 86400, math.inf,
+                                             "no drag in this run", "suborbital: falls back",
+                                             "escaping: never", "estimating...")]
+    bad = set()
+    for path in sorted(app.scenario_dir.glob("*.json")):
+        app.load_scenario(path)
+        app.sim.advance(900)
+        for i in range(app.sim.n):
+            app.select(i)
+            rows = [r for _, rs in app.info.report(i) for r in rs]
+            info = app.orbit_info()
+            if info is not None:
+                rows += [r for _, rs in property_sections(info, 12.345, 1.234) for r in rs]
+                rows += [r for life in lives for r in life]
+            for font in fonts:
+                for label, value in rows:
+                    lab, val, _ = place_row(font, x, 0, width, label, value)
+                    if (lab.inflate(2 * px(ROW_GAP), 0).colliderect(val) or val.x < x
+                            or lab.right > x + width):
+                        bad.add((path.stem, label, value))
+    assert not bad, sorted(bad)
 
 
 def test_every_property_row_and_form_field_is_explained(app):

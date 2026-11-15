@@ -184,7 +184,9 @@ between integration steps, not at their ends).
     and the local time of the ascending node, a timeline of the next revolution (sunlight,
     eclipse, apsis and node passes), altitude and speed gauges, and a property sheet of
     shape, orientation, timing, speeds, J2 drift, sun-synchronous inclination, beta angle,
-    shadow fraction and the spacecraft's mass and drag figures
+    shadow fraction, the spacecraft's mass and drag figures, and its estimated
+    orbital lifetime (with solar maximum and minimum, and the 5- and 25-year
+    deorbit rules)
 - Telemetry tab: geodetic position, osculating elements, J2 drift rates, beta angle,
   illumination, **acceleration budget per force**, energy conservation check, propellant
   and delta-v, station look angles
@@ -395,6 +397,7 @@ satflight/            physics engine (numpy only)
   planner.py          turns goals into scheduled burns
   analysis.py         J2 rates, footprints, classification, J2-mean propagator
   orbitinfo.py        derived properties for the orbit inspector (apsides, passes, eclipses, LTAN)
+  lifetime.py         orbital lifetime under drag, orbit-averaged
   scenario.py         JSON scenarios, presets, Walker constellations
   simulation.py       the engine: propagation, burns, events, history
   batch.py            headless runs and CSV export

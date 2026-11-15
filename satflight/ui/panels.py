@@ -652,7 +652,8 @@ def _orbit_rows(el):
             ("Perigee / apogee alt", f"{el.rp - R_EARTH:,.1f} / {el.ra - R_EARTH:,.1f} km"),
             ("Period", format_period(el.period)),
             ("Revs per day", f"{86400 / el.period:.4f}"),
-            ("J2 dRAAN / dargp", f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"),
+            ("J2 dRAAN / dargp", f"{D(rd) * 86400:+.4f} / {D(wd) * 86400:+.4f} deg/d"
+             if el.rp > R_EARTH else "- (suborbital)"),   # an arc never flies a revolution
         ]
     else:
         rows += [("Perigee alt", num(el.rp - R_EARTH, "km", 1)),

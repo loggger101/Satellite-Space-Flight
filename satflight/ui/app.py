@@ -728,10 +728,18 @@ class App:
         return x0, x1, h
 
     def view_rect(self):
-        """The part of the window not covered by panels."""
+        """The part of the window where the 3-D scene shows: not covered by the
+        panels, nor by the map and plot (the scene's key, labels and callout go
+        here, and only here does a hover give a scene tip)."""
         x0, x1, _ = self.center_span()
         top = px(TOP_H) + px(GAP) if self.opts.panels else px(GAP)
-        return pygame.Rect(x0, top, x1 - x0, self._bottom() - top)
+        if self.opts.plot:
+            bottom = self._plot_rect().y - px(GAP)
+        elif self.opts.map:
+            bottom = self._map_rect().y - px(GAP)
+        else:
+            bottom = self._bottom()
+        return pygame.Rect(x0, top, x1 - x0, max(bottom - top, 0))
 
     def _bottom(self) -> int:
         """Lowest y of the view: the top of the event log, or the window edge."""

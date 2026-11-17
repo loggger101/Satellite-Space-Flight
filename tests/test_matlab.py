@@ -49,12 +49,18 @@ def test_matlab_constants_match_the_simulator():
     assert value(example, "J2") == constants.J2
 
 
-# ExportTest.m alone takes ~270 s, too close to the limit: it runs in two sessions
-# (BundledExportTest.m too, split by its start parameter: see _sessions)
-EXPORT_PARTS = (("hohmannFromTheStart", "everyKindOfBurn", "reEntry", "fromTheCurrentMoment",
-                 "launchDay"),
-                ("launchDayMidAscent", "launchesPlannedHere", "matlabOnly",
-                 "passesAndAnimationFile", "midBurnSnapshot"))
+# ExportTest.m in two sessions of five ran over the limit (2026-11-17, MATLAB
+# R2026a): it runs in sessions of ~half the limit at most. The comments give each
+# test's rough time in s, to balance the parts (taken on a throttled machine, so high).
+EXPORT_PARTS = (("matlabOnly",),                                           # 136
+                ("launchDay", "reEntry"),                                  # 90 + 30
+                ("everyKindOfBurn", "fromTheCurrentMoment", "midBurnSnapshot"),  # 84+26+21
+                ("launchDayMidAscent", "hohmannFromTheStart"),             # 78 + 42
+                ("launchesPlannedHere", "passesAndAnimationFile"))         # 49 + 59
+BUNDLED_STARTS = ("fromTheStart", "anHourIn")
+BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
+                      # one session (launch_day, starlink_shell the slowest), so
+                      # every other scenario in each
 
 
 def test_every_export_test_runs_in_exactly_one_part():
@@ -65,29 +71,45 @@ def test_every_export_test_runs_in_exactly_one_part():
     assert sorted(parts) == sorted(names), "update EXPORT_PARTS to match ExportTest.m"
     bundled = (ROOT / "matlab" / "tests" / "BundledExportTest.m").read_text(encoding="utf-8")
     starts = re.search(r"start = struct\((.*)\)", bundled).group(1)
-    assert re.findall(r'"(\w+)", "[^"]*"', starts) == ["fromTheStart", "anHourIn"], \
-        "update _sessions to match BundledExportTest.m's start parameter"
+    assert re.findall(r'"(\w+)", "[^"]*"', starts) == list(BUNDLED_STARTS), \
+        "update BUNDLED_STARTS to match BundledExportTest.m's start parameter"
+
+
+def test_every_bundled_case_runs_in_exactly_one_session():
+    picked = [n for suite, pick, _ in _sessions() if suite == "BundledExportTest"
+              for n in re.findall(r"'(BundledExportTest/[^']*)'", pick)]
+    scenarios = sorted(p.stem for p in (ROOT / "scenarios").glob("*.json"))
+    assert sorted(picked) == sorted(f"BundledExportTest/bundled(scenario={s},start={st})"
+                                    for s in scenarios for st in BUNDLED_STARTS)
 
 
 def _sessions():
     """(suite, runtests selector, how many tests it must run) per MATLAB session.
-    ExportTest (~270 s) and BundledExportTest (~235 s) are each split in two to
-    stay well inside the time limit; BundledExportTest by its start parameter,
-    one test per bundled scenario each."""
-    def names(part):
-        return ", 'ProcedureName', {" + ", ".join(f"'{n}'" for n in part) + "}", len(part)
+    ExportTest by EXPORT_PARTS; BundledExportTest by start, then every
+    BUNDLED_SPLIT-th scenario of scenarios/ (a new one is picked up by itself)."""
+    def cell(names):
+        return "{" + ", ".join(f"'{n}'" for n in names) + "}"
 
-    n_bundled = len(list((ROOT / "scenarios").glob("*.json")))
+    scenarios = sorted(p.stem for p in (ROOT / "scenarios").glob("*.json"))
+    bundled = []
+    for start in BUNDLED_STARTS:
+        for k in range(BUNDLED_SPLIT):
+            names = [f"BundledExportTest/bundled(scenario={s},start={start})"
+                     for s in scenarios[k::BUNDLED_SPLIT]]
+            bundled.append(("BundledExportTest", f", 'Name', {cell(names)}", len(names)))
     return [("SatflightToolkitTest", "", None),
-            *(("ExportTest", *names(p)) for p in EXPORT_PARTS),
-            *(("BundledExportTest", f", 'ParameterName', '{start}'", n_bundled)
-              for start in ("fromTheStart", "anHourIn"))]
+            *(("ExportTest", f", 'ProcedureName', {cell(p)}", len(p)) for p in EXPORT_PARTS),
+            *bundled]
+
+
+def _ids():
+    return (["toolkit"] + [f"export-{k + 1}" for k in range(len(EXPORT_PARTS))]
+            + [f"bundled-{start}-{k + 1}" for start in BUNDLED_STARTS
+               for k in range(BUNDLED_SPLIT)])
 
 
 @pytest.mark.skipif(shutil.which("matlab") is None, reason="MATLAB is not on the PATH")
-@pytest.mark.parametrize("suite, pick, count", _sessions(),
-                         ids=["toolkit", "export-1", "export-2", "bundled-start",
-                              "bundled-later"])
+@pytest.mark.parametrize("suite, pick, count", _sessions(), ids=_ids())
 def test_matlab_suite(suite, pick, count):
     """matlab/tests/SatflightToolkitTest.m: scenarios round-trip through MATLAB
     unchanged, built ones pass the simulator's checks, refusals reach MATLAB,
@@ -108,17 +130,24 @@ def test_matlab_suite(suite, pick, count):
     except subprocess.TimeoutExpired:
         # the matlab launcher starts MATLAB.exe as a child that holds the pipes:
         # killing the launcher alone leaves both running and the read waiting forever
-        _kill_tree(proc)
+        if proc.poll() is None:
+            what = _kill_tree(proc)
+        else:   # the timeout was seen late: the machine slept or stalled meanwhile
+            what = (f"MATLAB had already exited (status {proc.returncode}) when the timeout "
+                    "was seen: did the machine sleep?")
         out, err = proc.communicate(timeout=60)
-        pytest.fail(f"{suite} ran over {MATLAB_TIMEOUT} s (MATLAB was stopped); its output:\n"
+        pytest.fail(f"{suite} ran over {MATLAB_TIMEOUT} s ({what}); its output:\n"
                     + out[-6000:] + err[-2000:])
     assert proc.returncode == 0, out[-6000:] + err[-2000:]
 
 
 def _kill_tree(proc):
-    """Stop ``proc`` and every process it started."""
+    """Stop ``proc`` and every process it started; say whether that worked."""
     if sys.platform == "win32":
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
-                       check=False)
+        r = subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            return f"taskkill failed, MATLAB may still be running: {r.stdout}{r.stderr}".strip()
     else:
         os.killpg(proc.pid, signal.SIGKILL)
+    return "MATLAB was stopped"

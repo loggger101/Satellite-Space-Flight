@@ -88,8 +88,8 @@ sections:
 1. **Settings**: `duration`, `step`, `crossCheck` (with a cross-check), with launches
    `planLaunches` (false: fly the simulator's plan; true: find the launch
    window and search the pitch kick here, as the simulator does when a
-   scenario loads, e.g. after editing a launch), `animate` and
-   `animationFile` (see Animation), `resultsFile` (see Save).
+   scenario loads, e.g. after editing a launch), `animate`, `animationFile` and
+   `animation3DFile` (see Animation), `figureFolder` and `resultsFile` (see Save).
 2. **Scenario**: epoch, force model, propagator, each satellite's exact ECI
    state (with a comment saying what orbit it is: perigee x apogee altitude
    and inclination, sub-orbital or escaping) and drag properties, the
@@ -97,12 +97,16 @@ sections:
 3. **Launches**: per launch the vehicle's stages, the site, the target orbit
    and timing, the simulator's plan and, for a vehicle exported in powered
    flight, its flight state.
-4. **Run**: `[T, events, launches] = satflightRun(...)`. `T` is the same table
+4. **Run**: `[T, events, launches, burns, objects] = satflightRun(...)`. `T` is the same table
    as `readRun` above, a payload from its pad and each spent stage from its
    separation; `events` the event log, line for line as the simulator writes
    it; `launches` per launch the outcome, insertion orbit, delta-v budget and
-   losses, max Q, and the ascent profile (`profile`, `marks`, and the plan's).
-   Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
+   losses, max Q, and the ascent profile (`profile`, `marks`, and the plan's);
+   `burns` each burn in the order it fired, with its delta-v in total and along
+   the velocity, orbit normal and binormal (VNB) at ignition, its mass before and
+   after, and the exact state just before and just after it (where `T` has the
+   run only at its samples); `objects` each object's family, drag area and
+   coefficient, final and dry mass. Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
    at the end of the run) and `launchTable`.
 5. **Plots**: ground track (with the night side and the point where the Sun
    is overhead at the end of the run), altitude, elements (only while an
@@ -134,28 +138,63 @@ sections:
    `maneuvers` has each burn carried out, when, its label and delta-v, and
    `deltaV` each object's total; `approaches` each pair that came within
    10 km, the time of closest approach and the distance then, closest first.
-8. **Orbit evolution**: `drift` has, per object, how its orbit changes after
+8. **Orbit transfers** (with burns): `transfers` has each burn and what it did
+   to the orbit: delta-v in total and by direction, perigee, apogee,
+   inclination and period just before and just after (from the exact states),
+   and the propellant used. Per object that burns, `satflightPlotTransfer`
+   draws the transfer in 3-D (the orbit before dashed, the path between the
+   burns, the orbit after, each burn numbered by its row of `transfers`, with
+   its delta-v and an arrow along it) and edge-on, looking along the line where
+   the first and last planes cross, so a plane change shows as their angle.
+   `satflightPlotDeltaV` is the delta-v budget (each burn by direction, added up
+   over time, and the mass the rocket equation leaves); `satflightPlotBurnWindow`
+   the perigee, apogee, inclination and period over the part of the run that
+   holds the burns, each impulse a clean step.
+9. **Orbit evolution**: `drift` has, per object, how its orbit changes after
    its last burn, fitted with a straight line over its samples in orbit (two
    orbits at least, or it is left out, saying so): the period and mean perigee
    and apogee, the change of the mean semi-major axis per day (drag lowers it;
    J2's short-period swing taken out), and the drift of the node and of the
    perigee per day beside what J2 theory gives for that orbit.
-9. **Animation** (`animate = false` to skip it): plays the run back, the
+10. **Physics diagnostics**: `diagnostics` has, per object and sample in orbit,
+   specific energy (two-body and with the potential of the gravity terms the
+   run applies), angular momentum and its z part, speed, radius, period, the
+   Jacobi constant, and the acceleration from each force applied (central
+   gravity, J2, J3, J4, C22, drag). `conservation` checks the integrator: per
+   coast between burns, how far the quantity physics keeps there drifted
+   (energy, or the Jacobi constant with C22, which turns with the Earth),
+   relative to its size, and whether drag makes it fall. A figure plots them,
+   the forces on a log scale, and the energy drift since each coast began.
+11. **Animation** (`animate = false` to skip it): plays the run back, the
    ground track, with the night side shaded, beside the orbits around the
    turning Earth, each object over its last orbit and marked where it is
    (o in orbit, x come down or gone), with the latest lines of the event log.
    In the Live Editor every frame is drawn and the output is an animation with
    playback controls; in a figure window it plays in 20 s, or as fast as its
    frames draw if that is slower; a `matlab -batch` run draws only the last
-   frame. `animationFile = "run.gif"` also writes every frame to an animated
-   GIF that plays in the same time; drawing and writing each frame takes a while.
-10. **Save**: with `resultsFile = "run.mat"`, saves `sim`, `T`, `events` and
-   every table the sections before made to that MAT-file (`load("run.mat")`
-   brings them back).
-11. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
+   frame. `animationFile = "run.gif"` (or `"run.mp4"`) also writes every frame
+   to an animated GIF (or an MPEG-4 video) that plays in the same time; drawing
+   and writing each frame takes a while. Then the 3-D animation
+   (`satflightAnimate3D`): the orbits about the turning Earth, larger, with
+   trails that fade with age, each object's current orbit dotted, a flash and
+   an arrow where a burn fires, and the camera turning; its frames bunch up
+   about burns and launches and spread out over the coasts, so a transfer does
+   not flash past (the title gives the speed). `animation3DFile` saves it.
+12. **Save**: with `figureFolder = "figures"`, saves every figure there as a
+   PNG at 300 dpi and a PDF (vector graphics; a figure with the 3-D Earth as an
+   image at 300 dpi) named after the figure, and both animations as MP4
+   (`savedFiles` lists the figures). With `resultsFile = "run.mat"`, saves
+   `sim`, `T`, `events` and every table the sections before made to that
+   MAT-file (`load("run.mat")` brings them back).
+13. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
    It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.
+
+Every figure follows MATLAB's light or dark theme, and changes with it: the
+colours the theme does not set itself (the map's day and night sides, the
+coastlines, the Earth, stations, burn marks, labels) come from one palette per
+theme (`satflightPalette`), applied again whenever a figure's theme changes.
 
 The code after the sections is a port of the simulator's own: forces J2-J4,
 C22 and drag; every burn kind and timing; finite burns; the Kepler and J2-mean
@@ -175,7 +214,11 @@ feature (`launch_day.json` from the start and mid-ascent among them), and
 `tests/BundledExportTest.m` every scenario in `scenarios/`, from its start and
 an hour in. Every script they export must pass MATLAB's Code Analyzer with
 nothing to mark (`codeIssues`), and its passes, eclipses, maneuvers and close
-approaches must match its event log line for line, with the highest elevation
+approaches must match its event log line for line, its `burns` the logged
+delta-v (and, for every kind of burn, the simulator's own state just before and
+after it, from `tests/burn_states.py`), with what physics conserves over each coast
+held to 1e-6, and every text in every figure readable (4.5:1 contrast) in the
+light and the dark theme, with the highest elevation
 of every pass of 10 minutes or more above the station's mask (the elevation
 the simulator measures); its node and perigee drifts must be within 10% (or
 0.05 deg/day) of J2 theory, the sky plot drawn exactly when a plotted pass

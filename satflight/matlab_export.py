@@ -241,6 +241,10 @@ def _count(n: int, one: str, many: str = "") -> str:
 
 
 MODES = {None: 0, "prograde": 1, "fixed": 2}    # thrust modes as the MATLAB ascent codes them
+# the fixed-step integrators, as the script's text names them
+FIXED_STEP = {"rk4": "classic 4th-order Runge-Kutta integrator (rk4)",
+              "wh": "Wisdom-Holman integrator (wh: exact Kepler drift, perturbation kicks)",
+              "leapfrog": "leapfrog integrator (kick-drift-kick)"}
 
 
 def _launch(a) -> list[str]:
@@ -359,10 +363,16 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     out += ["%%"]
 
     method = it.method
-    if src.propagator == "cowell":
-        how = (f"numerical integration of every enabled force. The simulator used {method} "
-               f"(rtol {it.rtol:g}, atol {it.atol:g}, steps up to {it.h_max:g} s); this script "
-               "uses ode45, the same Dormand-Prince 5(4) family, with those tolerances.")
+    if src.propagator == "cowell" and method == "dopri5":
+        how = (f"numerical integration of every enabled force with the simulator's own "
+               f"adaptive Dormand-Prince 5(4) integrator (dopri5: rtol {it.rtol:g}, atol "
+               f"{it.atol:g}, steps up to {it.h_max:g} s), ported step for step: the same "
+               "error control, the same steps, the step size carried from one stretch of "
+               "the run to the next.")
+    elif src.propagator == "cowell":
+        how = (f"numerical integration of every enabled force with the simulator's "
+               f"fixed-step {FIXED_STEP[method]}, in steps of {it.h_fixed:g} s, ported step for "
+               "step: the script carries its truncation error too, not just the physics.")
     elif src.propagator == "kepler":
         how = (f"exact two-body motion (universal variables), in steps of {it.h_max:g} s as the "
                "simulator takes them. Finite burns are applied at once.")
@@ -383,7 +393,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             f"\"j4\", {_bool(F.j4)}, \"c22\", {_bool(F.c22)}, \"drag\", {_bool(F.drag)}, "
             f"\"densityScale\", {_num(F.density_scale)});",
             f"sim.integrator = struct(\"method\", {_str(method)}, \"rtol\", {_num(it.rtol)}, "
-            f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)});"]
+            f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)}, "
+            f"\"hFixed\", {_num(it.h_fixed)});   % hFixed: the step of rk4, wh and leapfrog"]
 
     if rows:
         out += _text("Satellites at the epoch: ECI position (km) and velocity (km/s), mass (kg), "
@@ -548,7 +559,7 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                  "axis per day (drag lowers it), and the drift of the node (RAAN) and of the "
                  "perigee per day, measured from the run beside what J2 theory gives for that "
                  "orbit. J3, J4, C22 and drag, where they are on, account for the difference.")
-    out += ["drift = satflightDrift(T, events, sim.forces);", "display(drift)"]
+    out += ["drift = satflightDrift(T, events, sim);", "display(drift)"]
     out += ["%%"]
     out += _text(
         "## Physics diagnostics\nThe physics of the run while each object is in orbit "

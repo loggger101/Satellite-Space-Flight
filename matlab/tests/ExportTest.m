@@ -28,6 +28,23 @@ classdef ExportTest < ExportCase
             end
         end
 
+        function everyIntegrator(tc)
+            % the fixed-step integrators run step for step as the simulator runs them,
+            % truncation error and all: the same burns, re-entries and impacts, and the
+            % events at the same moments
+            steps = struct("rk4", 10, "wh", 30, "leapfrog", 2);
+            for method = ["rk4", "wh", "leapfrog"]
+                sc = tc.everyBurn("cowell");
+                sc.name = "Every burn " + method;
+                sc.integrator = struct("method", method, "h_fixed", steps.(method));
+                file = satflight.saveScenario(sc, fullfile(tc.Tmp, "fixed_" + method + ".json"));
+                [~, out] = tc.check(tc.export(file, "fixed_" + method, ...
+                    ["--duration", "3h", "--step", "120"]));
+                tc.verifyEqual(out.sim.integrator.method, method);
+                tc.checkBurnsAgainst(out, file, 3 * 3600);
+            end
+        end
+
         function transferFiguresAndFiles(tc)
             % GTO to GEO: the apogee kick is the planner's 1837.6 m/s and leaves a
             % geostationary orbit, the parking-orbit route takes two burns; each object

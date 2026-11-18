@@ -205,9 +205,18 @@ spent stages, circularization at apogee); the launch planner (launch windows
 into a RAAN or another satellite's plane, the pitch-kick search); the
 simulator's step boundaries (liftoffs, ascent syncs every second, burns); and
 its events (eclipses with the conical shadow, station AOS/LOS, close
-approaches, re-entry at 80 km, escape). For numerical runs it uses `ode45` with
-the scenario's tolerances, starting, as the simulator's integrator does, with a
-10 s step and carrying the step size from one stretch of the run to the next.
+approaches, re-entry at 80 km, impact, escape). Numerical runs use the
+simulator's own integrators, ported step for step: its adaptive Dormand-Prince
+5(4) `dopri5` (the same error norm and step control, a 10 s first step, the step
+size carried from one stretch of the run to the next) or the fixed-step `rk4`,
+`wh` (Wisdom-Holman) and `leapfrog` at the scenario's `h_fixed`, truncation
+error and all. The run is advanced and sampled as the simulator's batch runner
+does it: the physics keeps its own steps, never shortened for a sample, and a
+sample between two step ends is integrated on the side from the last one. At
+the end of every step it looks, as the simulator does, for objects that have
+left (below 80 km and descending, a dip below 80 km and back up within the
+step, beyond the sphere of influence) and for events, and logs each at the
+moment it happened within the step, found on the step's Hermite curve.
 
 `tests/ExportTest.m` exports several scenarios that between them use every
 feature (`launch_day.json` from the start and mid-ascent among them), and
@@ -226,17 +235,24 @@ has a sample, each station's coverage agree with its passes, and every eclipse
 begin where the object's beta angle is within its limit (one beyond it all the
 run has none). Both require the same objects at the same samples, the same
 statuses, positions within 10 m while in orbit, launch and maneuver events
-identical to the millisecond, and every other event within one integrator step.
-Three differences are expected. Events found at the end of a step (eclipses,
-passes, re-entries) fall at the end of each integrator's own steps; ode45 steps
-are not the simulator's. For the same reason a pass shorter than a step (a
-satellite grazing a station's elevation mask for under a minute, a brief shadow)
-can be in one log only: the two lines of such a pass are allowed to be missing
-from the other log together. And an object coming down through the dense air (a sounding
-rocket's payload, a spent stage) can differ by tens of metres: the atmosphere
-table jumps slightly at its layer boundaries, and with drag near 100 m/s^2
-where each integrator's steps straddle a jump matters. Such objects are held
-to 50 m.
+identical to the millisecond, every other event within 0.1 s and with the same
+text (a re-entry's speed included). `ExportTest/everyIntegrator` runs each
+fixed-step integrator through the same checks; there, as with the Kepler and
+J2-mean propagators, the runs agree to well under a millimetre.
+
+One difference remains possible, and only with `dopri5`. The two programs do the
+same arithmetic in a different order (numpy and MATLAB round the last bit of a
+sum differently), and while an object falls through the dense air the step-size
+control amplifies that roughly tenfold per step, so after such a fall the two
+runs' steps can drift out of phase. Positions and event times are untouched by
+that (each is accurate to the integrator's tolerance on any grid), but what
+happens at a step's end can differ: an object that re-enters is frozen at the
+end of its step, so its final position can differ by one step's travel, and a
+pass shorter than a step (a satellite grazing a station's elevation mask for
+under a minute, a brief shadow) can be seen by one program only; the two lines
+of such a pass are allowed to be missing from the other log together. An object
+coming down through the dense air (a sounding rocket's payload, a spent stage)
+is held to 50 m rather than 10.
 
 ## Which Python
 

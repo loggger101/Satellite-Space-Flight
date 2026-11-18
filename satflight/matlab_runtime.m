@@ -72,8 +72,9 @@ s.evText = strings(0, 1);
 s.t = 0;
 s.closePairs = zeros(0, 2);
 s.lastSample = [];
-% the simulator's adaptive integrator starts with a 10 s step and carries its step
-% size from one segment to the next; its events are looked for at the ends of steps
+% the simulator's adaptive integrator (dopri5, ported below step for step) starts with a
+% 10 s step and carries its step size from one stretch of the run to the next; events
+% are looked for at the ends of its steps
 s.hNext = min(10, sim.integrator.hMax);
 
 % the sample times the batch runner writes: 0, step, 2 step, ... and the end
@@ -94,7 +95,7 @@ for L = reshape(sim.launches, 1, [])
     s = launchVehicle(s, L, opts.PlanLaunches);
 end
 idx = freeIdx(s);
-s = checkLeft(s, idx);
+s = stepLeft(s, 0, idx, s.Y);
 s = stepEvents(s, 0, idx, s.Y);
 s = logEvent(s, 0, sprintf("Scenario '%s' loaded: %d satellites, %d stations, propagator %s", ...
     sim.name, numel(s.names), numel(s.st.name), sim.propagator), "info");
@@ -103,32 +104,16 @@ if ~isempty(left)
     s = logEvent(s, 0, sprintf("Propagator %s ignores %s: switch to cowell to integrate them", ...
         sim.propagator, strjoin(left, ", ")), "warn");
 end
-s = recordAt(s, 1, s.Y);                 % the first row is written before anything executes
-s = executeDue(s);
-
-tEnd = tout(end);
-while s.t < tEnd - 1e-9
-    tb = nextBoundary(s);
-    te = min(tb, tEnd);
-    idx = freeIdx(s);
-    if isempty(idx)
-        s = recordBetween(s, te, idx, []);
-        s.t = te;
-        s.lastSample = [];
-    elseif s.sim.propagator == "cowell"
-        s = segmentCowell(s, idx, te);
-    else
-        s = segmentAnalytic(s, idx, te);
-    end
-    if abs(s.t - tb) <= 1e-9
-        s = advanceAscents(s, tb);
-        s = finishBurns(s);
-        s = executeDue(s);
-    end
-    k = find(abs(tout - s.t) <= 1e-9, 1);
-    if ~isempty(k)
-        s = recordAt(s, k, s.Y);
-    end
+% the batch runner: a row at the start, then the run advanced to each sample time and
+% shown there. The physics keeps its own steps (a sample never shortens one): what a
+% sample shows between two step ends is integrated on the side from the last one
+s = recordAt(s, 1, s.Y);
+% the first advance has no physics state to go back to (the simulator's _resume): nothing
+% joins the states as loaded to its first step, which logs what it finds at its end
+s.lastSample = [];
+for k = 2:numel(tout)
+    s = advanceTo(s, tout(k));
+    s = recordAt(s, k, presentState(s, tout(k)));
 end
 missed = find(all(s.statusOut == "", 1));
 if ~isempty(missed)
@@ -171,22 +156,85 @@ s.Yout(1:n, :, k) = Ycur;
 s.statusOut(1:n, k) = s.status;
 end
 
-function s = recordBetween(s, te, idx, sol)
-% samples strictly between now and te, from the dense output of an ode45 segment
-% (or as they are, with nothing integrated); vehicles on pads and in flight as shown
-ks = find(s.tout > s.t + 1e-9 & s.tout < te - 1e-9);
-if isempty(ks)
+function s = advanceTo(s, tEnd)
+% the simulator's advance: from boundary to boundary (liftoffs, ascent syncs, maneuvers,
+% burnouts), the objects in orbit integrated in the run's own steps; a stretch that
+% ends at tEnd, not at a boundary, stops at the last whole step before it
+checkFinite(s, s.t, freeIdx(s));
+s = executeDue(s);
+stuck = 0;
+tSeen = s.t;
+while true
+    if s.t == tSeen
+        stuck = stuck + 1;
+    else
+        stuck = 0;
+    end
+    tSeen = s.t;
+    if stuck > 1000
+        error("satflight:stuck", "The run made no progress at t = %.3f s.", s.t);
+    end
+    tb = nextBoundary(s);
+    land = tb <= tEnd;
+    idx = freeIdx(s);
+    if ~isempty(idx)
+        tStop = inf;
+        if ~land
+            tStop = tEnd;
+        end
+        [s, left] = propagate(s, idx, tb, tStop);
+        if left
+            continue                % an object left the run: go on without it
+        end
+    elseif land
+        s.t = tb;
+    elseif ~any(cellfun(@(A) A.phase ~= "pad", s.ascents))
+        s.t = tEnd;                 % nothing is integrated: there are no steps to keep
+    end
+    if ~land
+        break
+    end
+    s = advanceAscents(s, s.t);
+    s = finishBurns(s);
+    s = executeDue(s);
+end
+end
+
+function Y = presentState(s, t)
+% the states shown at t, which may lie up to a step past the physics (the simulator's
+% _present): the objects in orbit integrated there on the side, the physics untouched
+Y = s.Y;
+idx = freeIdx(s);
+if t > s.t && ~isempty(idx)
+    Y(idx, :) = peek(s, idx, t);
+end
+end
+
+function Y = peek(s, idx, t1)
+% the states of objects idx at t1, less than a step ahead, with a scratch integrator
+% that starts from the run's step size and leaves it as it is
+Y0 = s.Y(idx, :);
+if s.sim.propagator ~= "cowell"
+    Y = analyticStep(Y0, t1 - s.t, s.sim.propagator, s.C);
     return
 end
-if ~isempty(sol)
-    vals = deval(sol, s.tout(ks));
+it = s.sim.integrator;
+n = numel(idx);
+f = cowellDerivative(s, idx, t1);
+if it.method == "dopri5"
+    y = dopri5(f, s.t, reshape(Y0, [], 1), t1, s.hNext, it, n, s.C);
+else
+    y = fixedSteps(f, s.t, reshape(Y0, [], 1), t1, it, n, s.C);
 end
-for q = 1:numel(ks)
-    Ycur = s.Y;
-    if ~isempty(sol)
-        Ycur(idx, :) = reshape(vals(:, q), numel(idx), 6);
-    end
-    s = recordAt(s, ks(q), Ycur);
+Y = reshape(y, n, 6);
+end
+
+function checkFinite(s, t, idx)
+% the simulator's _check_finite: a state that is not finite is an error, never a result
+bad = ~all(isfinite(s.Y(idx, :)), 2);
+if any(bad)
+    error("satflight:nonfinite", "Non-finite state at t = %.3f s for %s.", t, ...
+        strjoin(s.names(idx(bad)), ", "));
 end
 end
 
@@ -590,9 +638,16 @@ function d = radialDot(y)
 d = dot(y(1:3), y(4:6));
 end
 
-function Y = coastTo(s, rows, Y0, t0, t1, hMaxLong)
+function [Y, h] = coastTo(s, rows, Y0, t0, t1, hMaxLong, h)
 % the states Y0 (objects rows) carried from t0 to t1 under the run's own forces,
-% coasting: no burns, no events, the run untouched (the simulator's coast_states)
+% coasting: no burns, no events, the run untouched (the simulator's coast_states). Its
+% scratch integrator steps up to max(hMax, hMaxLong) s and starts with a step of h
+% (left out: a fresh one's 10 s); h out is the step size it ends with
+it = s.sim.integrator;
+it.hMax = max(it.hMax, hMaxLong);
+if nargin < 7
+    h = min(10, it.hMax);
+end
 if t1 <= t0
     Y = Y0;
     return
@@ -603,23 +658,27 @@ if s.sim.propagator ~= "cowell"
 end
 n = numel(rows);
 cdam = s.cd(rows) .* s.area(rows) ./ s.mass(rows);
-it = s.sim.integrator;
-opts = odeset(RelTol=it.rtol, AbsTol=it.atol, MaxStep=max(it.hMax, hMaxLong));
 f = @(t, y) derivative(t, y, n, cdam, s.sim.forces, s.sim.jd0, s.man, zeros(0, 4), ...
     zeros(0, 1), s.C);
-sol = ode45(f, [t0, t1], reshape(Y0, [], 1), opts);
-Y = reshape(sol.y(:, end), n, 6);
+if it.method == "dopri5"
+    [y, h] = dopri5(f, t0, reshape(Y0, [], 1), t1, h, it, n, s.C);
+else
+    y = fixedSteps(f, t0, reshape(Y0, [], 1), t1, it, n, s.C);
+end
+Y = reshape(y, n, 6);
 end
 
 function track = coastTrack(s, rows, Y0, t0, times, hMaxLong)
-% the states (rows x 6 x times) of Y0 at the increasing times, coasting from t0
+% the states (rows x 6 x times) of Y0 at the increasing times, coasting from t0, one
+% scratch integrator carrying its step size from sample to sample (_coast_samples)
 n = numel(rows);
 track = zeros(n, 6, numel(times));
 Y = Y0;
 t = t0;
+h = min(10, max(s.sim.integrator.hMax, hMaxLong));
 for j = 1:numel(times)
     if s.sim.propagator == "cowell"
-        Y = coastTo(s, rows, Y, t, times(j), hMaxLong);
+        [Y, h] = coastTo(s, rows, Y, t, times(j), hMaxLong, h);
         t = times(j);
     else
         Y = analyticStep(Y0, times(j) - t0, s.sim.propagator, s.C);
@@ -787,12 +846,214 @@ end
 
 % --- numerical propagation (propagator "cowell") ----------------------------------------------
 
-function s = segmentCowell(s, idx, te)
-C = s.C;
-[s, gone] = checkLeft(s, idx);
-if gone
+function [s, left] = propagate(s, idx, t1, tStop)
+% the simulator's _propagate: objects idx toward t1, landing on it, or with tStop < t1
+% ending at the last whole step before tStop (a step is never shortened for it). After
+% every step the run looks at them (stepped); left: it stopped early because an object
+% left the run, and the integration starts again without it
+it = s.sim.integrator;
+n = numel(idx);
+left = false;
+if s.sim.propagator ~= "cowell"
+    % kepler and j2mean: exact steps of hMax
+    h = it.hMax;
+    while s.t < t1 - 1e-9
+        dt = min(h, t1 - s.t);
+        if tStop < t1 && s.t + dt > tStop
+            break
+        end
+        Ynew = analyticStep(s.Y(idx, :), dt, s.sim.propagator, s.C);
+        [s, left] = stepped(s, s.t + dt, idx, Ynew);
+        if left
+            return
+        end
+    end
     return
 end
+f = cowellDerivative(s, idx, t1);
+y = reshape(s.Y(idx, :), [], 1);
+t = s.t;
+if it.method ~= "dopri5"
+    % rk4, wh, leapfrog: steps of hFixed from here, the last one cut short to land on t1
+    while t < t1
+        h = min(it.hFixed, t1 - t);
+        if tStop < t1 && t + h > tStop
+            break
+        end
+        y = fixedStep(it.method, f, t, y, h, n, s.C);
+        if t1 - (t + h) < 1e-9
+            t = t1;
+        else
+            t = t + h;
+        end
+        [s, left] = stepped(s, t, idx, reshape(y, n, 6));
+        if left
+            return
+        end
+    end
+    return
+end
+% dopri5, its step size carried from one call to the next (s.hNext)
+k1 = f(t, y);
+h = min(s.hNext, it.hMax);
+while t1 - t > 1e-9 * max(1, abs(t))
+    last = h >= t1 - t;
+    hTry = h;
+    if last
+        hTry = t1 - t;
+    end
+    if tStop < t1 && t + hTry > tStop
+        break
+    end
+    [yNew, k7, err] = dopriStep(f, t, y, k1, hTry, it, n, s.C);
+    if err <= 1
+        if last
+            t = t1;
+        else
+            t = t + hTry;
+        end
+        y = yNew;
+        k1 = k7;
+        [s, left] = stepped(s, t, idx, reshape(y, n, 6));
+        h = dopriAccepted(h, hTry, err, last, it);
+        if left
+            break
+        end
+    else
+        h = dopriRejected(hTry, err);
+    end
+end
+s.hNext = h;
+end
+
+function [s, left] = stepped(s, t, idx, Yidx)
+% the end of a step (the simulator's _post_step): the states of objects idx are Yidx;
+% a state that is not finite is an error, then objects that have left go, then events
+s.t = t;
+s.Y(idx, :) = Yidx;
+checkFinite(s, t, idx);
+[s, left] = stepLeft(s, t, idx, s.Y);
+s = stepEvents(s, t, idx, s.Y);
+end
+
+function [y, h] = dopri5(f, t, y, t1, h, it, n, C)
+% the simulator's dopri5 from state column y (n objects) at t to t1, starting with a step
+% of h, on its own (no events): for a look ahead or a coast. h out: the next step size
+k1 = f(t, y);
+h = min(h, it.hMax);
+while t1 - t > 1e-9 * max(1, abs(t))
+    last = h >= t1 - t;
+    hTry = h;
+    if last
+        hTry = t1 - t;
+    end
+    [yNew, k7, err] = dopriStep(f, t, y, k1, hTry, it, n, C);
+    if err <= 1
+        if last
+            t = t1;
+        else
+            t = t + hTry;
+        end
+        y = yNew;
+        k1 = k7;
+        h = dopriAccepted(h, hTry, err, last, it);
+    else
+        h = dopriRejected(hTry, err);
+    end
+end
+end
+
+function [yNew, k7, err] = dopriStep(f, t, y, k1, h, it, n, C)
+% one Dormand-Prince 5(4) step of h seconds (satflight/integrators.py): the 5th-order
+% state, its derivative (the next step's first stage) and the scaled error, <= 1 when
+% the step is accepted. An error the step cannot bring down above 1e-6 s is a fault
+A = {[], 1 / 5, [3 / 40, 9 / 40], [44 / 45, -56 / 15, 32 / 9], ...
+    [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729], ...
+    [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656], ...
+    [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84]};
+c = [0, 1 / 5, 3 / 10, 4 / 5, 8 / 9, 1, 1];
+B5 = [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0];
+B4 = [5179 / 57600, 0, 7571 / 16695, 393 / 640, -92097 / 339200, 187 / 2100, 1 / 40];
+E = B5 - B4;
+K = zeros(numel(y), 7);
+K(:, 1) = k1;
+acc = y;
+for st = 2:7
+    acc = y;
+    a = A{st};
+    for j = 1:numel(a)
+        if a(j) ~= 0
+            acc = acc + h * a(j) * K(:, j);
+        end
+    end
+    K(:, st) = f(t + c(st) * h, acc);
+end
+yNew = acc;                 % the last stage sits at the 5th-order solution (FSAL)
+k7 = K(:, 7);
+errVec = 0;
+for j = 1:7
+    if E(j) ~= 0
+        errVec = errVec + E(j) * K(:, j);
+    end
+end
+err = dopriError(h * errVec, y, yNew, it, n, C);
+if ~(err <= 1) && h < 1e-6        % "not <=": a NaN error fails too
+    error("satflight:step", "dopri5: step size fell below 1e-06 s at t = %.3f s with " + ...
+        "the error still %.3g x the tolerance (a singular or non-finite state?)", t, err);
+end
+end
+
+function err = dopriError(errVec, y0, y1, it, n, C)
+% scaled RMS error of the worst object (the simulator's _error_norm): velocities are
+% weighed in km by each orbit's own time scale sqrt(r^3/mu), so one atol means the same
+% for km and km/s
+if n == 0
+    err = 0;
+    return
+end
+Y0 = reshape(y0, n, 6);
+Y1 = reshape(y1, n, 6);
+tau = sqrt(sum(Y0(:, 1:3) .^ 2, 2) .^ 1.5 / C.MU);
+w = [ones(n, 3), repmat(tau, 1, 3)];
+sc = it.atol + it.rtol * max(abs(Y0 .* w), abs(Y1 .* w));
+err = max(sqrt(mean((reshape(errVec, n, 6) .* w ./ sc) .^ 2, 2)));
+end
+
+function h = dopriAccepted(h, hTry, err, last, it)
+% the next step size after an accepted step of hTry (h: the size it was asked to try)
+if err == 0
+    fac = 5;
+else
+    fac = min(5, max(0.2, 0.9 * err ^ -0.2));
+end
+if ~last
+    h = min(it.hMax, hTry * fac);
+else
+    % a short final step says nothing about the natural step size
+    h = min(it.hMax, max(h, hTry * fac));
+end
+end
+
+function h = dopriRejected(hTry, err)
+h = hTry * max(0.2, 0.9 * err ^ -0.2);
+end
+
+function y = fixedSteps(f, t, y, t1, it, n, C)
+% the run's fixed-step method from t to t1 in steps of hFixed, the last cut short
+while t < t1
+    h = min(it.hFixed, t1 - t);
+    y = fixedStep(it.method, f, t, y, h, n, C);
+    if t1 - (t + h) < 1e-9
+        t = t1;
+    else
+        t = t + h;
+    end
+end
+end
+
+function f = cowellDerivative(s, idx, te)
+% the derivative of objects idx over a segment from now to te: the run's forces and the
+% thrust of the finite burns under way all through it
 cdam = s.cd(idx) .* s.area(idx) ./ s.mass(idx);
 burnRows = zeros(0, 4);      % row in idx, maneuver, t0, m0 (mdot in a parallel list)
 mdots = zeros(0, 1);
@@ -806,39 +1067,49 @@ for b = s.burns
     end
 end
 nIdx = numel(idx);
-it = s.sim.integrator;
-opts = odeset(RelTol=it.rtol, AbsTol=it.atol, MaxStep=it.hMax, ...
-    InitialStep=min(s.hNext, te - s.t), Events=@(t, y) leaveEvents(y, nIdx, C));
 F = s.sim.forces;
-f = @(t, y) derivative(t, y, nIdx, cdam, F, s.sim.jd0, s.man, burnRows, mdots, C);
-sol = ode45(f, [s.t, te], reshape(s.Y(idx, :), [], 1), opts);
-tReach = sol.x(end);
-% the step to start the next segment with, as the simulator carries it on: the last
-% step cut short to land on the segment's end says nothing about the natural size
-h = diff(sol.x);
-if numel(h) >= 2
-    s.hNext = min(it.hMax, max(h(end - 1:end)));
-elseif ~isempty(h)
-    s.hNext = min(it.hMax, max(s.hNext, h(end)));
+jd0 = s.sim.jd0;
+man = s.man;
+C = s.C;
+f = @(t, y) derivative(t, y, nIdx, cdam, F, jd0, man, burnRows, mdots, C);
 end
-s = recordBetween(s, tReach, idx, sol);
-% the simulator looks for events at the end of every integrator step
-for j = 2:numel(sol.x) - 1
-    Ystep = s.Y;
-    Ystep(idx, :) = reshape(sol.y(:, j), nIdx, 6);
-    s = stepEvents(s, sol.x(j), idx, Ystep);
+
+function y = fixedStep(method, f, t, y, h, n, C)
+% one step of h seconds of a fixed-step integrator from state column y (n objects) at t
+switch method
+    case "rk4"
+        k1 = f(t, y);
+        k2 = f(t + h / 2, y + h / 2 * k1);
+        k3 = f(t + h / 2, y + h / 2 * k2);
+        k4 = f(t + h, y + h * k3);
+        y = y + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4);
+    case "leapfrog"
+        % kick-drift-kick with a straight-line drift
+        Y = reshape(y, n, 6);
+        a0 = reshape(f(t, y), n, 6);
+        vHalf = Y(:, 4:6) + 0.5 * h * a0(:, 4:6);
+        rNew = Y(:, 1:3) + h * vHalf;
+        a1 = reshape(f(t + h, reshape([rNew, vHalf], [], 1)), n, 6);
+        y = reshape([rNew, vHalf + 0.5 * h * a1(:, 4:6)], [], 1);
+    case "wh"
+        % Wisdom-Holman: half a kick of the perturbations, the exact two-body motion
+        % over the step, the other half kick
+        Y = reshape(y, n, 6);
+        vHalf = Y(:, 4:6) + 0.5 * h * perturbation(f, t, y, n, C);
+        [r1, v1] = keplerPropagate(Y(:, 1:3), vHalf, h, C.MU);
+        v1 = v1 + 0.5 * h * perturbation(f, t + h, reshape([r1, v1], [], 1), n, C);
+        y = reshape([r1, v1], [], 1);
+    otherwise
+        error("satflight:integrator", "Unknown integrator %s.", method);
 end
-s.Y(idx, :) = reshape(sol.y(:, end), nIdx, 6);
-s.t = tReach;
-if tReach < te - 1e-9 && isfield(sol, "ie") && ~isempty(sol.ie)
-    for e = reshape(sol.ie, 1, [])
-        row = mod(e - 1, nIdx) + 1;
-        s = leave(s, idx(row), e > nIdx);
-    end
 end
-if numel(sol.x) > 1
-    s = stepEvents(s, s.t, idx, s.Y);
-end
+
+function a = perturbation(f, t, y, n, C)
+% the acceleration minus the Earth's point-mass term
+Y = reshape(y, n, 6);
+d = reshape(f(t, y), n, 6);
+r = Y(:, 1:3);
+a = d(:, 4:6) + C.MU * r ./ vecnorm(r, 2, 2) .^ 3;
 end
 
 function dy = derivative(t, y, n, cdam, F, jd0, man, burnRows, mdots, C)
@@ -864,47 +1135,162 @@ end
 dy = reshape([v, a], [], 1);
 end
 
-function [value, terminal, direction] = leaveEvents(y, n, C)
-% a satellite is lost once it is below the re-entry altitude AND descending (as the
-% simulator decides it): the first value turns negative exactly then, whether it
-% sinks through 80 km or turns over below it; the second marks escape
-Y = reshape(y, n, 6);
-r = Y(:, 1:3);
-radialSpeed = sum(r .* Y(:, 4:6), 2) ./ vecnorm(r, 2, 2);
-value = [max(geodeticHeight(r, C) - C.REENTRY_ALT, radialSpeed); vecnorm(r, 2, 2) - C.SOI];
-terminal = ones(2 * n, 1);
-direction = [-ones(n, 1); ones(n, 1)];
-end
-
-function [s, gone] = checkLeft(s, idx)
-% a satellite already below the re-entry altitude and descending (or beyond the
-% sphere of influence) leaves before anything is integrated
+function [s, gone] = stepLeft(s, t, idx, Y)
+% the simulator's look at the end of every step (_post_step), Y the states then: an
+% object below the re-entry height and descending (only a descending one: launches
+% start low and climb), beyond the sphere of influence, or one that went below the
+% re-entry height during the step and came back up (a dip) has left the run. Each is
+% logged at the time it crossed, found on the step's Hermite curve, with its speed then
 C = s.C;
-r = s.Y(idx, 1:3);
-v = s.Y(idx, 4:6);
-low = geodeticHeight(r, C) < C.REENTRY_ALT & sum(r .* v, 2) < 0;
-far = vecnorm(r, 2, 2) > C.SOI;
-gone = any(low | far);
-for k = reshape(find(low | far), 1, [])
-    s = leave(s, idx(k), far(k));
+idx = reshape(idx, [], 1);
+gone = false;
+if isempty(idx)
+    return
+end
+r = Y(idx, 1:3);
+v = Y(idx, 4:6);
+rm = vecnorm(r, 2, 2);
+alt = geodeticHeight(r, C);
+out = (alt < C.REENTRY_ALT & sum(r .* v, 2) < 0) | rm > C.SOI;
+dips = nan(numel(idx), 1);
+if numel(idx) <= C.DIP_CHECK_LIMIT
+    dips = dipTimes(s, t, idx, Y, alt);
+end
+for k = reshape(find(out | ~isnan(dips)), 1, [])
+    i = idx(k);
+    speed = norm(v(k, :));
+    if rm(k) > C.SOI
+        when = crossingTime(s, t, i, Y, @(pos, ~) vecnorm(pos, 2, 2) - C.SOI);
+        s = leave(s, i, "escaped", t, when, speed);
+    elseif alt(k) <= 0
+        when = crossingTime(s, t, i, Y, @(pos, ~) geodeticHeight(pos, C));
+        s = leave(s, i, "impacted", t, when, speedAt(s, t, i, Y, when, speed));
+    else
+        when = dips(k);
+        if isnan(when)
+            when = crossingTime(s, t, i, Y, @(pos, ~) geodeticHeight(pos, C) - C.REENTRY_ALT);
+        end
+        s = leave(s, i, "re-entered", t, when, speedAt(s, t, i, Y, when, speed));
+    end
+    gone = true;
 end
 end
 
-function s = leave(s, i, escaped)
+function when = dipTimes(s, t, idx, Y, alt)
+% the simulator's _dips: for each object of idx (heights alt now) that ends the step
+% within DIP_MARGIN of the re-entry height, having started it at or above it, the time
+% it first went below it during the step (NaN for the others and if it never did)
+C = s.C;
+when = nan(numel(idx), 1);
+prev = previousStep(s, t, Y);
+if isempty(prev)
+    return
+end
+h = t - prev.t;
+fr = linspace(0, 1, 17);
+for k = reshape(find(alt < C.REENTRY_ALT + C.DIP_MARGIN), 1, [])
+    i = idx(k);
+    y0 = prev.Y(i, :);
+    y1 = Y(i, :);
+    if ~(geodeticHeight(y0(1:3), C) >= C.REENTRY_ALT)
+        continue                          % already below (climbing out): not a dip
+    end
+    below = find(geodeticHeight(hermiteAt(y0, y1, h, fr), C) < C.REENTRY_ALT, 1);
+    if ~isempty(below)
+        low = @(f) geodeticHeight(hermiteAt(y0, y1, h, f), C) - C.REENTRY_ALT;
+        when(k) = prev.t + h * crossingFraction(low, 0, fr(below));
+    end
+end
+end
+
+function prev = previousStep(s, t, Y)
+% the states at the end of the step before the one that ended at t (states Y), or []
+% when nothing continuous joins them (no step yet, objects added since)
+prev = s.lastSample;
+if isempty(prev) || ~(prev.t < t) || size(prev.Y, 1) ~= size(Y, 1)
+    prev = [];
+end
+end
+
+function when = crossingTime(s, t, i, Y, f)
+% the simulator's _when: the time within the step that ended at t (states Y) at which
+% f(position, time) changed sign for object i, on the step's cubic Hermite curve; t
+% itself with no step to go back along or no change of sign on the curve
+when = t;
+prev = previousStep(s, t, Y);
+if isempty(prev)
+    return
+end
+h = t - prev.t;
+y0 = prev.Y(i, :);
+y1 = Y(i, :);
+g = @(fr) f(hermiteAt(y0, y1, h, fr), prev.t + fr * h);
+if (g(0) < 0) == (g(1) < 0)
+    return
+end
+when = prev.t + h * crossingFraction(g, 0, 1);
+end
+
+function speed = speedAt(s, t, i, Y, when, now)
+% the speed (km/s) of object i at time when within the step that ended at t, along the
+% step's Hermite curve (now, its speed at the end, with no step to go back along)
+prev = previousStep(s, t, Y);
+if isempty(prev) || ~(when < t)
+    speed = now;
+    return
+end
+h = t - prev.t;
+fr = (when - prev.t) / h;
+y0 = prev.Y(i, :);
+y1 = Y(i, :);
+f2 = fr * fr;
+vel = (6 * f2 - 6 * fr) * y0(1:3) / h + (3 * f2 - 4 * fr + 1) * y0(4:6) + ...
+    (6 * fr - 6 * f2) * y1(1:3) / h + (3 * f2 - 2 * fr) * y1(4:6);
+speed = norm(vel);
+end
+
+function p = hermiteAt(y0, y1, h, fr)
+% positions (one row per fraction fr of the step) on the cubic Hermite curve through
+% states y0 and y1 a step of h seconds apart
+fr = fr(:);
+f2 = fr .* fr;
+f3 = f2 .* fr;
+p = (2 * f3 - 3 * f2 + 1) .* y0(1:3) + (f3 - 2 * f2 + fr) .* h .* y0(4:6) + ...
+    (3 * f2 - 2 * f3) .* y1(1:3) + (f3 - f2) .* h .* y1(4:6);
+end
+
+function fr = crossingFraction(g, lo, hi)
+% the fraction of the step between lo and hi where g(fraction) changes sign (it must),
+% by bisection to about 1e-7 of the step (the simulator's _crossing)
+gLo = g(lo);
+for k = 1:24
+    mid = 0.5 * (lo + hi);
+    gMid = g(mid);
+    if (gMid < 0) == (gLo < 0)
+        lo = mid;
+        gLo = gMid;
+    else
+        hi = mid;
+    end
+end
+fr = 0.5 * (lo + hi);
+end
+
+function s = leave(s, i, status, t, when, speed)
+% object i has left the run at the end of the step that ended at t: logged at when,
+% the time it crossed, with speed its speed then
 C = s.C;
 name = s.names(i);
-r = s.Y(i, 1:3);
-speed = norm(s.Y(i, 4:6));
-if escaped
-    s.status(i) = "escaped";
-    s = logEvent(s, s.t, sprintf("%s left Earth's sphere of influence", name), "alert");
-elseif geodeticHeight(r, C) <= 0
-    s.status(i) = "impacted";
-    s = logEvent(s, s.t, sprintf("%s impacted the surface at %.2f km/s", name, speed), "alert");
-else
-    s.status(i) = "re-entered";
-    s = logEvent(s, s.t, sprintf("%s re-entered (below %.0f km, %.2f km/s)", name, ...
-        C.REENTRY_ALT, speed), "alert");
+s.status(i) = status;
+switch status
+    case "escaped"
+        s = logEvent(s, when, sprintf("%s left Earth's sphere of influence", name), "alert");
+    case "impacted"
+        s = logEvent(s, when, sprintf("%s impacted the surface at %.2f km/s", name, speed), ...
+            "alert");
+    otherwise
+        s = logEvent(s, when, sprintf("%s re-entered (below %.0f km, %.2f km/s)", name, ...
+            C.REENTRY_ALT, speed), "alert");
 end
 mine = false(size(s.pending));
 if ~isempty(s.man)
@@ -915,7 +1301,7 @@ if any(mine)
     if nnz(mine) == 1
         plural = "";
     end
-    s = logEvent(s, s.t, sprintf("%s: %d pending maneuver%s cancelled", name, nnz(mine), ...
+    s = logEvent(s, t, sprintf("%s: %d pending maneuver%s cancelled", name, nnz(mine), ...
         plural), "warn");
 end
 s.pending(mine) = false;
@@ -925,35 +1311,6 @@ end
 end
 
 % --- analytic propagation (propagators "kepler" and "j2mean") --------------------------------
-
-function s = segmentAnalytic(s, idx, te)
-C = s.C;
-h = s.sim.integrator.hMax;
-while s.t < te - 1e-9
-    dt = min(h, te - s.t);
-    Y0 = s.Y(idx, :);
-    tn = s.t + dt;
-    ks = find(s.tout > s.t + 1e-9 & s.tout < tn - 1e-9);
-    for q = 1:numel(ks)
-        Ycur = s.Y;
-        Ycur(idx, :) = analyticStep(Y0, s.tout(ks(q)) - s.t, s.sim.propagator, C);
-        s = recordAt(s, ks(q), Ycur);
-    end
-    s.Y(idx, :) = analyticStep(Y0, dt, s.sim.propagator, C);
-    s.t = tn;
-    [s, gone] = checkLeft(s, idx);
-    s = stepEvents(s, tn, idx, s.Y);
-    if tn < te - 1e-9
-        k = find(abs(s.tout - tn) <= 1e-9, 1);
-        if ~isempty(k)
-            s = recordAt(s, k, s.Y);
-        end
-    end
-    if gone
-        return
-    end
-end
-end
 
 function Y = analyticStep(Y0, dt, propagator, C)
 if propagator == "kepler"
@@ -1317,13 +1674,20 @@ s = approachEvents(s, t, idx, Y);
 end
 
 function s = eclipseEvents(s, t, w, Y)
-fr = shadowFraction(Y(w, 1:3), sunPosition(s.sim.jd0 + t / 86400, s.C), s.C);
+% entering and leaving the shadow, seen at the end of the step and logged when half the
+% Sun's disc showed (on the step's Hermite curve, the Sun where it is at the step's end)
+C = s.C;
+sun = sunPosition(s.sim.jd0 + t / 86400, C);
+fr = shadowFraction(Y(w, 1:3), sun, C);
+lit = @(pos, ~) shadowFraction(pos, sun, C) - 0.5;
 for k = 1:numel(w)
     i = w(k);
     if s.shadow(i) >= 0.5 && 0.5 > fr(k)
-        s = logEvent(s, t, sprintf("%s entered Earth's shadow", s.names(i)), "eclipse");
+        s = logEvent(s, crossingTime(s, t, i, Y, lit), sprintf("%s entered Earth's shadow", ...
+            s.names(i)), "eclipse");
     elseif s.shadow(i) < 0.5 && 0.5 <= fr(k)
-        s = logEvent(s, t, sprintf("%s back in sunlight", s.names(i)), "eclipse");
+        s = logEvent(s, crossingTime(s, t, i, Y, lit), sprintf("%s back in sunlight", ...
+            s.names(i)), "eclipse");
     end
     s.shadow(i) = fr(k);
 end
@@ -1349,26 +1713,36 @@ s.visible = false(nst, numel(s.names));
 end
 
 function s = stationEvents(s, t, w, Y)
-th = gmst(s.sim.jd0 + t / 86400);
-c = cos(th);
-sn = sin(th);
-r = Y(w, 1:3);
-ecef = [c * r(:, 1) + sn * r(:, 2), -sn * r(:, 1) + c * r(:, 2), r(:, 3)];
+% AOS and LOS, seen at the end of the step and logged when the object crossed the
+% station's elevation mask (on the step's Hermite curve, the Earth turning under it)
 for k = 1:numel(s.st.name)
-    enu = (ecef - s.st.ecef(k, :)) * s.st.enu(:, :, k).';
-    rng = vecnorm(enu, 2, 2);
-    rng(rng == 0) = 1;
-    sees = asin(min(max(enu(:, 3) ./ rng, -1), 1)) >= deg2rad(s.st.minEl(k));
+    mask = deg2rad(s.st.minEl(k));
+    sees = stationElevation(s, k, Y(w, 1:3), t) >= mask;
+    above = @(pos, tt) stationElevation(s, k, pos, tt) - mask;
     for q = 1:numel(w)
         i = w(q);
         if sees(q) && ~s.visible(k, i)
-            s = logEvent(s, t, sprintf("AOS %s @ %s", s.names(i), s.st.name(k)), "station");
+            s = logEvent(s, crossingTime(s, t, i, Y, above), sprintf("AOS %s @ %s", ...
+                s.names(i), s.st.name(k)), "station");
         elseif ~sees(q) && s.visible(k, i)
-            s = logEvent(s, t, sprintf("LOS %s @ %s", s.names(i), s.st.name(k)), "station");
+            s = logEvent(s, crossingTime(s, t, i, Y, above), sprintf("LOS %s @ %s", ...
+                s.names(i), s.st.name(k)), "station");
         end
         s.visible(k, i) = sees(q);
     end
 end
+end
+
+function el = stationElevation(s, k, r, t)
+% elevation (rad) of ECI positions r (one per row) at time t above station k's horizon
+th = gmst(s.sim.jd0 + t / 86400);
+c = cos(th);
+sn = sin(th);
+ecef = [c * r(:, 1) + sn * r(:, 2), -sn * r(:, 1) + c * r(:, 2), r(:, 3)];
+enu = (ecef - s.st.ecef(k, :)) * s.st.enu(:, :, k).';
+rng = vecnorm(enu, 2, 2);
+rng(rng == 0) = 1;
+el = asin(min(max(enu(:, 3) ./ rng, -1), 1));
 end
 
 function rs = sunPosition(jd, C)
@@ -1414,8 +1788,10 @@ function s = approachEvents(s, t, idx, Y)
 C = s.C;
 idx = idx(:);
 orbiting = idx(geodeticHeight(Y(idx, 1:3), C) > 100);
+mask = false(numel(s.names), 1);
+mask(orbiting) = true;
 if numel(orbiting) < 2
-    s.lastSample = [];
+    s.lastSample = struct("t", t, "Y", Y, "mask", mask);   % event times still use it
     return
 end
 r = Y(orbiting, 1:3);
@@ -1445,8 +1821,6 @@ if ~isempty(now)
     end
 end
 s.closePairs = now;
-mask = false(numel(s.names), 1);
-mask(orbiting) = true;
 s.lastSample = struct("t", t, "Y", Y, "mask", mask);
 end
 
@@ -2889,6 +3263,8 @@ C.REENTRY_ALT = 80.0;         % km
 C.ASCENT_SYNC = 1.0;          % s
 C.EVENT_DETAIL_LIMIT = 40;
 C.ALL_PAIRS_LIMIT = 300;
+C.DIP_MARGIN = 10.0;          % km
+C.DIP_CHECK_LIMIT = 2000;
 C.CONJUNCTION_KM = 10.0;
 C.APSIS_TIME_TOL = 1e-6;      % s
 C.CIRC_SAMPLES = 72;
@@ -3633,7 +4009,7 @@ function ok = nodeDefined(rows, C)
 ok = rows.i_deg >= C.I_DEFINED & rows.i_deg <= 180 - C.I_DEFINED;
 end
 
-function D = satflightDrift(T, events, forces)
+function D = satflightDrift(T, events, sim)
 %SATFLIGHTDRIFT How each orbit changes in the run after the object's last burn, from
 %   the samples while it is in orbit (an orbit that clears the Earth), fitted with a
 %   straight line over at least two orbits: from (UTC) and over how many days, the
@@ -3642,7 +4018,10 @@ function D = satflightDrift(T, events, forces)
 %   the drift of the node and of the argument of perigee per day measured beside what
 %   the J2 secular theory gives for that orbit (0 without J2). A drift is NaN where it
 %   is not defined: the node of an orbit in the equator, the perigee of a circular one.
+%   J2 counts only where it moves the objects: under cowell with J2 on, and always under
+%   j2mean; the kepler propagator ignores it even when the scenario turns it on
 C = satflightConstants();
+j2 = sim.propagator == "j2mean" || (sim.propagator == "cowell" && sim.forces.j2);
 M = satflightManeuvers(events);
 epoch = T.utc(1) - seconds(T.t_s(1));
 names = unique(T.name, "stable");
@@ -3673,7 +4052,7 @@ for k = 1:n
     a = rows.a_km;
     e = rows.e;
     i = deg2rad(rows.i_deg);
-    if forces.j2
+    if j2
         a = osculatingToMeanA(a, e, i, deg2rad(rows.argp_deg), deg2rad(rows.nu_deg), C);
     end
     period = 2 * pi * sqrt(mean(a) ^ 3 / C.MU);
@@ -3690,7 +4069,7 @@ for k = 1:n
     D.perigee_km(k) = mean(a .* (1 - e)) - C.RE;
     D.apogee_km(k) = mean(a .* (1 + e)) - C.RE;
     [raanJ2, argpJ2] = j2SecularRates(mean(a), mean(e), mean(i), C);
-    if ~forces.j2
+    if ~j2
         [raanJ2, argpJ2] = deal(0);
     end
     if all(nodeDefined(rows, C))
@@ -4973,9 +5352,9 @@ if ~isempty(onlyHere)
     fprintf("Only in this script's run: %s\n", strjoin(onlyHere, ", "));
 end
 % max_diff_km is over the samples where both runs still have the object in flight. One
-% that re-enters stops here at the moment it is below 80 km and descending, and in the
-% simulator at the end of the integrator step in which that happened, so the two frozen
-% positions (final_diff_km) can differ by up to one step's travel.
+% that re-enters stops in both at the end of the integrator step in which it went below
+% 80 km descending; this script takes the simulator's own steps, so the two frozen
+% positions (final_diff_km) agree as closely as the rest of the run.
 D = table('Size', [numel(names) 6], ...
     'VariableTypes', ["string", "double", "double", "double", "string", "string"], ...
     'VariableNames', ["name", "max_diff_km", "final_diff_km", "final_alt_diff_km", ...
@@ -5014,9 +5393,9 @@ function M = satflightCompareEvents(events, E)
 %   same_text whether the numbers agree to the digits printed. A line found in one log
 %   only has NaN for the other's time. Launch events come out of the same fixed-step
 %   ascent and agree to the millisecond; eclipses, station passes and re-entries are
-%   seen at the end of an integrator step, so they agree to within a step. The
-%   simulator shows the last stretch of a run (less than a step) without looking for
-%   events in it, so an event that close to the end may be in this log only.
+%   seen at the end of the same integrator steps and logged at the moment they happened
+%   within one (on the step's Hermite curve), so they agree to milliseconds. Neither
+%   program looks for events in the last stretch of a run, shorter than a step.
 kindA = string(events.kind);
 kindB = string(E.kind);
 textA = string(events.text);

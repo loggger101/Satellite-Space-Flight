@@ -13,6 +13,7 @@ from satflight import atmosphere, constants
 from satflight.maneuvers import Maneuver
 from satflight.matlab_export import (
     CROSS_CHECK,
+    FIXED_STEP,
     RUNTIME,
     _epoch_text,
     drop_functions,
@@ -75,6 +76,123 @@ def test_every_scenario_exports_its_exact_starting_state(path, tmp_path):
         (a.t0, a.res.azimuth, a.kick_deg) for a in sim.ascents]   # bit for bit
     for a in sim.ascents:
         assert f'L = satflightLaunch("{a.spec.name}", satflightVehicle(' in text
+
+
+ISS_TLE = ("1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927",
+           "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537")
+
+
+def every_option(propagator: str, method: str, h_fixed: float = 10.0) -> dict:
+    """A scenario that reaches every option the exporter must carry: each orbit type,
+    every maneuver kind, timing and frame, every launch timing and guidance and each
+    vehicle, a constellation, ground stations and names MATLAB must quote."""
+    def el(**kw):
+        return {"type": "elements", **kw}
+
+    sats = [
+        {"name": "Elements", "orbit": el(altitude=500, i=40, raan=10, nu=5), "mass": 800,
+         "area": 4, "dry_mass": 600},
+        {"name": "Ellipse", "orbit": el(perigee_alt=400, apogee_alt=2000, i=60, raan=50,
+                                        argp=30, nu=100)},
+        {"name": "By a and e", "orbit": el(a=26554, e=0.72, i=63.4, raan=0, argp=270, M=10)},
+        {"name": "SSO", "orbit": el(altitude=700, i="sso", raan=30)},
+        {"name": "State", "orbit": {"type": "state", "r": [7000, 0, 0], "v": [0, 7.5, 1]}},
+        {"name": "Hop", "orbit": {"type": "surface", "lat": 28.5, "lon": -80.6, "alt": 100,
+                                  "speed": 4.0, "azimuth": 90, "fpa": 45}},
+        {"name": "GEO", "orbit": {"type": "geo", "lon": -75}},
+        {"name": "ISS (TLE)", "orbit": {"type": "tle", "line1": ISS_TLE[0],
+                                        "line2": ISS_TLE[1]}},
+        {"name": 'Quote "Q" & é', "orbit": el(altitude=600, i=97, raan=200)},
+        {"name": "Copies", "orbit": el(altitude=550, i=53), "count": 3},
+    ]
+    timings = ("now", "delay", "periapsis", "apoapsis", "ascending_node", "descending_node",
+               "absolute")
+    maneuvers = [{"sat": "Ellipse", "kind": "impulse", "timing": tm, "delay": 600.0,
+                  "t": 900.0 + 100 * k, "dv": [0.002, 0.001, -0.001], "frame": frame}
+                 for k, (tm, frame) in enumerate(zip(timings, ("VNB", "RSW", "ECI") * 3,
+                                                     strict=False))]
+    maneuvers += [
+        {"sat": "Elements", "kind": "finite", "timing": "delay", "delay": 300,
+         "dv": [1, 0, 0.2], "thrust": 400, "isp": 310, "duration": 900, "frame": "RSW"},
+        {"sat": "SSO", "kind": "plane_change", "timing": "descending_node", "delta_i": 0.5},
+        {"sat": "By a and e", "kind": "circularize", "timing": "apoapsis"},
+        {"sat": 'Quote "Q" & é', "kind": "match_velocity", "timing": "delay", "delay": 2000,
+         "target": "SSO"},
+    ]
+    launches = [
+        {"name": "Now", "vehicle": "Falcon 9 (approx.)", "timing": "now"},
+        {"name": "Later", "vehicle": "Electron (approx.)", "timing": "delay", "delay": 120,
+         "lat": -39.262, "lon": 177.865, "inclination": 97.5, "direction": "south",
+         "perigee_alt": 500, "apogee_alt": 520, "payload_mass": 150, "circularize": True},
+        {"name": "At a time", "vehicle": "Saturn V (approx.)", "timing": "absolute", "t0": 200,
+         "track_stages": False},
+        {"name": "To a node", "vehicle": "Falcon 9 (approx.)", "timing": "raan", "raan": 200,
+         "inclination": 53},
+        {"name": "Into a plane", "vehicle": "Falcon 9 (approx.)", "timing": "plane",
+         "target": "Elements"},
+        {"name": "Sounder", "vehicle": "Sounding rocket", "timing": "delay", "delay": 60,
+         "guidance": "open", "azimuth": 0, "lat": 69.29, "lon": 16.02},
+    ]
+    return {
+        "name": f"Every option {propagator} {method}", "epoch": "2026-09-29T12:00:00Z",
+        "propagator": propagator,
+        "integrator": {"method": method, "h_max": 60.0, "h_fixed": h_fixed},
+        "forces": {"j2": True, "j3": propagator == "cowell", "j4": propagator == "cowell",
+                   "c22": propagator == "cowell", "drag": propagator == "cowell"},
+        "satellites": sats,
+        "constellations": [{"name": "Walker", "total": 6, "planes": 3, "phasing": 1,
+                            "pattern": "star", "altitude": 1200, "inclination": 86}],
+        "stations": [{"name": "Kiruna", "lat": 67.86, "lon": 20.96},
+                     {"name": "Hobart", "lat": -42.8, "lon": 147.4, "alt": 0.1, "min_el": 5}],
+        "maneuvers": maneuvers, "launches": launches,
+    }
+
+
+@pytest.mark.parametrize("propagator, method", [("cowell", "dopri5"), ("cowell", "rk4"),
+                                                ("cowell", "wh"), ("cowell", "leapfrog"),
+                                                ("kepler", "dopri5"), ("j2mean", "dopri5")])
+def test_every_option_exports_from_the_start_and_mid_run(propagator, method, tmp_path):
+    """Whatever a scenario holds, the export carries all of it: every object, burn and
+    launch, the propagator and the integrator the run really uses (its fixed step
+    too), from the start and from a moment with burns and ascents under way."""
+    sim = Simulation(Scenario.from_dict(every_option(propagator, method)))
+    for start, at in (("start", 0.0), ("now", 333.7)):
+        sim.advance(at)
+        out = export_live_script(sim, tmp_path / f"every_{start}.m", start, 1800, 60)
+        text = out.read_text(encoding="utf-8")
+        integrator = re.search(r'^sim\.integrator = struct\("method", "(\w+)", .*"hFixed", '
+                               r'([^)]+)\);', text, re.M)
+        assert integrator and integrator.groups() == (method, "10")
+        assert f'sim.propagator = "{propagator}";' in text
+        if propagator == "cowell" and method != "dopri5":
+            assert f"fixed-step {FIXED_STEP[method]}, in steps of 10 s" in text
+        data = json.loads(scenario_json(text))      # what the script starts from
+        names = [r.strip('"').replace('""', '"') for r in block(text, "sim.names")]
+        vehicles = {id(a.sat) for a in sim.ascents}
+        launches = len(re.findall(r"^sim\.launches\(end \+ 1\) = L;$", text, re.M))
+        flying = len(re.findall(r"^L\.state = struct\(", text, re.M))
+        assert launches == len(data["launches"])
+        assert flying == sum(bool(L.get("resume", {}).get("state")) for L in data["launches"])
+        assert len(re.findall(r"^    satflightBurn\(", text, re.M)) == len(data["maneuvers"])
+        if start == "start":
+            assert names == [s.name for s in sim.sats if id(s) not in vehicles]
+            assert launches == 6 and len(data["maneuvers"]) == 11
+        else:
+            free = [s.name for s in sim.sats if id(s) not in vehicles and s.status == "active"]
+            assert names == free
+            assert flying >= 1, "nothing exported in flight"
+
+
+def scenario_json(text: str) -> str:
+    """The scenario JSON a script's cross-check hands the simulator."""
+    body = re.search(r'^function text = scenarioJson\(\)\n.*?\ntext = strjoin\(\[\n(.*?)\n'
+                     r'\], ""\);', text, re.S | re.M).group(1)
+    return "".join(matlab_strings(body.split("\n")))
+
+
+def test_every_integrator_has_a_description():
+    from satflight.integrators import METHODS
+    assert sorted(FIXED_STEP) == sorted(set(METHODS) - {"dopri5"})
 
 
 def test_the_scenario_json_breaks_between_items_and_joins_back_exactly(tmp_path):
@@ -169,7 +287,7 @@ def test_sections_in_order(scenario, compare, sections, tmp_path):
     assert "eclipses = satflightEclipses(T, events);" in text
     assert "satflightPlotTimeline(T, events, shown);" in text
     assert ("satflightPlotSky(T, events, sim.stations, shown);" in text) == bool(sim.stations)
-    assert "drift = satflightDrift(T, events, sim.forces);\ndisplay(drift)" in text
+    assert "drift = satflightDrift(T, events, sim);\ndisplay(drift)" in text
     assert re.search(r'^animate = true;   % .+\nanimationFile = "";   % .+\n'
                      r'animation3DFile = "";   % .+\nfigureFolder = "";   % ', text, re.M)
     assert ("    satflightAnimate(T, events, sim.stations, shown, File=mapFile);\n"
@@ -399,6 +517,8 @@ def test_runtime_constants_are_the_simulators():
     assert const("ASCENT_SYNC") == simulation.ASCENT_SYNC
     assert const("EVENT_DETAIL_LIMIT") == simulation.EVENT_DETAIL_LIMIT
     assert const("ALL_PAIRS_LIMIT") == simulation.ALL_PAIRS_LIMIT
+    assert const("DIP_MARGIN") == simulation.DIP_MARGIN
+    assert const("DIP_CHECK_LIMIT") == simulation.DIP_CHECK_LIMIT
     assert const("CONJUNCTION_KM") == Simulation(Scenario()).conjunction_km
     for name in ("G0_M", "THROTTLE_MIN", "GUIDANCE_ALT", "H_POWERED", "H_COAST", "SAMPLE_DT",
                  "FREEZE_TGO", "MIN_PERIGEE", "MAX_BURN"):

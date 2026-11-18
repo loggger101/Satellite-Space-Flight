@@ -53,6 +53,8 @@ CARDS = [
     ("launch_day", "Launch day", "Six rockets lift off from four continents; stages fall away."),
     ("hohmann_to_geo", "Hohmann",
      "Two engine burns raise a satellite from low orbit to GEO."),
+    ("gto_to_geo", "GTO to GEO",
+     "To geostationary from Florida: the 28.5 deg tilt is undone where it costs least."),
     ("rendezvous", "Rendezvous",
      "A chaser catches up with a space station and matches its speed."),
     ("starlink_shell", "Starlink shell",

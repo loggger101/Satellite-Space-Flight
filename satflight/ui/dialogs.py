@@ -467,7 +467,7 @@ def maneuver_dialog(app):
     def on_change(dlg, key):
         try:
             v = dlg.values()
-            burns, summary = plan(v, aim=False)            # quick, while typing
+            plan(v, aim=False)                 # quick, while typing; raises if impossible
         except ValueError as exc:
             dlg.info["preview"] = f"({exc})"
             preview.clear(str(exc))
@@ -487,7 +487,7 @@ def maneuver_dialog(app):
         else:
             n = len(flown.burns)
             dlg.info["preview"] = (f"{n} burn{'s' if n > 1 else ''}, ~{flown.total_dv * 1000:,.0f}"
-                                   f" m/s: the card in the view explains - {summary}")
+                                   " m/s - the card in the view explains")
 
     def on_ok(v):
         flown, i = preview.plan(), sim.require(v["sat"])

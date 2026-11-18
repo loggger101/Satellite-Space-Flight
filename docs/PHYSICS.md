@@ -250,6 +250,31 @@ plain two-body motion while the run has more.
   coasting): a later burn or rendezvous arrival is refused with a note to
   plan it nearer the time. Single burns (impulse, finite, circularize,
   plane change) have no such limit; they are worked out when they fire.
+- **Change orbit to** a perigee, apogee and inclination: burn 1 (at the chosen
+  timing) leaves the satellite moving level, so the burn point becomes an
+  apsis, in a plane turned by a share `f` of the inclination change, at the
+  speed whose far apsis lands on a target apsis (aimed with the run's forces as
+  for Hohmann); burn 2 there sends the opposite apsis to the other target and
+  turns the rest. The plane through the burn point with inclination `i` has
+  the normal `h` with `h . r = 0` and `h_z = cos i` (the one nearer the present
+  normal); it exists only where `|latitude| <= i`, which is why plane changes
+  belong at the nodes. `f` minimises the two-body total (a 41-point scan, then
+  golden section): a turn costs `2 v sin(di/2)` alone but little on top of a
+  large speed change, so from a 185 km, 28.5 deg parking orbit to GEO 2.16 deg
+  rides on the 2.48 km/s injection and 26.3 deg goes to apogee (1.60 km/s
+  there): 4.272 km/s against 4.296 with the whole turn at apogee. From GTO
+  itself the perigee burn changes no speed, so the whole turn goes to the one
+  apogee burn (1.837 km/s). A burn already within 25 km of a target apsis does
+  everything alone. Under J2 the apsides drift off the nodes (0.06 deg of
+  latitude after a 5 h coast to GEO), so `i = 0` cannot pass through the burn
+  point: the nearest plane within 0.5 deg is taken and the summary says what
+  inclination is reached; further off it is refused with the reason.
+- **Preview** (`satflight/preview.py`): the planned burns are flown ahead,
+  two-body while the form is edited and with the run's forces on a snapshot of
+  the run in the background, giving the transfer arcs, each burn's place,
+  delta-v, speed change and plane turn, the propellant (rocket equation, a
+  finite burn drawn as one kick) and the final orbit. The aimed preview ends
+  within a metre of what the run then flies.
 - **Circularize** gives the satellite the velocity, in its present plane, of a
   circular orbit for the run's forces: no once-per-revolution term in the
   radius over the coming revolution (found by Newton on the radial and

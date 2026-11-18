@@ -1,0 +1,125 @@
+{
+  "name": "GTO to GEO",
+  "description": "Two satellites go from a Cape Canaveral launch (28.5 deg) to geostationary orbit with the Change-orbit planner. 'Apogee kick' rides a 185 x 35,786 km transfer orbit and fires once at apogee, turning the whole 28.5 deg there, where it moves slowest. 'From parking' starts in a 185 km circular orbit: its first burn (the transfer injection) takes a little of the turn for almost nothing, the second does the rest at apogee. Apogee kick: one burn of 1837.6 m/s does it all (it fires 7.1 km from the target height), inclination 28.50 -> 0.00 deg; it reaches 0.003 deg, not 0: the burn is 0.003 deg off the equator (J2 moves the apsides off the nodes), so trim it later. From parking: dV1 2482.5 m/s (tilt -2.16 deg), dV2 1790.9 m/s (tilt -26.37 deg), total 4273.4 m/s, coast 5.26 h; it reaches 0.062 deg, not 0: the burn is 0.062 deg off the equator (J2 moves the apsides off the nodes), so trim it later; burn 2 takes 92% of the tilt: it fires at 1.60 km/s against 7.80, and turning a slower velocity costs less.",
+  "epoch": "2026-09-29T12:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": false,
+    "j4": false,
+    "c22": false,
+    "drag": false,
+    "density_scale": 1.0
+  },
+  "record_dt": 20.0,
+  "warp": 600,
+  "satellites": [
+    {
+      "name": "Apogee kick",
+      "orbit": {
+        "type": "elements",
+        "perigee_alt": 185.0,
+        "apogee_alt": 35786.0,
+        "i": 28.5,
+        "raan": 40.0,
+        "argp": 180.0,
+        "nu": 120.0
+      },
+      "color": null,
+      "mass": 4000,
+      "area": 15,
+      "cd": 2.2,
+      "count": 1
+    },
+    {
+      "name": "From parking",
+      "orbit": {
+        "type": "elements",
+        "altitude": 185.0,
+        "i": 28.5,
+        "raan": 40.0,
+        "nu": 300.0
+      },
+      "color": null,
+      "mass": 6000,
+      "area": 15,
+      "cd": 2.2,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [],
+  "maneuvers": [
+    {
+      "sat": "Apogee kick",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 15797.1537647783,
+      "delay": 0.0,
+      "dv": [
+        1.1060984820395519,
+        -1.467412188086823,
+        -1.0687850187013212e-10
+      ],
+      "frame": "VNB",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Orbit change burn (1837.6 m/s)",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "From parking",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 880.6779024797078,
+      "delay": 0.0,
+      "dv": [
+        2.4521797081367938,
+        -0.38674570444156203,
+        0.008186682514631715
+      ],
+      "frame": "VNB",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Orbit change burn 1 (2482.5 m/s)",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "From parking",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 19802.90921943754,
+      "delay": 0.0,
+      "dv": [
+        1.1593518922004578,
+        1.3649717033384283,
+        6.200668021640223e-08
+      ],
+      "frame": "VNB",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 300.0,
+      "duration": 0.0,
+      "label": "Orbit change burn 2 (1790.9 m/s)",
+      "done": false,
+      "result": ""
+    }
+  ],
+  "launches": []
+}

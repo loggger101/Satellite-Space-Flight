@@ -382,8 +382,9 @@ def plan_target_orbit(sim, sat: str, perigee_alt: float, apogee_alt: float, inc:
         burns = [Maneuver(sat, "impulse", timing="absolute", t=t_b, dv=dv_vnb, frame="VNB",
                           label=f"Orbit change burn ({dv * 1000:.1f} m/s)")]
         miss = abs(near - r1)
+        which = "height" if rp == ra else "perigee" if near == rp else "apogee"
         summary = (f"one burn of {dv * 1000:.1f} m/s does it all (it fires {miss:,.1f} km "
-                   f"from the target {'perigee' if near == rp else 'apogee'}), "
+                   f"from the target {which}), "
                    f"inclination {i0:.2f} -> {inc:.2f} deg" + _reach_note(h, inc))
         return burns, summary if aim else ESTIMATE + summary
     options = []

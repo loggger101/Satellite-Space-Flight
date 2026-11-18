@@ -39,6 +39,7 @@ class Line:
     color: tuple
     width: int = 1           # design px
     behind_dim: float = 0.55
+    dash: int = 0            # > 0: drawn dashed, this many points on, as many off
 
 
 class SceneRenderer:
@@ -54,6 +55,8 @@ class SceneRenderer:
         self._overlay = range(0)    # markers of the selected orbit's geometry overlay
         self.legend_rect = None     # where the overlay's key went (clicking it folds it)
         self.sat_screen = None      # (sx, sy, visible) of last frame, for picking
+        self.plan_markers = range(0)   # markers of the maneuver preview's burns
+        self._plan_shown = None
         self.world_to_ecef = np.eye(3)
 
     def ground_at(self, cam, pos):
@@ -164,6 +167,8 @@ class SceneRenderer:
             else:
                 mask = ok[s] & ~h
                 color = ln.color
+            if ln.dash:
+                mask = mask & ((np.arange(m) // ln.dash) % 2 == 0)
             _runs(surf, color, sx[s], sy[s], mask, px(ln.width))
 
     # --- main entry -----------------------------------------------------------------------
@@ -192,6 +197,7 @@ class SceneRenderer:
         markers: list = []
         self._guides(opts, world_to_ecef, lines, markers)
         self._orbits(app, W, sel, lines)
+        self._plan(app, W, lines, markers)
         if opts.trails:
             lines.extend(self._trails(sim, app, W))
         if opts.stations and sim.stations:
@@ -213,6 +219,10 @@ class SceneRenderer:
                                                       opts.legend)
         if key is not None:
             self.label_rects.append(key)        # labels keep clear of the key
+        from . import planview
+        plan_card = planview.card(app, app.plan_preview)
+        if plan_card is not None:
+            self.label_rects.append(plan_card[0])
 
         # hidden pass, the Earth (orbit-plane fills split around it), visible pass
         cache: dict = {}
@@ -227,14 +237,18 @@ class SceneRenderer:
         self._draw_lines(surf, cam, lines, False, cache)
         self._draw_markers(surf, app, markers, mpos, behind=False)
         self._exhaust(surf, sim, cam, W)
+        self._plan_tips(app, mpos)
 
         sx, sy, vis = mpos
         n = sim.n
         self.sat_screen = (sx[-n:], sy[-n:], vis[-n:]) if n else None
-        if info is not None and opts.geometry == "full" and self.sat_screen is not None:
+        if (info is not None and opts.geometry == "full" and self.sat_screen is not None
+                and self._plan_shown is None):     # a previewed maneuver's card replaces it
             self._callout(surf, app, info, sel)
         if key is not None:
             orbitviz.draw_legend(surf, app.fonts, legend, key, opts.legend)
+        if plan_card is not None:
+            planview.draw_card(surf, app, *plan_card)
 
     # --- scene content ------------------------------------------------------------------------
     def _guides(self, opts, world_to_ecef, lines, markers):
@@ -274,6 +288,49 @@ class SceneRenderer:
                 lines.append(Line(pts[k] @ W.T, col, 2))
             else:
                 lines.append(Line(pts[k] @ W.T, theme.dim(col, 0.75), 1))
+
+    def _plan(self, app, W, lines, markers):
+        """The maneuver being planned, if a dialog is previewing one: the transfer
+        arcs dashed, the orbit it ends in, and a marker at each burn."""
+        pv = app.plan_preview
+        plan = pv.plan() if pv is not None and pv.active else None
+        self.plan_markers = range(0)
+        self._plan_shown = plan
+        if plan is None or not plan.burns:
+            return
+        col = theme.mix(pv.color, (255, 255, 255), 0.35)
+        for arc in plan.arcs:
+            lines.append(Line(arc @ W.T, col, 2, 0.5, dash=4))
+        if plan.final_track is not None:
+            lines.append(Line(plan.final_track @ W.T, theme.dim(col, 0.8), 2, 0.45))
+        start = len(markers)
+        for k, b in enumerate(plan.burns, 1):
+            name = f"burn {k}" if len(plan.burns) > 1 else "burn"
+            markers.append((W @ b.r, (255, 230, 120), -4, f"{name}: {b.size * 1000:,.0f} m/s",
+                            False))
+        self.plan_markers = range(start, len(markers))
+
+    def _plan_tips(self, app, mpos):
+        """Hover tips on the previewed burns (inside the view only)."""
+        plan, view = self._plan_shown, app.view_rect()
+        if plan is None:
+            return
+        sx, sy, vis = mpos
+        for n, k in enumerate(self.plan_markers):
+            if not (vis[k] and np.isfinite(sx[k]) and view.collidepoint(sx[k], sy[k])):
+                continue
+            b = plan.burns[n]
+            rect = pygame.Rect(0, 0, px(18), px(18))
+            rect.center = (int(sx[k]), int(sy[k]))
+            when = b.t - app.sim.t
+            text = (f"{b.label}: {b.size * 1000:,.1f} m/s, "
+                    + (f"in {format_duration(when)}" if when > 1 else "now")
+                    + f", {b.place}.\nSpeed {b.speed_change * 1000:+,.1f} m/s, "
+                    f"plane turned {b.tilt:.2f} deg."
+                    + (f" ({b.note})" if b.note else "")
+                    + ("\nWith the run's forces (what Schedule flies)." if plan.aimed else
+                       "\nTwo-body estimate; the aimed plan follows when the form rests."))
+            tips.add(rect, text)
 
     def _stations(self, sim, W, world_to_ecef, sel, lines, markers):
         """Ground-station squares and a link line to every active satellite in
@@ -450,7 +507,8 @@ class SceneRenderer:
                 continue
             if behind == bool(vis[k]):
                 # the overlay's point labels (apsides, nodes) still show, dimmed, behind the Earth
-                if not behind and label and rad < 0 and k in self._overlay:
+                if not behind and label and rad < 0 and (k in self._overlay
+                                                          or k in self.plan_markers):
                     labels.append((k, int(sx[k]), int(sy[k]), theme.dim(col, 0.6), label, False,
                                    True, rad))
                 continue
@@ -467,7 +525,7 @@ class SceneRenderer:
             elif rad < 0:
                 pygame.draw.rect(surf, col, (x + r, y + r, -2 * r, -2 * r), 1)
             if label and not behind:
-                tie = rad if k in self._overlay else None
+                tie = rad if k in self._overlay or k in self.plan_markers else None
                 labels.append((k, x, y, col, label, selected, False, tie))
         if labels:
             self._draw_labels(surf, app.fonts, labels, start, app.view_rect())
@@ -476,13 +534,14 @@ class SceneRenderer:
         """Place each label beside its marker, inside ``bounds`` (clear of the
         panels) and overlapping no label placed before it, trying right, left,
         below-right and below-left; a label with no free spot is left out. The
-        selected satellite goes first, then the other satellites, the selected
-        orbit's annotations, stations and axes; labels of points hidden by the
-        Earth come last. The orbit overlay's labels (``tie`` is their marker's
-        radius) may also sit further off, joined to their point by a leader line."""
+        selected satellite goes first, then a previewed maneuver's burns, the other
+        satellites, the selected orbit's annotations, stations and axes; labels of
+        points hidden by the Earth come last. The orbit overlay's and the burns'
+        labels (``tie`` is their marker's radius) may also sit further off, joined
+        to their point by a leader line."""
         placed = self.label_rects
-        order = sorted(labels, key=lambda m: (m[6], not m[5], m[0] < start,
-                                              m[0] if m[0] >= start else -m[0]))
+        order = sorted(labels, key=lambda m: (m[6], not m[5], m[0] not in self.plan_markers,
+                                              m[0] < start, m[0] if m[0] >= start else -m[0]))
         for _, x, y, col, label, selected, _, tie in order:
             txt = fonts.render(label, theme.mix(col, (255, 255, 255), 0.35), fonts.small)
             w, h = txt.get_size()

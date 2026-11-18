@@ -37,6 +37,7 @@ from ..scenario import (
 )
 from ..simulation import ACTIVE, PROPAGATORS
 from ..timeutil import format_duration, format_period
+from .planview import PlanPreview
 from .widgets import FieldSpec as F
 from .widgets import FormDialog
 
@@ -465,22 +466,46 @@ def maneuver_dialog(app):
 
     def on_change(dlg, key):
         try:
-            _, summary = plan(dlg.values(), aim=False)     # quick, while typing
-            dlg.info["preview"] = summary
+            v = dlg.values()
+            burns, summary = plan(v, aim=False)            # quick, while typing
         except ValueError as exc:
             dlg.info["preview"] = f"({exc})"
+            preview.clear(str(exc))
+            return
+
+        def plan_fn(run, aim):
+            """(sat, burns, summary) of this form flown from ``run`` (a snapshot
+            when aimed: that runs on the preview's thread, with a cache of its own)."""
+            if run is sim and not aim:
+                return (v["sat"], *plan(v, aim=False))
+            return (v["sat"], *_plan_maneuver(run, v, {}, aim))
+
+        preview.show(repr(sorted(v.items())), plan_fn, sim.sats[sim.require(v["sat"])].color)
+        flown = preview.estimate
+        if flown is None:
+            dlg.info["preview"] = f"({preview.error})"
+        else:
+            n = len(flown.burns)
+            dlg.info["preview"] = (f"{n} burn{'s' if n > 1 else ''}, ~{flown.total_dv * 1000:,.0f}"
+                                   f" m/s: the card in the view explains - {summary}")
 
     def on_ok(v):
-        burns, _ = plan(v)
+        flown, i = preview.plan(), sim.require(v["sat"])
+        if (flown is not None and flown.aimed and preview.key == repr(sorted(v.items()))
+                and flown.t0 == sim.t and np.array_equal(flown.start, sim.y[i])):
+            burns = flown.maneuvers               # flown already, from this very state
+        else:
+            burns, _ = plan(v)
         for b in burns:
-            sim.schedule(b)
+            sim.schedule(Maneuver.from_dict(b.to_dict()))
         return None
 
     dlg = FormDialog(app, "Plan maneuver", specs, on_ok, "Schedule", width=560,
                      on_change=on_change, ok_hint="Schedule the burns; the event log shows "
                                                   "them when they fire",
                      subtitle="VNB: V prograde, N orbit normal, B = V x N "
-                              "(radial out on circular orbits)")
+                              "(radial out on circular orbits)", dock="right")
+    preview = app.plan_preview = PlanPreview(app, dlg)
     on_change(dlg, None)
     return dlg
 

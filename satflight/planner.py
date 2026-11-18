@@ -279,12 +279,13 @@ def _reach_note(h, inc: float) -> str:
             "off the equator (J2 moves the apsides off the nodes), so trim it later")
 
 
-def _split_cost(r, v, r_far: float, r_other: float, i0: float, i_t: float, f: float):
+def _split_cost(r, v, r_far: float, r_other: float, i0: float, i_t: float, f: float,
+                strict: bool = False):
     """Two-body delta-v (km/s) of the two burns when burn 1 at (r, v) tilts the
     plane to ``i0 + f (i_t - i0)`` and aims the far apsis at ``r_far``, and
     burn 2 there does the rest of the tilt and sends the opposite apsis to
     ``r_other``. Returns (total, dv1, dv2) or infinities if a plane cannot be
-    reached."""
+    reached (with ``strict``, the ValueError saying why)."""
     try:
         r = np.asarray(r, dtype=float)
         r1 = float(np.linalg.norm(r))
@@ -297,6 +298,8 @@ def _split_cost(r, v, r_far: float, r_other: float, i0: float, i_t: float, f: fl
         dv2 = float(np.linalg.norm(_apsis_speed(r_far, r_other) * unit(np.cross(h2, r2v))
                                    - v2))
     except ValueError:
+        if strict:
+            raise
         return math.inf, math.inf, math.inf
     return dv1 + dv2, dv1, dv2
 
@@ -310,6 +313,7 @@ def best_split(r, v, r_far: float, r_other: float, i0: float, i_t: float):
     costs = [_split_cost(r, v, r_far, r_other, i0, i_t, f)[0] for f in fs]
     k = int(np.argmin(costs))
     if not math.isfinite(costs[k]):
+        _split_cost(r, v, r_far, r_other, i0, i_t, 1.0, strict=True)    # raises the reason
         raise ValueError("no split of the plane change can be flown from here")
     lo, hi = fs[max(k - 1, 0)], fs[min(k + 1, len(fs) - 1)]
     g = (math.sqrt(5.0) - 1.0) / 2.0

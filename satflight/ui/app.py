@@ -74,6 +74,8 @@ WARPS = [1, 2, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200, 21600, 86400]
 MAX_FRAME_DT = 0.25
 MIN_SIZE = (900, 600)      # smallest window the panels are laid out for (design px)
 IDLE_FPS = 10              # frame rate while the window is minimized (nothing is drawn)
+VIEW_MOUSE = (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION,
+              pygame.MOUSEWHEEL)
 RESTING_FPS = 20           # paused (or on the start menu) and untouched for REST_AFTER s
 REST_AFTER = 1.0           # s without input before a still picture is redrawn less often
 MAX_DROPPED = 3000         # most satellites a dropped TLE file adds
@@ -120,6 +122,7 @@ class App:
         self.menu: Menu | None = None   # a satellite's right-click menu while it is open
         self.toasts: list[tuple[float, str]] = []
         self.selected = -1
+        self.plan_preview = None           # ui.planview.PlanPreview of an open dialog
         self.follow = False
         self.paused = False
         self.warp = 60.0
@@ -493,7 +496,10 @@ class App:
                 self.menu = None
             return
         if self.dialogs:
-            self.dialogs[-1].handle(ev)
+            dlg = self.dialogs[-1]
+            # a docked dialog leaves the view usable: drags and scrolls beside it turn and zoom
+            if dlg.handle(ev) is False and getattr(dlg, "dock", None) and ev.type in VIEW_MOUSE:
+                self._view_input(ev)
             return
         key = self.renderer.legend_rect
         if (key is not None and ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1
@@ -711,6 +717,11 @@ class App:
             t0 = time.perf_counter()
             self.sim.advance(self.warp * min(dt_real, MAX_FRAME_DT))
             self.sim_cost = time.perf_counter() - t0
+        if self.plan_preview is not None:
+            if self.plan_preview.active:
+                self.plan_preview.tick()
+            else:
+                self.plan_preview = None
         if self.follow and 0 <= self.selected < self.sim.n:
             W = self.renderer.world_rotation(self.sim, self.opts.frame)
             self.camera.target = W @ self.sim.y[self.selected, :3]

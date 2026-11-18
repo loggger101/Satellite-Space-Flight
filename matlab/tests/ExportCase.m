@@ -7,7 +7,8 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
     %   table's small jumps at its layer boundaries fall at different points of each
     %   integrator's steps), the same objects at the same samples, the same final
     %   statuses, and the event logs line for line - launch and maneuver events to
-    %   the millisecond, the rest within a step. Suites: ExportTest, BundledExportTest.
+    %   the millisecond, the rest within 0.1 s and with the same text. Suites:
+    %   ExportTest, BundledExportTest.
 
     properties
         Root
@@ -18,6 +19,7 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
         Tolerance = 0.010      % km, objects in orbit
         DenseAir = 0.050       % km, objects that come down through the atmosphere
         Exact = 1e-3           % s, launch and maneuver events
+        Crossing = 0.1         % s, events found within a step (eclipses, passes, re-entries)
     end
 
     methods (TestClassSetup)
@@ -286,20 +288,17 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
             % the same objects at the same samples
             rows = @(X) sortrows(table(round(X.t_s * 1000), string(X.name)));
             tc.verifyEqual(rows(out.T), rows(out.P), script);
-            % the event logs, line for line
+            % the event logs, line for line: both look at the end of the same steps and
+            % log what they find at the moment it happened within the step. Only a pass
+            % shorter than a step may be in one log (see shortPasses)
             ev = out.eventDifferences;
-            % the simulator checks for events at the end of whole steps, and shows the
-            % last stretch of a run without a check: an event within a step of the end
-            % may be in one log only
-            tEnd = max(out.T.t_s);
-            hMax = out.sim.integrator.hMax;
-            lonely = ev(isnan(ev.dt_s) & ~(max(ev.t_matlab, ev.t_simulator) > tEnd - hMax), :);
-            lonely = lonely(~shortPasses(lonely, hMax), :);
+            lonely = ev(isnan(ev.dt_s), :);
+            lonely = lonely(~shortPasses(lonely, out.sim.integrator.hMax), :);
             tc.verifyEmpty(lonely, script + ": in one log only: " + formattedDisplayText(lonely));
             exact = ismember(ev.kind, ["launch", "maneuver", "info"]);
             off = ev(exact & ~(abs(ev.dt_s) <= tc.Exact & ev.same_text), :);
             tc.verifyEmpty(off, script + ": " + formattedDisplayText(off));
-            late = ev(~exact & ~isnan(ev.dt_s) & ~(abs(ev.dt_s) <= out.sim.integrator.hMax), :);
+            late = ev(~exact & ~isnan(ev.dt_s) & ~(abs(ev.dt_s) <= tc.Crossing & ev.same_text), :);
             tc.verifyEmpty(late, script + ": " + formattedDisplayText(late));
         end
     end
@@ -315,6 +314,11 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
                 ApogeeAlt=2000, I=60, Raan=50, Argp=30, Nu=100));
             sc = satflight.addSatellite(sc, "Chase", satflight.orbitElements(Altitude=480, ...
                 I=40, Raan=10, Nu=3));
+            % one that drag brings down within three hours, one on a path into the ground
+            sc = satflight.addSatellite(sc, "Balloon", satflight.orbitElements(Altitude=250, ...
+                I=51.6, Raan=0, Nu=240), Mass=60, Area=40);
+            sc = satflight.addSatellite(sc, "Lob", satflight.orbitElements(PerigeeAlt=-500, ...
+                ApogeeAlt=600, I=30, Raan=0, Argp=0, Nu=120));
             sc = satflight.addStation(sc, "Kiruna", 67.86, 20.96);
             sc = satflight.addManeuver(sc, "Burner", "finite", Timing="delay", Delay=300, ...
                 Dv=[1 0 0.2], Thrust=400, Isp=310, Duration=900);

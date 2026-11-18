@@ -23,9 +23,15 @@ from satflight.ui.burnnode import AXES, BurnNodeDialog
 LEO = {"type": "elements", "altitude": 500.0, "i": 51.6, "raan": 40.0, "nu": 10.0}
 
 
+# the seven-regime tour these tests were written against (the app itself opens
+# scenarios/default.json, Sentinel-1, when given no file)
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                    "scenarios", "orbit_tour.json")
+
+
 @pytest.fixture
 def app():
-    a = App(size=(1400, 850))
+    a = App(TOUR, size=(1400, 850))
     sc = Scenario(name="t", epoch=datetime(2026, 9, 29, 12, tzinfo=timezone.utc),
                   forces=ForceModel(j2=False),
                   satellites=[SatSpec("Sat", LEO, mass=1000, area=5),

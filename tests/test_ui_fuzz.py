@@ -22,9 +22,15 @@ DIALOGS = ("add", "walker", "maneuver", "station", "physics", "edit", "launch", 
 BAD = ("", "abc", "nan", "inf", "-1", "0", "1e300", "2.5")
 
 
+# the seven-regime tour these tests were written against (the app itself opens
+# scenarios/default.json, Sentinel-1, when given no file)
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                    "scenarios", "orbit_tour.json")
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
-    a = App(size=(1400, 850))
+    a = App(TOUR, size=(1400, 850))
     a.user_scenario_dir = tmp_path_factory.mktemp("user")
     yield a
     pygame.quit()
@@ -87,7 +93,7 @@ def apply(dlg, key, option):
         dlg.changed(key)
 
 
-@pytest.mark.parametrize("scenario", ["default.json", Scenario(name="Empty")],
+@pytest.mark.parametrize("scenario", ["orbit_tour.json", Scenario(name="Empty")],
                          ids=["default", "empty"])
 @pytest.mark.parametrize("name", DIALOGS)
 def test_every_option_of_every_dialog_submits_or_says_why(app, scenario, name):
@@ -103,8 +109,8 @@ def test_every_option_of_every_dialog_submits_or_says_why(app, scenario, name):
 @pytest.mark.parametrize("name", DIALOGS)
 def test_bad_text_in_any_field_is_refused_with_a_reason(app, name):
     seen = set()
-    for key, option in cases(app, "default.json", name):
-        dlg = fresh(app, "default.json", name)
+    for key, option in cases(app, "orbit_tour.json", name):
+        dlg = fresh(app, "orbit_tour.json", name)
         apply(dlg, key, option)
         for field in visible_text_fields(dlg):
             for bad in BAD:
@@ -112,7 +118,7 @@ def test_bad_text_in_any_field_is_refused_with_a_reason(app, name):
                     continue
                 seen.add((field, bad))
                 with case(name, key, option, field, bad):
-                    dlg = fresh(app, "default.json", name)
+                    dlg = fresh(app, "orbit_tour.json", name)
                     apply(dlg, key, option)
                     dlg.set(field, bad)
                     dlg.changed(field)

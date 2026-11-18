@@ -263,7 +263,7 @@ def lone_satellite() -> Scenario:
                                "Maneuvers and close approaches", "Orbit transfers",
                                "Orbit evolution", "Physics diagnostics", "Animation",
                                "Save"]),
-    ("default", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
+    ("orbit_tour", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
                         "Close approaches", "Orbit evolution", "Physics diagnostics",
                         "Animation", "Save"]),
     (None, False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
@@ -281,7 +281,7 @@ def test_sections_in_order(scenario, compare, sections, tmp_path):
     cells = text.split("\n%%\n")
     assert [re.match(r"%\[text\] ## (.+)", c).group(1) for c in cells[1:]] == sections
     assert ("passes = satflightPasses(T, events, sim.stations);" in text) == bool(sim.stations)
-    assert ("maneuvers = satflightManeuvers(events);" in text) == (scenario != "default"
+    assert ("maneuvers = satflightManeuvers(events);" in text) == (scenario != "orbit_tour"
                                                                   and scenario is not None)
     assert ("approaches = satflightApproaches(events);" in text) == (scenario is not None)
     assert "eclipses = satflightEclipses(T, events);" in text
@@ -294,7 +294,7 @@ def test_sections_in_order(scenario, compare, sections, tmp_path):
             "    satflightAnimate3D(T, events, burns, shown, File=globeFile);\nend") in text
     assert ('if figureFolder ~= ""\n    savedFiles = satflightSaveFigures(figureFolder);'
             in text)
-    burns = scenario is not None and scenario != "default"
+    burns = scenario is not None and scenario != "orbit_tour"
     assert ("transfers = satflightTransfers(burns);" in text) == burns
     assert ("[diagnostics, conservation] = satflightDiagnostics(T, sim, burns, objects);"
             in text)
@@ -339,7 +339,7 @@ def test_the_introduction_counts_in_words(tmp_path):
                         "satflightCoverage"}),
     # the maneuvers stay without burns: the orbit evolution reads them; the transfer
     # section goes with the burns
-    ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks", "satflightTransfers",
+    ("orbit_tour", {"satflightPlan", "satflightPlotAscent", "mergeMarks", "satflightTransfers",
                  "satflightPlotTransfer", "satflightPlotDeltaV", "satflightPlotBurnWindow",
                  "burnMarks", "onlyFirst", "plural", "orbitText", "orbitSummary",
                  "julianUtc"}),
@@ -369,7 +369,7 @@ def test_dropping_a_function_needs_it_whole(tmp_path):
 
 
 def test_current_moment_export_starts_where_the_app_is(tmp_path):
-    sim = Simulation(Scenario.load(ROOT / "scenarios" / "default.json"))
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "orbit_tour.json"))
     sim.advance(3 * 3600 + 17.25)
     text = export_live_script(sim, tmp_path / "later.m", "now").read_text(encoding="utf-8")
     assert "T+03:00:17.2" in text

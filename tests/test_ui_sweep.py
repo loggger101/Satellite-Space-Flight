@@ -22,9 +22,15 @@ SCENARIOS = sorted((ROOT / "scenarios").glob("*.json"))
 MOMENTS = (0.0, 120.0, 3600.0, 12 * 3600.0)     # s after loading, cumulative
 
 
+# the seven-regime tour these tests were written against (the app itself opens
+# scenarios/default.json, Sentinel-1, when given no file)
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                    "scenarios", "orbit_tour.json")
+
+
 @pytest.fixture(scope="module")
 def app():
-    a = App(size=(1400, 850))
+    a = App(TOUR, size=(1400, 850))
     yield a
     pygame.quit()
 

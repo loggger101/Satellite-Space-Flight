@@ -47,8 +47,56 @@ def el(**kw):
     return {"type": "elements", **kw}
 
 
+# Sentinel-1 reference orbit (ESA): sun-synchronous, 175 revolutions in a
+# 12-day repeat cycle, ascending node at 18:00 local mean solar time (dawn-dusk),
+# frozen eccentricity with the perigee held over the North Pole (argp 90 deg).
+# Sentinel-1C flies 1A's orbit 180 deg behind it (where 1B was), so the pair
+# covers each ground track every 6 days.
+S1_REVS, S1_DAYS = 175, 12
+S1_LTAN = 18.0                     # h, local mean solar time of the ascending node
+# Mean altitude (km above R_EARTH) whose node-to-node period, flown with J2, J3
+# and J4 in full on the "sso" inclination they pick, is 12 d / 175 = 5924.571 s:
+# the repeat closes to ~2 ms after 175 revolutions (tests/test_sentinel1.py
+# measures it). The published mean semi-major axis is 7071 km (693 km).
+S1_ALT = 692.827267
+# Frozen eccentricity under J2 + J3 (first order): e = -J3 Re sin(i) / (2 J2 a)
+S1_E = 0.0010443
+
+
+def s1_raan(epoch: datetime) -> float:
+    """RAAN (deg) that puts the ascending node at S1_LTAN local mean time at ``epoch``."""
+    clock = Clock(epoch)
+    ut = epoch.hour + epoch.minute / 60 + epoch.second / 3600
+    return (math.degrees(clock.gmst(0.0)) + (S1_LTAN - ut) * 15.0) % 360.0
+
+
 def default():
-    names = ["ISS (LEO 420 km, 51.6 deg)", "Hubble (540 km, 28.5 deg)",
+    """Sentinel-1A and -1C on ESA's reference orbit (until real orbit data replaces it)."""
+    raan = s1_raan(EPOCH)
+
+    def s1(name, u, mass):             # u: argument of latitude at the epoch, deg
+        return SatSpec(name, el(altitude=S1_ALT, e=S1_E, i="sso", raan=round(raan, 6),
+                                argp=90.0, nu=(u - 90.0) % 360.0),
+                       color=None, mass=mass, area=10.0, cd=2.2)
+
+    return Scenario(
+        name="Sentinel-1A and 1C",
+        description="ESA's Copernicus radar pair on the Sentinel-1 reference orbit: "
+                    "693 km, sun-synchronous (98.18 deg), dawn-dusk with the ascending "
+                    "node at 18:00, frozen perigee over the North Pole, 175 orbits in a "
+                    "12-day repeat. 1C flies 180 deg behind 1A, so together they revisit "
+                    "each ground track every 6 days. Open the map (M) to watch the tracks "
+                    "interleave. Nominal orbit, not tracking data.",
+        epoch=EPOCH, forces=ForceModel(j2=True, j3=True, j4=True, drag=True), warp=120,
+        satellites=[s1("Sentinel-1A", 0.0, 2164.0), s1("Sentinel-1C", 180.0, 2200.0)],
+        stations=[GroundStation("Svalbard", 78.23, 15.39, 0.5, 5.0),
+                  GroundStation("Matera", 40.65, 16.70, 0.5, 5.0),
+                  GroundStation("Maspalomas", 27.76, -15.63, 0.2, 5.0),
+                  GroundStation("Kiruna", 67.86, 20.96, 0.4, 5.0)])
+
+
+def orbit_tour():
+    names =["ISS (LEO 420 km, 51.6 deg)", "Hubble (540 km, 28.5 deg)",
              "Sun-synchronous 700 km", "GPS MEO (20200 km, 55 deg)", "Geostationary (GEO)",
              "Molniya (12 h, 63.4 deg)", "GTO (200 x 35786 km, 27 deg)"]
     return Scenario(
@@ -283,8 +331,8 @@ def geo_drift():
                     for lon in lons])
 
 
-ALL = {"default": default, "hohmann_to_geo": hohmann, "gto_to_geo": gto_to_geo,
-       "rendezvous": rendezvous,
+ALL = {"default": default, "orbit_tour": orbit_tour, "hohmann_to_geo": hohmann,
+       "gto_to_geo": gto_to_geo, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
        "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift}

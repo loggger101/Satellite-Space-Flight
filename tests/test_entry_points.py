@@ -27,12 +27,18 @@ from satflight.ui.earth import EarthRenderer
 from satflight.ui.welcome import StartScreen
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT = str(ROOT / "scenarios" / "default.json")
+DEFAULT = str(ROOT / "scenarios" / "orbit_tour.json")
+
+
+# the seven-regime tour these tests were written against (the app itself opens
+# scenarios/default.json, Sentinel-1, when given no file)
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                    "scenarios", "orbit_tour.json")
 
 
 @pytest.fixture
 def app(tmp_path):
-    a = App(size=(1400, 850))
+    a = App(TOUR, size=(1400, 850))
     a.user_scenario_dir = tmp_path / "user"
     yield a
     pygame.quit()

@@ -1,8 +1,10 @@
-"""The start menu shown when the simulator opens (Ctrl+N brings it back). Most of
-it is a form that sets up a new simulation: when it starts, what it begins with
-and the physics. Beside the form, a scenario or TLE file can be opened instead;
-along the bottom, a row of ready-made examples. It fills the window and the
-simulation stands still behind it (see ``App.in_menu``)."""
+"""The start menu shown when the simulator opens (Ctrl+N brings it back). At the
+top, the Sentinel-1 mission (the project's purpose); under it, a form that sets
+up a new simulation of your own: when it starts, what it begins with and the
+physics. Beside the form, a scenario or TLE file can be opened instead. The
+bundled demos, proofs of concept each showing one idea, sit behind a Demos
+button that swaps them in for the form. It fills the window and the simulation
+stands still behind it (see ``App.in_menu``)."""
 
 from __future__ import annotations
 
@@ -45,11 +47,17 @@ from .widgets import (
 )
 from .widgets import FieldSpec as F
 
-# Bundled scenarios in the order the examples row shows them, each with a short
-# label for its button and a plain-language blurb for its hover tip (the files'
-# own descriptions are written for people who know the jargon).
-CARDS = [
-    ("default", "Orbit tour", "One satellite in every classic orbit, from low to geostationary."),
+# Bundled scenarios, each with a short label for its button and a plain-language
+# blurb (the files' own descriptions are written for people who know the jargon).
+# MISSION is the project itself, shown first on the menu; more Sentinel-1
+# scenarios go here. DEMOS are the proofs of concept, behind the Demos button.
+MISSION = [
+    ("default", "Sentinel-1A and 1C",
+     "ESA's twin radar satellites on their real 12-day repeating orbit, half an orbit apart."),
+]
+DEMOS = [
+    ("orbit_tour", "Orbit tour",
+     "One satellite in every classic orbit, from low to geostationary."),
     ("launch_day", "Launch day", "Six rockets lift off from four continents; stages fall away."),
     ("hohmann_to_geo", "Hohmann",
      "Two engine burns raise a satellite from low orbit to GEO."),
@@ -71,6 +79,7 @@ CARDS = [
     ("launches_and_arcs", "Ballistic arcs",
      "Short hops, one satellite reaching orbit, one escaping Earth."),
 ]
+CARDS = MISSION + DEMOS
 BLURBS = {stem: blurb for stem, _, blurb in CARDS}
 SHORT = {stem: short for stem, short, _ in CARDS}
 
@@ -248,10 +257,12 @@ FILE_BG = (14, 20, 36)
 
 
 class StartScreen:
-    """The start menu, kept on the dialog stack. The setup form takes most of it;
-    the file box sits beside it and the examples run along the bottom. Enter
-    starts the simulation the form describes (or opens the typed path); Esc
-    (or Resume) goes back to the simulation the menu was opened from."""
+    """The start menu, kept on the dialog stack. The Sentinel-1 mission box runs
+    across the top; under it the setup form takes most of the room, with the
+    file box beside it. The Demos button (D) swaps the form and file box for the
+    bundled demos, and back. Enter starts the simulation the form describes (or
+    opens the typed path); Esc closes the demos, else (or Resume) goes back to
+    the simulation the menu was opened from."""
 
     GAP = 12           # design px
     HEAD = 80          # title and subtitle
@@ -259,8 +270,10 @@ class StartScreen:
     MIN_ROW = 26
     BOX_TOP = 36       # a box's title line
     START_ROW = 56     # the Start button and the message beside it
-    CHIP_H = 28
-    MIN_CHIP_W = 124
+    MISSION_CARD = 46  # a mission scenario's card
+    DEMO_ROW = 32      # the Demos button and its caption
+    DEMO_W = 190       # a demo card's narrowest width
+    DEMO_H = 64        # and its tallest height
     FILE_ROW = 24
     FOOT = 26          # the key hint line
 
@@ -269,8 +282,10 @@ class StartScreen:
         # the bundled scenarios are part of the program: a broken one raises here
         known = [a.scenario_dir / f"{stem}.json" for stem, _, _ in CARDS]
         cards = [(p, *scenario_card(p)) for p in known]
-        self.cards = [c[:4] for c in cards]                 # (path, title, blurb, tag)
+        self.mission = [c[:4] for c in cards[:len(MISSION)]]   # (path, title, blurb, tag)
+        self.cards = [c[:4] for c in cards[len(MISSION):]]     # the demos, likewise
         self.descriptions = {c[0]: c[4] for c in cards}     # the fuller hover text
+        self.show_demos = False                             # the demos in place of the form
         self.files = self._saved_files()                    # (path, title, blurb, tag)
         self.widgets = {s.key: make_widget(s, self.changed) for s in SETUP_FIELDS}
         for k, v in (a.last_setup or {}).items():           # as it was last started
@@ -299,9 +314,11 @@ class StartScreen:
             self.head_buttons.append(Button("Resume", self.close, tooltip="Esc",
                                             hint=f"Back to '{a.sim.scenario.name}' where it "
                                                  "stopped"))
-        self.buttons = [self.start_button, self.browse_button, self.open_button,
-                        self.now_button, *self.head_buttons]
-        self.hot = None                         # ("card" | "file", k) under the mouse
+        self.demos_button = Button(self._demos_text(), self.toggle_demos, tooltip="D",
+                                   hint="The bundled demos: proofs of concept, each showing "
+                                        "one idea")
+        self.buttons: list[Button] = []         # those shown now (see layout)
+        self.hot = None                         # ("mission" | "card" | "file", k) under the mouse
         self.rect = pygame.Rect(0, 0, 0, 0)
         self._backdrop: pygame.Surface | None = None
         self.layout()
@@ -338,7 +355,10 @@ class StartScreen:
         self.layout()
 
     def text_fields(self) -> list[TextField]:
-        """The text fields Tab moves between: the visible form's, then the path."""
+        """The text fields Tab moves between: the visible form's, then the path
+        (none while the demos are shown)."""
+        if self.show_demos:
+            return []
         shown = self.visible_fields(RUN_FIELDS) + self.visible_fields(PHYSICS_FIELDS)
         return [self.widgets[s.key] for s in shown
                 if isinstance(self.widgets[s.key], TextField)] + [self.path]
@@ -369,8 +389,21 @@ class StartScreen:
         self.error = ""
 
     def choose(self, k: int):
-        """Load example ``k`` (a bundled scenario) and close."""
+        """Load demo ``k`` (a bundled scenario) and close."""
         self.open(self.cards[k][0])
+
+    def _demos_text(self) -> str:
+        return "Back to setup" if self.show_demos else f"Demos ({len(self.cards)})"
+
+    def toggle_demos(self):
+        """Show the demos in place of the form and file box, or the form again."""
+        self.show_demos = not self.show_demos
+        for w in [*self.widgets.values(), self.path]:
+            if isinstance(w, TextField):
+                w.focused = False
+        self.demos_button.text = self._demos_text()
+        self.error = ""
+        self.layout()
 
     def open(self, path: Path):
         """Open a scenario or TLE file (see ``App.open_path``) and close; if it
@@ -424,44 +457,44 @@ class StartScreen:
         self.app.close_dialog(self)
 
     # --- layout -------------------------------------------------------------------------
-    def _chip_grid(self, inner: int) -> tuple[int, int]:
-        """(columns, rows) of the examples: as few rows as fit, evenly filled."""
-        g = px(8)
-        most = max(1, (inner + g) // (px(self.MIN_CHIP_W) + g))
-        rows = math.ceil(len(self.cards) / most)
-        return math.ceil(len(self.cards) / rows), rows
-
     def layout(self):
         """Size the menu to the window and place the boxes, fields and buttons."""
         sw, sh = self.app.screen.get_size()
         w = min(px(1100), sw - px(40))
         pad, g = px(18), px(self.GAP)
         inner = w - 2 * pad
-        cols, rows = self._chip_grid(inner)
-        chips_h = px(24) + rows * (px(self.CHIP_H) + px(6))
         n = max(len(RUN_FIELDS), len(PHYSICS_FIELDS))
-        fixed = (px(self.HEAD) + px(self.BOX_TOP) + px(self.START_ROW) + g + chips_h
-                 + px(self.FOOT))
+        mission_h = px(self.BOX_TOP) + px(self.MISSION_CARD) + px(10)
+        fixed = (px(self.HEAD) + mission_h + g + px(self.BOX_TOP) + px(self.START_ROW) + g
+                 + px(self.DEMO_ROW) + px(self.FOOT))
         avail = min(sh - px(40), px(800)) - fixed
         row = max(px(self.MIN_ROW), min(px(self.ROW), avail // n))
         self.row_h = row
         h = fixed + n * row
         self.rect = pygame.Rect((sw - w) // 2, max(px(10), (sh - h) // 2), w, h)
+        x0 = self.rect.x + pad
+        self.mission_rect = pygame.Rect(x0, self.rect.y + px(self.HEAD), inner, mission_h)
+        self._layout_mission()
         box_h = px(self.BOX_TOP) + n * row + px(self.START_ROW)
         setup_w = int((inner - g) * 0.69)
-        top = self.rect.y + px(self.HEAD)
-        self.setup_rect = pygame.Rect(self.rect.x + pad, top, setup_w, box_h)
+        top = self.mission_rect.bottom + g
+        self.setup_rect = pygame.Rect(x0, top, setup_w, box_h)
         self.file_rect = pygame.Rect(self.setup_rect.right + g, top, inner - setup_w - g, box_h)
-        self.examples_rect = pygame.Rect(self.rect.x + pad, self.setup_rect.bottom + g, inner,
-                                         chips_h)
+        self.demos_rect = self.setup_rect.union(self.file_rect)    # the demos take both
+        self.demos_row = pygame.Rect(x0, self.setup_rect.bottom + g, inner, px(self.DEMO_ROW))
+        b = self.demos_button
+        b.rect = pygame.Rect(x0, self.demos_row.y, self.app.fonts.ui.size(b.text)[0] + px(28),
+                             px(self.DEMO_ROW) - px(2))
         self._layout_form()
         self._layout_files()
-        cw = (inner - (cols - 1) * px(8)) // cols
-        y0 = self.examples_rect.y + px(24)
-        self.card_rects = [pygame.Rect(self.examples_rect.x + (k % cols) * (cw + px(8)),
-                                       y0 + (k // cols) * (px(self.CHIP_H) + px(6)),
-                                       cw, px(self.CHIP_H))
-                           for k in range(len(self.cards))]
+        if self.show_demos:                     # the form and files are hidden meanwhile
+            self.form_rows, self.file_rects = [], []
+            self._layout_demos()
+        else:
+            self.card_rects = []
+        form = [] if self.show_demos else [self.start_button, self.browse_button,
+                                           self.open_button, self.now_button]
+        self.buttons = [*form, self.demos_button, *self.head_buttons]
         x = self.rect.right - pad
         for b in reversed(self.head_buttons):
             bw = self.app.fonts.ui.size(b.text)[0] + px(28)
@@ -517,6 +550,32 @@ class StartScreen:
                                        r.w - 2 * cpad, px(self.FILE_ROW) - px(2))
                            for k in range(min(room, len(self.files)))]
 
+    def _layout_mission(self):
+        """The mission's scenarios side by side across its box."""
+        r, cpad, g = self.mission_rect, px(14), px(10)
+        k_n = max(1, len(self.mission))
+        cw = (r.w - 2 * cpad - (k_n - 1) * g) // k_n
+        self.mission_rects = [pygame.Rect(r.x + cpad + k * (cw + g), r.y + px(self.BOX_TOP),
+                                          cw, px(self.MISSION_CARD))
+                              for k in range(len(self.mission))]
+
+    def _demo_grid(self) -> tuple[int, int]:
+        """(columns, rows) of the demo cards: as many columns as fit, at most four."""
+        area = self.demos_rect.w - 2 * px(14)
+        cols = max(1, min(4, (area + px(8)) // (px(self.DEMO_W) + px(8))))
+        return cols, math.ceil(len(self.cards) / cols)
+
+    def _layout_demos(self):
+        """The demo cards in a grid over the room of the form and file box."""
+        r, cpad, g = self.demos_rect, px(14), px(8)
+        cols, rows = self._demo_grid()
+        top = r.y + px(self.BOX_TOP)
+        cw = (r.w - 2 * cpad - (cols - 1) * g) // cols
+        ch = min(px(self.DEMO_H), (r.bottom - px(12) - top - (rows - 1) * g) // rows)
+        self.card_rects = [pygame.Rect(r.x + cpad + (k % cols) * (cw + g),
+                                       top + (k // cols) * (ch + g), cw, ch)
+                           for k in range(len(self.cards))]
+
     # --- events -------------------------------------------------------------------------
     def handle(self, ev) -> bool:
         """Keys, then buttons, the form's widgets, the files and the examples; modal.
@@ -535,14 +594,16 @@ class StartScreen:
         for b in self.buttons:
             if b.handle(ev):
                 return True
-        widgets = [w for _, _, w in self.form_rows] + [self.path]
+        widgets = [w for _, _, w in self.form_rows] + ([] if self.show_demos else [self.path])
         if ev.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN):
             for w in widgets:                   # every one sees clicks: text fields lose focus
                 w.handle(ev)
             self.hot = self._spot(ev.pos)
             if self.hot and ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 kind, k = self.hot
-                if kind == "card":
+                if kind == "mission":
+                    self.open(self.mission[k][0])
+                elif kind == "card":
                     self.choose(k)
                 else:
                     self.open(self.files[k][0])
@@ -555,8 +616,9 @@ class StartScreen:
         return True    # modal: swallow everything
 
     def _spot(self, pos):
-        """("card", k) or ("file", k) at ``pos``, or None."""
-        for kind, rects in (("card", self.card_rects), ("file", self.file_rects)):
+        """("mission" | "card" | "file", k) at ``pos``, or None."""
+        for kind, rects in (("mission", self.mission_rects), ("card", self.card_rects),
+                            ("file", self.file_rects)):
             k = next((k for k, r in enumerate(rects) if r.collidepoint(pos)), -1)
             if k >= 0:
                 return kind, k
@@ -569,6 +631,8 @@ class StartScreen:
         if k == pygame.K_ESCAPE:
             if typing is not None:
                 typing.focused = False
+            elif self.show_demos:
+                self.toggle_demos()
             elif self.can_resume:
                 self.close()
         elif k == pygame.K_F11 or (k in (pygame.K_RETURN, pygame.K_KP_ENTER)
@@ -581,9 +645,11 @@ class StartScreen:
         elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
             if typing is self.path:
                 self.open_typed()
-            else:
+            elif not self.show_demos:           # the form it would start is hidden
                 self.start()
         elif k == pygame.K_TAB:
+            if not fields:
+                return True
             cur = fields.index(typing) if typing is not None else -1
             for w in fields:
                 w.focused = False
@@ -592,6 +658,8 @@ class StartScreen:
             return False
         elif k in (pygame.K_h, pygame.K_F1):
             self.head_buttons[0].callback()
+        elif k == pygame.K_d and not mods & (pygame.KMOD_CTRL | pygame.KMOD_ALT):
+            self.toggle_demos()
         return True
 
     # --- drawing ------------------------------------------------------------------------
@@ -606,18 +674,23 @@ class StartScreen:
         theme.panel(surf, r, (14, 20, 36, 240), theme.ACCENT, 10)
         fonts.draw(surf, "Satellite Space Flight", (r.x + px(18), r.y + px(14)), theme.TEXT,
                    fonts.big)
-        fonts.draw(surf, "Set up a new simulation, or open one from a file. Everything can "
-                         "be changed once it is running.", (r.x + px(20), r.y + px(52)),
-                   theme.DIM, fonts.ui)
+        fonts.draw(surf, fonts.fit("Follow the Sentinel-1 satellites, set up a simulation of your "
+                                   "own, or open one from a file.", r.w - px(40), fonts.ui),
+                   (r.x + px(20), r.y + px(52)), theme.DIM, fonts.ui)
         for b in self.head_buttons:
             b.draw(surf, fonts)
-        self._draw_form(surf)
-        self._draw_files(surf)
-        self._draw_examples(surf)
+        self._draw_mission(surf)
+        if self.show_demos:
+            self._draw_demos(surf)
+        else:
+            self._draw_form(surf)
+            self._draw_files(surf)
+        self._draw_demos_row(surf)
         back = "   Esc goes back to the simulation" if self.can_resume else ""
-        fonts.draw(surf, f"Enter starts   Tab moves between the text fields{back}   Ctrl+N "
-                         "brings this menu back", (r.x + px(20), r.bottom - px(9)),
-                   theme.FAINT, fonts.small, "bottomleft")
+        keys = ("Esc goes back to the setup   D hides the demos" if self.show_demos else
+                f"Enter starts   Tab moves between the text fields{back}")
+        fonts.draw(surf, f"{keys}   Ctrl+N brings this menu back",
+                   (r.x + px(20), r.bottom - px(9)), theme.FAINT, fonts.small, "bottomleft")
         menu = open_list(self.widgets.values())
         if menu is not None:
             menu.draw_list(surf, fonts)
@@ -746,12 +819,39 @@ class StartScreen:
         fonts.draw(surf, fonts.fit("Or drop a file onto the window", w, fonts.small),
                    (x, r.bottom - px(10)), theme.FAINT, fonts.small, "bottomleft")
 
-    def _draw_examples(self, surf):
-        fonts = self.app.fonts
-        cap = fonts.draw(surf, "Or watch a ready-made example:",
-                         (self.examples_rect.x + px(2), self.examples_rect.y + px(2)),
-                         theme.DIM, fonts.small)
-        tips.add(cap, "Scenarios that come with the simulator, each showing one idea.")
+    def _card_tip(self, path, title, blurb, tag) -> str:
+        return "\n".join(filter(None, (f"{title}{f' ({tag})' if tag else ''}: {blurb}",
+                                       self.descriptions.get(path), "Click to start it.")))
+
+    def _draw_mission(self, surf):
+        fonts, r = self.app.fonts, self.mission_rect
+        self._box(surf, r, SETUP_BG, theme.ACCENT, "Sentinel-1 mission",
+                  "ESA's Copernicus radar satellites, the orbits this project maps. Click one "
+                  "to start it.")
+        for k, rect in enumerate(self.mission_rects):
+            path, title, blurb, tag = self.mission[k]
+            hot = self.hot == ("mission", k)
+            bg = theme.mix(theme.FIELD, theme.ACCENT, 0.35 if hot else 0.12)
+            pygame.draw.rect(surf, bg, rect, border_radius=px(6))
+            pygame.draw.rect(surf, theme.ACCENT, rect, 1, border_radius=px(6))
+            tag_w = fonts.small.size(tag)[0] + px(24) if tag else px(12)
+            top = rect.y + px(4)
+            fonts.draw(surf, fonts.fit(title, rect.w - tag_w, fonts.bold), (rect.x + px(12), top),
+                       theme.TEXT, fonts.bold)
+            if tag:
+                fonts.draw(surf, tag, (rect.right - px(12), top), theme.ACCENT, fonts.small,
+                           "topright")
+            fonts.draw(surf, fonts.fit(blurb, rect.w - px(24), fonts.small),
+                       (rect.x + px(12), rect.bottom - px(4)), theme.DIM, fonts.small,
+                       "bottomleft")
+            tips.hot(rect)
+            tips.add(rect, self._card_tip(path, title, blurb, tag))
+
+    def _draw_demos(self, surf):
+        fonts, r = self.app.fonts, self.demos_rect
+        self._box(surf, r, FILE_BG, theme.PANEL_EDGE, "Demos",
+                  "Scenarios that come with the simulator: proofs of concept, each showing one "
+                  "idea. Esc or Back to setup returns to the form.")
         for k, rect in enumerate(self.card_rects):
             path, title, blurb, tag = self.cards[k]
             hot = self.hot == ("card", k)
@@ -759,12 +859,38 @@ class StartScreen:
             pygame.draw.rect(surf, bg, rect, border_radius=px(5))
             pygame.draw.rect(surf, theme.ACCENT if hot else theme.PANEL_EDGE, rect, 1,
                              border_radius=px(5))
-            fonts.draw(surf, self.chip_label(k), rect.center, theme.TEXT, fonts.ui, "center")
+            label = fonts.draw(surf, self.chip_label(k), (rect.x + px(10), rect.y + px(6)),
+                               theme.TEXT, fonts.ui)
+            if tag and label.right + px(16) + fonts.small.size(tag)[0] <= rect.right - px(10):
+                fonts.draw(surf, tag, (rect.right - px(10), rect.y + px(8)), theme.ACCENT,
+                           fonts.small, "topright")         # else the hover tip has it
+            line_h = fonts.small.get_linesize()
+            room = max(1, (rect.bottom - px(4) - (rect.y + px(8) + fonts.ui.get_linesize()))
+                       // line_h)
+            lines = tips.wrap(blurb, fonts.small, rect.w - px(20))
+            if len(lines) > room:
+                lines = lines[:room]
+                lines[-1] = fonts.fit(lines[-1] + " ...", rect.w - px(20), fonts.small)
+            y = rect.bottom - px(6) - len(lines) * line_h
+            for line in lines:
+                fonts.draw(surf, line, (rect.x + px(10), y), theme.DIM, fonts.small)
+                y += line_h
             tips.hot(rect)
-            tips.add(rect, "\n".join(filter(None, (f"{title}{f' ({tag})' if tag else ''}: {blurb}",
-                                                   self.descriptions.get(path),
-                                                   "Click to start it."))))
+            tips.add(rect, self._card_tip(path, title, blurb, tag))
+
+    def _draw_demos_row(self, surf):
+        fonts, b = self.app.fonts, self.demos_button
+        b.draw(surf, fonts)
+        text = ("Click a demo to start it." if self.show_demos else
+                "Proofs of concept that come with the simulator: transfers, constellations, "
+                "launches, drag.")
+        x = b.rect.right + px(12)
+        cap = fonts.draw(surf, fonts.fit(text, self.demos_row.right - x, fonts.small),
+                         (x, b.rect.centery), theme.FAINT, fonts.small, "midleft")
+        tips.add(cap, "The bundled scenarios other than Sentinel-1, each showing one idea. "
+                      "D shows or hides them.")
 
     def chip_label(self, k: int) -> str:
-        """Example ``k``'s button text, shortened if its button is too narrow."""
-        return self.app.fonts.fit(SHORT[self.cards[k][0].stem], self.card_rects[k].w - px(12))
+        """Demo ``k``'s title, shortened if its card is too narrow for it."""
+        return self.app.fonts.fit(SHORT[self.cards[k][0].stem], self.card_rects[k].w - px(20),
+                                  self.app.fonts.ui)

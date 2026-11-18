@@ -102,7 +102,7 @@ classdef ExportTest < ExportCase
 
         function fromTheCurrentMoment(tc)
             % exported 3 h into the run, between whole seconds
-            tc.check(tc.export(fullfile(tc.Root, "scenarios", "default.json"), "later", ...
+            tc.check(tc.export(fullfile(tc.Root, "scenarios", "orbit_tour.json"), "later", ...
                 ["--at", "10817.25", "--duration", "2h", "--step", "120"]));
         end
 
@@ -178,7 +178,7 @@ classdef ExportTest < ExportCase
             % the geostationary satellite is in view of two stations the whole hour: long
             % passes, whose highest sampled elevation must clear the station's mask; with
             % animationFile set the animation is also written as a GIF, a frame a sample
-            script = tc.export(fullfile(tc.Root, "scenarios", "default.json"), "gif", ...
+            script = tc.export(fullfile(tc.Root, "scenarios", "orbit_tour.json"), "gif", ...
                 ["--duration", "1h", "--step", "300"]);
             text = readlines(script);
             k = find(startsWith(text, "animationFile = """";"));

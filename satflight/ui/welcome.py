@@ -49,7 +49,10 @@ from .widgets import FieldSpec as F
 # label for its button and a plain-language blurb for its hover tip (the files'
 # own descriptions are written for people who know the jargon).
 CARDS = [
-    ("default", "Orbit tour", "One satellite in every classic orbit, from low to geostationary."),
+    ("default", "Sentinel-1",
+     "ESA's twin radar satellites on their real 12-day repeating orbit, half an orbit apart."),
+    ("orbit_tour", "Orbit tour",
+     "One satellite in every classic orbit, from low to geostationary."),
     ("launch_day", "Launch day", "Six rockets lift off from four continents; stages fall away."),
     ("hohmann_to_geo", "Hohmann",
      "Two engine burns raise a satellite from low orbit to GEO."),

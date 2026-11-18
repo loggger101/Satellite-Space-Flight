@@ -2,6 +2,7 @@
 re-entry, its exact scalings, its edge cases and its rows in the Orbit tab."""
 
 import math
+import os
 import time
 from pathlib import Path
 
@@ -16,6 +17,12 @@ from satflight.scenario import SatSpec, Scenario
 from satflight.simulation import ACTIVE, Simulation
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+# the seven-regime tour these tests were written against (the app itself opens
+# scenarios/default.json, Sentinel-1, when given no file)
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                    "scenarios", "orbit_tour.json")
 
 
 def _estimate_and_flight(orbit, mass, area):
@@ -94,7 +101,7 @@ def test_the_orbit_tab_shows_the_lifetime(tmp_path):
     from satflight.ui.app import App
     from satflight.ui.orbitpanel import lifetime_rows, property_sections
 
-    app = App(size=(1400, 850))
+    app = App(TOUR, size=(1400, 850))
     app.user_scenario_dir = tmp_path / "user"
     try:
         app.load_scenario(ROOT / "scenarios" / "drag_decay.json")
@@ -112,7 +119,7 @@ def test_the_orbit_tab_shows_the_lifetime(tmp_path):
         sheet = [r for _, rs in property_sections(info, 0.0, life=later) for r in rs]
         assert all(glossary.row(label) for label, _ in sheet)
 
-        app.load_scenario(ROOT / "scenarios" / "default.json")
+        app.load_scenario(ROOT / "scenarios" / "orbit_tour.json")
         app.select(0)
         assert app.lifetime() == "no drag in this run"
     finally:

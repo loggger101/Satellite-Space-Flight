@@ -26,10 +26,15 @@ from satflight.ui.theme import px
 from satflight.ui.welcome import scenario_card
 from satflight.ui.widgets import TextField, field_tip
 
+# the seven-regime tour these tests were written against (the app itself opens
+# scenarios/default.json, Sentinel-1, when given no file)
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                    "scenarios", "orbit_tour.json")
+
 
 @pytest.fixture
 def app(tmp_path):
-    a = App(size=(1400, 850))
+    a = App(TOUR, size=(1400, 850))
     a.user_scenario_dir = tmp_path / "user"
     yield a
     pygame.quit()
@@ -39,7 +44,7 @@ def app(tmp_path):
 def scaled_app(request, tmp_path):
     """An App at 100 % and at 125 % display scaling (window and UI both scaled)."""
     s = request.param
-    a = App(size=(round(1400 * s), round(850 * s)), ui_scale=s)
+    a = App(TOUR, size=(round(1400 * s), round(850 * s)), ui_scale=s)
     a.user_scenario_dir = tmp_path / "user"
     yield a
     pygame.quit()
@@ -942,7 +947,7 @@ def tip_states(app):
             frame(app, dt=0.0)
             yield f"tab {tab}, satellite {sel}"
     app.info.tab = 0
-    app.load_scenario(app.scenario_dir / "default.json")
+    app.load_scenario(app.scenario_dir / "orbit_tour.json")
     for sel in range(app.sim.n):
         app.select(sel)
         frame(app, dt=0.0)
@@ -1063,7 +1068,7 @@ def test_every_property_row_and_form_field_is_explained(app):
             titles = [t for t, _ in app.info.report(i)]
             assert all(glossary.section(t) for t in titles), titles
     assert not missing, missing
-    app.load_scenario(app.scenario_dir / "default.json")
+    app.load_scenario(app.scenario_dir / "orbit_tour.json")
     for name in ("add", "launch", "walker", "maneuver", "station", "physics", "scenario",
                  "edit"):
         app.open(name)
@@ -1146,7 +1151,7 @@ def test_a_tip_line_is_never_wider_than_the_limit(app):
 def test_scene_labels_never_overlap(scaled_app):
     """Crowded scenes (a launch cluster, a constellation) keep every label legible."""
     app = scaled_app
-    for name in ("launch_day", "launches_and_arcs", "gps_constellation", "default"):
+    for name in ("launch_day", "launches_and_arcs", "gps_constellation", "orbit_tour"):
         app.load_scenario(app.scenario_dir / f"{name}.json")
         app.sim.advance(1200)
         frame(app, 2, dt=0.0)
@@ -1172,7 +1177,7 @@ def test_scene_text_keeps_clear_of_the_map_and_plot(scaled_app):
 
     orbitviz.draw_callout = callout
     try:
-        for name, sel, overlays in (("default", 1, True), ("polar_star", 2, True),
+        for name, sel, overlays in (("orbit_tour", 1, True), ("polar_star", 2, True),
                                     ("molniya_tundra", 0, True), ("polar_star", 0, False),
                                     ("starlink_shell", 1, False)):
             app.load_scenario(app.scenario_dir / f"{name}.json")
@@ -1204,7 +1209,7 @@ def test_map_names_stay_on_the_map_and_apart(scaled_app):
     (a pad at a station's site counted down over the station's name)."""
     app = scaled_app
     real = app.fonts.draw
-    for name in ("default", "launch_day", "launches_and_arcs"):
+    for name in ("orbit_tour", "launch_day", "launches_and_arcs"):
         app.load_scenario(app.scenario_dir / f"{name}.json")
         app.sim.advance(60)
         app.opts.map = True
@@ -1339,7 +1344,7 @@ def test_a_still_picture_is_redrawn_less_often(app):
 def test_start_menu_counts_every_satellite():
     """Copies along one orbit count (the Molniya card said 2 for 6 satellites)."""
     root = Path(__file__).resolve().parents[1] / "scenarios"
-    for stem in ("molniya_tundra", "default", "starlink_shell"):
+    for stem in ("molniya_tundra", "orbit_tour", "starlink_shell"):
         tag = scenario_card(root / f"{stem}.json")[2]
         n = Simulation(Scenario.load(root / f"{stem}.json")).n
         assert tag.startswith(f"{n:,} satellite"), (stem, tag, n)
@@ -1579,7 +1584,7 @@ def test_the_find_box_lists_only_matching_satellites(app):
     assert not sl.find.focused                          # a click elsewhere lets go too
     app.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=view.center))
     sl.find.value = "Hub"
-    app.load_scenario(app.scenario_dir / "default.json")
+    app.load_scenario(app.scenario_dir / "orbit_tour.json")
     assert sl.find.value == ""                          # a new scenario lists everything
 
 

@@ -43,7 +43,7 @@ def _app(scenario: str, advance: float = 0.0, select: str | None = None, size=SI
 
 def overview():
     """Every classic orbit around the Earth."""
-    return _app("default", 45 * 60)
+    return _app("orbit_tour", 45 * 60)
 
 
 def hohmann():
@@ -101,19 +101,19 @@ def j2_plot():
 
 def follow_iss():
     """The camera riding along with the ISS."""
-    app = _app("default", 20 * 60, "ISS")
+    app = _app("orbit_tour", 20 * 60, "ISS")
     app.toggle_follow()
     return app
 
 
 def orbit_inspector():
     """The orbit inspector on the Molniya orbit."""
-    return _app("default", 2.5 * 3600, "Molniya")
+    return _app("orbit_tour", 2.5 * 3600, "Molniya")
 
 
 def launch_dialog():
     """The launch dialog, planning a launch from the Australian outback."""
-    app = _app("default")
+    app = _app("orbit_tour")
     app.open("launch")
     dlg = app.dialogs[-1]
     for key, value in (("name", "Outback-1"), ("payload_mass", 8000),

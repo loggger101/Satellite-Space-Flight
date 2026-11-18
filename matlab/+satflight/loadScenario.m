@@ -1,6 +1,6 @@
 function sc = loadScenario(path)
 %LOADSCENARIO Read a scenario JSON file into a struct you can change and save.
-%   sc = satflight.loadScenario(fullfile(satflight.repoRoot, "scenarios", "default.json"));
+%   sc = satflight.loadScenario(fullfile(satflight.repoRoot, "scenarios", "orbit_tour.json"));
 %   sc.satellites{1}.mass = 600;
 %   sc = satflight.addStation(sc, "Goldstone", 35.43, -116.89);
 %   satflight.saveScenario(sc, fullfile(satflight.repoRoot, "scenarios", "user", "mine.json"));

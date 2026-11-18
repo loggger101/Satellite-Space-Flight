@@ -1,8 +1,8 @@
 """Export a simulation as a MATLAB live script that runs it again in MATLAB.
 
     python -m satflight.matlab_export scenarios/hohmann_to_geo.json --out hohmann.m
-    python -m satflight.matlab_export scenarios/default.json --at 3h --out iss_later.m
-    python -m satflight.matlab_export scenarios/default.json --no-compare --out iss_only.m
+    python -m satflight.matlab_export scenarios/orbit_tour.json --at 3h --out iss_later.m
+    python -m satflight.matlab_export scenarios/orbit_tour.json --no-compare --out iss_only.m
 
 The script is a plain-text Live Script (the ``.m`` Live Code format of MATLAB
 R2025a and later): it opens in the Live Editor with headings and explanations,

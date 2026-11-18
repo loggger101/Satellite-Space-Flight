@@ -12,3 +12,5 @@ scenarios/user/
 *-DESKTOP-PJS73RO.*
 .coverage
 htmlcov/
+# ESA orbit files, if SATFLIGHT_DATA ever points inside the repo: never committed
+data/poeorb/

@@ -28,6 +28,29 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
   - X, Y, Z in m and VX, VY, VZ in m/s, in the Earth-fixed ITRF frame;
   - a quality flag.
   The exact tag names are confirmed on the first file.
+- **Found in the first files (step 1):**
+  - The tag names are as expected, with no XML namespace. Each file holds
+    9,361 OSVs from 22:59:42 to 00:59:42, so samples fall on :02, :12, ...
+    past each minute. TAI-UTC is 37 s. UT1-UTC was about +0.043 s in
+    July 2025.
+  - The quality flag can also be **`DEGRADED-MANOEUVRE`**, marking a window of
+    about 61 samples (10 min) around each orbit-keeping burn, every 1-3 days.
+    These samples are kept and flagged: they locate the burns for step 3.
+    During a burn, the velocity departs from the positions' rate by up to
+    22 m/s, so the velocity check skips those windows. Elsewhere the velocity
+    agrees with the positions to within 0.15 m/s.
+  - A third flag, **`DEGRADED-GAP`**, marks stretches with no tracking data
+    that ESA bridged with its orbit model. They run from minutes to about
+    11 h, in 5 S1A files and 9 S1C files. These samples are kept and flagged
+    too, and the velocity check still applies to them.
+  - **Whole year:** all 720 files pass every check. S1A is one unbroken
+    365-day arc. S1C has **no POEORB (or RESORB) for 2026-06-09..18**, an
+    outage, so it splits into two arcs and no fit crosses the outage.
+    UT1-UTC ran from +0.011 to +0.095 s.
+  - **Seams:** the 718 day-to-day overlaps agree to a median of 2 mm, and 95%
+    are under 23 mm. Seven differ by 0.6-5.7 m with no burn, which is genuine
+    disagreement between daily solutions. The limit is 10 m, and every seam's
+    value is kept for the report.
 - **Licence:** free and open Copernicus data. Credit it as "Contains modified
   Copernicus Sentinel data [year]". Raw files are never committed.
 
@@ -101,8 +124,6 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
 
 ## 5. Open, to settle when it comes up
 
-- The exact XML tag names, and whether TAI-UTC ever changes inside a file.
-  This is checked on the first download.
 - Sentinel-1's drag and SRP reference areas. They only scale the fitted Cd
   and Cr, so the fits absorb them; nominal starting values are about 10 m^2
   for drag and 25 m^2 for SRP.

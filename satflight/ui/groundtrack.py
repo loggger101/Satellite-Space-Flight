@@ -22,6 +22,14 @@ def _spot(x, y, half: int) -> pygame.Rect:
     return pygame.Rect(int(x) - px(half), int(y) - px(half), 2 * px(half), 2 * px(half))
 
 
+def _beside(box: pygame.Rect, x: int, mr: pygame.Rect) -> pygame.Rect:
+    """``box``, a label placed right of the map point at ``x``, moved to its left
+    instead when it would run off the map's right edge."""
+    if box.right > mr.right:
+        box.right = x - (box.x - x)
+    return box
+
+
 def _latlon(lat, lon) -> str:
     """Latitude and longitude (rad) as e.g. ``28.5° N, 80.6° W``."""
     la, lo = math.degrees(float(lat)), math.degrees(float(lon))
@@ -40,6 +48,7 @@ class GroundTrackView:
         self._night_key = None
         self._night = None
         self.rect = pygame.Rect(0, 0, 0, 0)
+        self.area = pygame.Rect(0, 0, 0, 0)     # the map picture inside the panel
 
     def background(self, size):
         """Texture (or a latitude gradient), graticule and coastlines at ``size``."""
@@ -126,7 +135,7 @@ class GroundTrackView:
         mh = rect.h - px(26)
         mw = min(rect.w - px(16), 2 * mh)
         mh = mw // 2
-        mr = pygame.Rect(rect.centerx - mw // 2, rect.y + px(22), mw, mh)
+        mr = self.area = pygame.Rect(rect.centerx - mw // 2, rect.y + px(22), mw, mh)
         labels = mw > px(500)           # room for station and pad names
         tips.add(rect, "Ground-track map: the whole Earth flattened, north up. Lines are the "
                        "paths traced beneath the satellites, dots where they are now; the "
@@ -140,8 +149,8 @@ class GroundTrackView:
         clip = surf.get_clip()
         surf.set_clip(mr)
         self._draw_sun(surf, mr, lat_s, lon_s)
-        self._draw_stations(surf, app, mr, labels)
-        self._draw_pads(surf, app, mr, labels)
+        named = self._draw_stations(surf, app, mr, labels)
+        self._draw_pads(surf, app, mr, labels, named)
         self._draw_tracks(surf, app, mr)
         self._draw_subpoints(surf, app, mr, theta)
         surf.set_clip(clip)
@@ -154,9 +163,10 @@ class GroundTrackView:
         tips.add(_spot(sx, sy, 8), "Sub-solar point: the Sun is straight overhead here "
                                    "(local noon).", clip=mr)
 
-    def _draw_stations(self, surf, app, mr, labels: bool):
-        """Ground stations, named when ``labels``."""
+    def _draw_stations(self, surf, app, mr, labels: bool) -> list[pygame.Rect]:
+        """Ground stations, named when ``labels``; returns where the names went."""
         fonts = app.fonts
+        named = []
         for st in app.sim.stations:
             x, y = self.xy(st.lat, st.lon, mr)
             pygame.draw.rect(surf, (120, 255, 160), (int(x) - px(3), int(y) - px(3), px(7), px(7)),
@@ -165,14 +175,18 @@ class GroundTrackView:
                                      f"it talks to satellites more than {st.min_el:g} degrees "
                                      "above its horizon.", clip=mr)
             if labels:
-                fonts.draw(surf, st.name, (int(x) + px(6), int(y) - px(6)), (120, 220, 150),
-                           fonts.small)
+                color = (120, 220, 150)
+                box = _beside(fonts.render(st.name, color, fonts.small).get_rect(
+                    topleft=(int(x) + px(6), int(y) - px(6))), int(x), mr)
+                named.append(fonts.draw(surf, st.name, box.topleft, color, fonts.small))
+        return named
 
-    def _draw_pads(self, surf, app, mr, labels: bool):
+    def _draw_pads(self, surf, app, mr, labels: bool, named=()):
         """Launch pads with a vehicle waiting or climbing; when ``labels``, a countdown
-        under each waiting one (stacked when pads share a site)."""
+        under each waiting one (stacked when pads share a site, and below the
+        station names in ``named``)."""
         sim, fonts = app.sim, app.fonts
-        taken: list[pygame.Rect] = []
+        taken: list[pygame.Rect] = list(named)
         for a in sim.ascents:
             x, y = self.xy(a.spec.lat, a.spec.lon, mr)
             x, y = int(x), int(y)
@@ -182,11 +196,14 @@ class GroundTrackView:
                      clip=mr)
             if a.phase == "pad" and labels:
                 text = f"{a.spec.name} T-{int(a.t0 - sim.t) // 60} min"
-                box = pygame.Rect((x + px(7), y + px(6)), fonts.small.size(text))
+                color = (255, 190, 120)
+                # the drawn size (font.size() is shorter than the rendered line)
+                box = _beside(fonts.render(text, color, fonts.small).get_rect(
+                    topleft=(x + px(7), y + px(6))), x, mr)
                 while box.collidelist(taken) >= 0:
                     box.y += box.h
                 taken.append(box)
-                fonts.draw(surf, text, box.topleft, (255, 190, 120), fonts.small)
+                fonts.draw(surf, text, box.topleft, color, fonts.small)
 
     def _draw_tracks(self, surf, app, mr):
         """The recorded ground tracks: every satellite's in small ensembles, only the

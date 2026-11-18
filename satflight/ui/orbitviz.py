@@ -395,8 +395,10 @@ def build(info: OrbitInfo, r, v, color, W, cam, mode: str, view=None):
     return lines, markers, fills, legend
 
 
-def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
-    """Small card beside the selected satellite with its key numbers."""
+def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect, avoid=()):
+    """Small card beside the selected satellite with its key numbers: above
+    right of it, else at another corner of it that fits in ``bounds`` clear of
+    the ``avoid`` rects (the overlay's key), else wherever it fits."""
     fonts = app.fonts
     rows = [f"alt {num(info.altitude, 'km', 0):>10}   v {info.speed:.3f} km/s"]
     if info.closed and not info.circular:
@@ -415,13 +417,21 @@ def draw_callout(surf, app, info: OrbitInfo, sat, pos, bounds: pygame.Rect):
     w = max(fonts.small.size(r)[0] for r in rows) + px(20)
     w = max(w, fonts.bold.size(sat.name)[0] + px(30))
     h = px(30) + px(16) * len(rows)
-    x, y = int(pos[0]) + px(26), int(pos[1]) - h - px(18)
-    rect = pygame.Rect(x, y, w, h)
-    if rect.right > bounds.right:
-        rect.right = int(pos[0]) - px(26)
-    if rect.top < bounds.top:
-        rect.top = int(pos[1]) + px(18)
-    rect.clamp_ip(bounds)
+    px_, py_ = int(pos[0]), int(pos[1])
+    right, left = px_ + px(26), px_ - px(26) - w
+    above, below = py_ - h - px(18), py_ + px(18)
+    spots = [pygame.Rect(x, y, w, h) for y in (above, below) for x in (right, left)]
+    for a in avoid:                 # else pushed just clear of the key, right or below
+        spots += [pygame.Rect(a.right + px(8), y, w, h).clamp(bounds) for y in (above, below)]
+        spots += [pygame.Rect(x, a.bottom + px(8), w, h).clamp(bounds) for x in (right, left)]
+    rect = next((r for r in spots if bounds.contains(r) and r.collidelist(avoid) < 0), None)
+    if rect is None:
+        rect = spots[0]
+        if rect.right > bounds.right:
+            rect.right = px_ - px(26)
+        if rect.top < bounds.top:
+            rect.top = below
+        rect.clamp_ip(bounds)
     corner = (rect.left if rect.centerx > pos[0] else rect.right,
               rect.bottom if rect.centery < pos[1] else rect.top)
     pygame.draw.aaline(surf, theme.dim(sat.color, 0.9), pos, corner)

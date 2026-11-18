@@ -321,7 +321,9 @@ class SceneRenderer:
         sx, sy, vis = self.sat_screen
         bounds = app.view_rect()
         if vis[sel] and np.isfinite(sx[sel]) and bounds.collidepoint(sx[sel], sy[sel]):
-            orbitviz.draw_callout(surf, app, info, app.sim.sats[sel], (sx[sel], sy[sel]), bounds)
+            key = [self.legend_rect] if self.legend_rect is not None else []
+            orbitviz.draw_callout(surf, app, info, app.sim.sats[sel], (sx[sel], sy[sel]), bounds,
+                                  key)
 
     def _orbit_indices(self, app):
         """Satellites whose osculating orbit is drawn, per the ``orbits`` option."""
@@ -494,9 +496,9 @@ class SceneRenderer:
                          if bounds.contains(r) and r.inflate(px(4), 0).collidelist(placed) < 0),
                         None)
             if rect is None:
-                if not selected:
-                    continue
-                rect = pygame.Rect(spots[0], (w, h))    # the selected name always shows
+                if not selected or not bounds.collidepoint(x, y):
+                    continue                # (a satellite under the map or plot: no name)
+                rect = pygame.Rect(spots[0], (w, h)).clamp(bounds)  # the selected name shows
             placed.append(rect)
             if tie is not None:
                 # a leader from the labeled point to the label's nearest edge

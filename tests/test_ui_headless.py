@@ -1150,6 +1150,80 @@ def test_scene_labels_never_overlap(scaled_app):
             assert r.collidelist(rects[k + 1:]) < 0, (name, r)
 
 
+def test_scene_text_keeps_clear_of_the_map_and_plot(scaled_app):
+    """With the map and the plot open, the scene's key, labels and the selected
+    satellite's callout sit in the part of the view still showing, not under
+    the see-through overlays (where their text ran into the plot's); and the
+    callout card keeps clear of the key (which was drawn over it)."""
+    from satflight.ui import orbitviz
+    app = scaled_app
+    cards = []
+    real = orbitviz.draw_callout
+
+    def callout(*a, **k):
+        cards.append(real(*a, **k))
+        return cards[-1]
+
+    orbitviz.draw_callout = callout
+    try:
+        for name, sel, overlays in (("default", 1, True), ("polar_star", 2, True),
+                                    ("molniya_tundra", 0, True), ("polar_star", 0, False),
+                                    ("starlink_shell", 1, False)):
+            app.load_scenario(app.scenario_dir / f"{name}.json")
+            app.sim.advance(900)
+            app.select(sel)
+            app.opts.map = app.opts.plot = overlays
+            frame(app, 2, dt=0.0)
+            covered = [app._plot_rect(), app._map_rect()] if overlays else []
+            assert app.renderer.label_rects, name
+            for r in app.renderer.label_rects + cards:
+                assert r.collidelist(covered) < 0, (name, r, covered)
+            key = app.renderer.legend_rect
+            if not overlays:
+                assert cards and key is not None, name       # the case being tested
+            for r in cards:
+                assert key is None or not r.colliderect(key), (name, r, key)
+            cards.clear()
+    finally:
+        orbitviz.draw_callout = real
+    app.opts.map = app.opts.plot = True
+    frame(app, dt=0.0)
+    tip, _ = rest(app, app._plot_rect().center)        # the plot's tip, not the scene's
+    assert tip is None or "Altitude" in tip[1] or "plot" in tip[1].lower(), tip
+
+
+def test_map_names_stay_on_the_map_and_apart(scaled_app):
+    """Station names and pad countdowns on the ground-track map: inside the map
+    (Canberra, far east, used to be cut to "Canberr") and not over each other
+    (a pad at a station's site counted down over the station's name)."""
+    app = scaled_app
+    real = app.fonts.draw
+    for name in ("default", "launch_day", "launches_and_arcs"):
+        app.load_scenario(app.scenario_dir / f"{name}.json")
+        app.sim.advance(60)
+        app.opts.map = True
+        frame(app, 1, dt=0.0)
+        rects = []
+
+        def spy(target, text, pos, *a, _rects=rects, **k):
+            r = real(target, text, pos, *a, **k)
+            if text != "GROUND TRACK":
+                _rects.append((text, r))
+            return r
+
+        app.fonts.draw = spy
+        try:
+            app.map.draw(app.screen, app._map_rect(), app)
+        finally:
+            del app.fonts.draw
+        m = app.map.area                                   # the map picture itself
+        assert len(rects) >= 2, name
+        for k, (text, r) in enumerate(rects):
+            assert m.contains(r), (name, text, r, m)
+            for text2, r2 in rects[k + 1:]:
+                assert not r.colliderect(r2), (name, text, text2)
+
+
 def test_long_names_are_shortened_to_fit(app):
     f = app.fonts
     assert f.fit("ISS", 200) == "ISS"

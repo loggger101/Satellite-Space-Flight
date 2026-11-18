@@ -18,11 +18,61 @@ classdef ExportTest < ExportCase
         function everyKindOfBurn(tc)
             % finite, plane change, RSW and ECI impulses, circularize and match velocity,
             % node / apsis timings, J3 + C22 + drag, under each of the three propagators
+            % and each burn's state before and after it is the simulator's
             for propagator = ["cowell", "kepler", "j2mean"]
                 file = satflight.saveScenario(tc.everyBurn(propagator), ...
                     fullfile(tc.Tmp, "burns_" + propagator + ".json"));
-                tc.check(tc.export(file, "burns_" + propagator, ...
+                [~, out] = tc.check(tc.export(file, "burns_" + propagator, ...
                     ["--duration", "3h", "--step", "60"]));
+                tc.checkBurnsAgainst(out, file, 3 * 3600);
+            end
+        end
+
+        function transferFiguresAndFiles(tc)
+            % GTO to GEO: the apogee kick is the planner's 1837.6 m/s and leaves a
+            % geostationary orbit, the parking-orbit route takes two burns; each object
+            % gets its transfer figure. With figureFolder set every figure is saved as
+            % PNG and PDF, and both animations as MP4 videos of every frame.
+            file = fullfile(tc.Root, "scenarios", "gto_to_geo.json");
+            script = tc.export(file, "gto", ["--duration", "8h", "--step", "300"]);
+            text = readlines(script);
+            k = find(startsWith(text, "figureFolder = """";"));
+            tc.assertNumElements(k, 1);
+            folder = fullfile(tc.Tmp, "figures");
+            text(k) = "figureFolder = """ + folder + """;";
+            here = fullfile(tc.Tmp, "gto_saved.m");
+            writelines(text, here);
+            [~, out] = tc.check(here);
+            tc.checkBurnsAgainst(out, file, 8 * 3600);
+            X = out.transfers;
+            kick = X(X.name == "Apogee kick", :);
+            tc.assertEqual(height(kick), 1);
+            tc.verifyEqual(kick.dv_ms, 1837.6, AbsTol=0.1);
+            tc.verifyEqual([kick.perigee1_km, kick.apogee1_km], [35786 35786], AbsTol=20);
+            tc.verifyLessThan(kick.i1_deg, 0.1);
+            tc.verifyEqual(kick.period1_min, 1436.07, AbsTol=1);
+            tc.verifyEqual(nnz(X.name == "From parking"), 2);
+            tc.verifyNumElements(findobj(groot, "Type", "figure", "-regexp", "Name", ...
+                "^Transfer: "), 2);
+            % the files: a PNG and a PDF per figure, and the two videos
+            figs = findall(groot, "Type", "figure", "Tag", "satflight");
+            tc.verifyNumElements(out.savedFiles, 2 * numel(figs));
+            for f = reshape(out.savedFiles, 1, [])
+                info = dir(f);
+                tc.assertNotEmpty(info, f);
+                tc.verifyGreaterThan(info.bytes, 1000, f);
+            end
+            pngs = out.savedFiles(endsWith(out.savedFiles, ".png"));
+            tc.verifyNumElements(pngs, numel(figs));
+            tc.verifyGreaterThanOrEqual(imfinfo(pngs(1)).Width, 1500, "300 dpi");
+            % the map animation a frame a sample, the 3-D one its 240 frames (fewer only
+            % where two fall on the same instant)
+            frames = [numel(unique(out.T.t_s)), 200];
+            names = ["animation_map.mp4", "animation_3d.mp4"];
+            for k = 1:2
+                video = VideoReader(fullfile(folder, names(k)));
+                tc.verifyGreaterThanOrEqual(video.NumFrames, frames(k), names(k));
+                tc.verifyEqual(mod([video.Width, video.Height], 2), [0 0], names(k));
             end
         end
 
@@ -128,9 +178,10 @@ classdef ExportTest < ExportCase
             [~, out] = tc.check(here);
             saved = load(mat);
             tc.verifyEqual(sort(string(fieldnames(saved)))', sort(["sim", "T", "events", ...
-                "keyEvents", "atEnd", "passes", "coverage", "eclipses", "betaAngles", ...
-                "approaches", "drift"]));
-            for name = ["T", "events", "passes", "coverage", "eclipses", "betaAngles", "drift"]
+                "keyEvents", "atEnd", "burns", "objects", "passes", "coverage", "eclipses", ...
+                "betaAngles", "approaches", "drift", "diagnostics", "conservation"]));
+            for name = ["T", "events", "passes", "coverage", "eclipses", "betaAngles", "drift", ...
+                    "burns", "objects", "diagnostics", "conservation"]
                 tc.verifyEqual(saved.(name), out.(name), name);
             end
             long = out.passes(out.passes.minutes >= 10, :);

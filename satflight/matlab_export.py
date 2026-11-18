@@ -351,7 +351,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += ["planLaunches = false;   % true: plan the launches on their pads here (window, "
                 "pitch kick), e.g. after editing one"]
     out += ["animate = true;   % play the run back (Animation section)",
-            'animationFile = "";   % e.g. "run.gif": also save the animation as an animated GIF',
+            'animationFile = "";   % e.g. "run.gif" or "run.mp4": also save the map animation',
+            'animation3DFile = "";   % e.g. "orbits.mp4": also save the 3-D animation',
+            'figureFolder = "";   % e.g. "figures": save every figure there (PNG 300 dpi and '
+            "PDF) and both animations (MP4)",
             'resultsFile = "";   % e.g. "run.mat": save the tables to a MAT-file (Save section)']
     out += ["%%"]
 
@@ -452,11 +455,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                  "simulator's ephemeris CSV (`satflight.readRun` reads the same), and `events` "
                  "the event log, line for line as the simulator writes it"
                  + ("; `launches` per launch its outcome, insertion orbit, delta-v budget and "
-                    "ascent profile." if launches else ".")
+                    "ascent profile" if launches else "")
+                 + "; `burns` each burn with the exact state just before and after it (`T` "
+                   "has the run only at its samples), and `objects` each object's drag area, "
+                   "drag coefficient and mass."
                  + "\nShown: the key events, where each object is at the end of the run"
                  + (", and the launches." if launches else "."))
     plan = ", PlanLaunches=planLaunches" if launches else ""
-    out += [f"[T, events, launches] = satflightRun(sim, duration, step{plan});",
+    out += [f"[T, events, launches, burns, objects] = satflightRun(sim, duration, step{plan});",
             'keyEvents = events(ismember(events.kind, ["launch", "maneuver", "alert", "warn"]), '
             ':);',
             "display(keyEvents)",
@@ -519,6 +525,23 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                     "display(deltaV)"]
         if pairs:
             out += ["approaches = satflightApproaches(events);", "display(approaches)"]
+    if burns:
+        out += ["%%"]
+        out += _text(
+            "## Orbit transfers\nEach burn and what it did to the orbit (`transfers`): its "
+            "delta-v in total and along the velocity (V), the orbit normal (N) and the "
+            "binormal (B), the perigee, apogee, inclination and period just before and just "
+            "after it, and the propellant it used. Then, for each object that burns, the "
+            "transfer in 3-D (the orbit before it dashed, the path between the burns, the "
+            "orbit after it, each burn numbered with its delta-v and an arrow along it) and "
+            "seen edge-on, where a change of plane shows as the angle between the orbits; the "
+            "delta-v budget (each burn by direction, added up, and the mass the rocket "
+            "equation leaves); and the orbit through the part of the run that holds the burns, "
+            "each impulse a clean step.")
+        out += ["transfers = satflightTransfers(burns);", "display(transfers)",
+                "satflightPlotTransfer(T, burns, shown);",
+                "satflightPlotDeltaV(burns, max(T.t_s));",
+                "satflightPlotBurnWindow(T, burns, shown);"]
     out += ["%%"]
     out += _text("## Orbit evolution\nHow each orbit changes after the object's last burn, "
                  "fitted over the samples while it is in orbit (`drift`): the mean semi-major "
@@ -527,26 +550,66 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                  "orbit. J3, J4, C22 and drag, where they are on, account for the difference.")
     out += ["drift = satflightDrift(T, events, sim.forces);", "display(drift)"]
     out += ["%%"]
-    out += _text("## Animation\nPlays the run back: the ground track, with the night side "
-                 "shaded, and the orbits about the turning Earth, each over its last orbit, "
-                 "each object where it is then (o in orbit, x come down or gone) and the "
-                 "latest lines of the event log. In the Live Editor it becomes an animation "
-                 "with playback controls (play, pause, step through the frames); in a "
-                 "figure window it plays in 20 s. Settings: `animate` to skip it, "
-                 "`animationFile` to save it as a GIF (every frame drawn and written, so it "
-                 "takes a while).")
+    out += _text(
+        "## Physics diagnostics\nThe physics of the run while each object is in orbit "
+        "(`diagnostics`, one row per object per sample): specific orbital energy, angular "
+        "momentum, speed, distance and period, and the size of the acceleration from each "
+        "force the run applies. A check of the integrator (`conservation`, one row per coast "
+        "between burns): over a coast, gravity keeps the energy (with the potential of the "
+        "gravity terms) constant, and with the C22 field, which turns with the Earth, the "
+        "Jacobi constant; `drift_rel` is how far it moved, relative to its size, which "
+        "should stay near the integrator's tolerance. With drag on, energy falls instead. "
+        "The forces panel shows how much each term matters for this orbit.")
+    out += ["[diagnostics, conservation] = satflightDiagnostics(T, sim, burns, objects);",
+            "display(conservation)",
+            "satflightPlotDiagnostics(diagnostics, burns, shown);"]
+    out += ["%%"]
+    out += _text("## Animation\nPlays the run back twice. First the ground track, with the "
+                 "night side shaded, and the orbits about the turning Earth, each over its "
+                 "last orbit, each object where it is then (o in orbit, x come down or gone) "
+                 "and the latest lines of the event log. Then the orbits in 3-D, larger: "
+                 "trails that fade with age, each object's current orbit dotted, a flash and "
+                 "an arrow where a burn fires, and the camera turning; time slows down about "
+                 "the burns and launches and speeds up over the coasts (the title gives the "
+                 "speed). In the Live Editor each becomes an animation with playback controls "
+                 "(play, pause, step through the frames); in a figure window each plays in "
+                 "20 s. Settings: `animate` to skip them; `animationFile` and "
+                 "`animation3DFile` to save them as a GIF or an MP4 video, and `figureFolder` "
+                 "to save both there as MP4 (every frame drawn and written, so it takes a "
+                 "while).")
     out += ["if animate",
-            "    satflightAnimate(T, events, sim.stations, shown, File=animationFile);",
+            "    mapFile = animationFile;",
+            "    globeFile = animation3DFile;",
+            '    if figureFolder ~= ""',
+            "        if ~isfolder(figureFolder)",
+            "            mkdir(figureFolder);",
+            "        end",
+            '        if mapFile == ""',
+            '            mapFile = fullfile(figureFolder, "animation_map.mp4");',
+            "        end",
+            '        if globeFile == ""',
+            '            globeFile = fullfile(figureFolder, "animation_3d.mp4");',
+            "        end",
+            "    end",
+            "    satflightAnimate(T, events, sim.stations, shown, File=mapFile);",
+            "    satflightAnimate3D(T, events, burns, shown, File=globeFile);",
             "end"]
-    saved = (["sim", "T", "events", "keyEvents", "atEnd"]
+    saved = (["sim", "T", "events", "keyEvents", "atEnd", "burns", "objects"]
              + ["launches", "launchTable"] * bool(launches)
              + ["passes", "coverage"] * bool(stations) + ["eclipses", "betaAngles"]
-             + ["maneuvers", "deltaV"] * burns + ["approaches"] * pairs + ["drift"])
+             + ["maneuvers", "deltaV"] * burns + ["approaches"] * pairs
+             + ["transfers"] * burns + ["drift", "diagnostics", "conservation"])
     out += ["%%"]
-    out += _text("## Save\nWith `resultsFile` set in Settings, saves the run and its tables "
-                 "to that MAT-file (`load` brings them back): "
+    out += _text("## Save\nWith `figureFolder` set in Settings, saves every figure there as a "
+                 "PNG at 300 dpi and a PDF (vector graphics, but for the 3-D Earth) named "
+                 "after it (`savedFiles` lists them). With `resultsFile` set, saves the run "
+                 "and its tables to that MAT-file (`load` brings them back): "
                  + ", ".join(f"`{v}`" for v in saved) + ".")
-    out += ['if resultsFile ~= ""',
+    out += ['if figureFolder ~= ""',
+            "    savedFiles = satflightSaveFigures(figureFolder);",
+            "    display(savedFiles)",
+            "end",
+            'if resultsFile ~= ""',
             "    save(resultsFile, ..."]
     names = [_str(v) for v in saved]
     out += ["        " + ", ".join(names[j:j + 7]) + (", ..." if j + 7 < len(names) else ");")
@@ -570,6 +633,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                 "    eventDifferences = satflightCompareEvents(events, E);",
                 "    eventsThatDiffer = eventDifferences(~eventDifferences.same_text, :);",
                 "    display(eventsThatDiffer)",
+                '    if figureFolder ~= ""   % its figure too, beside the others',
+                "        savedFiles = [savedFiles; satflightSaveFigures(figureFolder, ...",
+                '            findall(groot, Type="figure", Name="MATLAB vs simulator"))];',
+                "    end",
                 "end"]
     out += [""]
 
@@ -589,7 +656,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         [] if launches else ["satflightPlan", "satflightPlotAscent", "mergeMarks"]) + (
         [] if stations else ["satflightPasses", "elevationDeg", "satflightPlotSky",
                              "satflightCoverage"]) + (
-        [] if pairs else ["satflightApproaches"])
+        [] if pairs else ["satflightApproaches"]) + (
+        [] if burns else ["satflightTransfers", "satflightPlotTransfer", "satflightPlotDeltaV",
+                          "satflightPlotBurnWindow", "burnMarks", "onlyFirst", "plural",
+                          "orbitText", "orbitSummary", "julianUtc"])
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]

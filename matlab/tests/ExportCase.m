@@ -156,6 +156,119 @@ classdef (Abstract) ExportCase < matlab.unittest.TestCase
             end
             tc.verifyNotEmpty(findobj(groot, "Type", "figure", "Name", "Animation"), ...
                 script + ": no animation");
+            tc.checkBurns(script, out);
+            tc.checkDiagnostics(script, out);
+            tc.checkTheme(script);
+        end
+
+        function checkBurns(tc, script, out)
+            % the burns table: a row for each burn the log reports done, with the
+            % delta-v the log gives; an impulse leaves the position as it was; each
+            % state just before a burn is where the run's last sample before it leads
+            % (carried on along its two-body orbit, within a kilometre)
+            B = out.burns;
+            done = B(isfinite(B.t1_s), :);
+            parts = hypot(hypot(done.dvV_ms, done.dvN_ms), done.dvB_ms);
+            tc.verifyEqual(parts, done.dv_ms, script + ": V N B", AbsTol=1e-6, RelTol=1e-9);
+            if isfield(out, "maneuvers")
+                M = sortrows(out.maneuvers, ["name", "utc"]);
+                ended = sortrows(table(done.name, out.sim.epoch + seconds(done.t1_s), ...
+                    done.dv_ms, VariableNames=["name", "utc", "dv_ms"]), ["name", "utc"]);
+                tc.verifyEqual(ended.name, M.name, script + ": burns");
+                tc.verifyEqual(ended.dv_ms, M.dv_ms, script + ": burn delta-v", AbsTol=0.1);
+            else
+                tc.verifyEmpty(done, script + ": burns without a maneuvers section");
+            end
+            at = done.t1_s == done.t0_s;
+            tc.verifyEqual(done.y1(at, 1:3), done.y0(at, 1:3), script + ": impulse moved it");
+            C = struct("MU", 398600.4418);
+            for k = 1:height(done)
+                rows = out.T(out.T.name == done.name(k) & out.T.t_s < done.t0_s(k) - 1e-9 ...
+                    & out.T.status == "active", :);
+                if isempty(rows)
+                    continue
+                end
+                y = [rows.x_km(end), rows.y_km(end), rows.z_km(end), rows.vx_kms(end), ...
+                    rows.vy_kms(end), rows.vz_kms(end)];
+                if dot(y(4:6), y(4:6)) / 2 - C.MU / norm(y(1:3)) >= 0
+                    continue              % not on a closed orbit: no Kepler ellipse to follow
+                end
+                dt = done.t0_s(k) - rows.t_s(end);
+                r = twoBody(y, dt, C.MU);
+                tc.verifyLessThan(norm(r - done.y0(k, 1:3)), 1, sprintf( ...
+                    "%s: burn %d of %s is %.3f km from where its last sample leads", script, ...
+                    k, done.name(k), norm(r - done.y0(k, 1:3))));
+            end
+            if isfield(out, "transfers")
+                X = out.transfers;
+                tc.verifyEqual(height(X), height(B), script + ": transfers");
+                tc.verifyEqual(X.dv_ms, B.dv_ms, script);
+                fine = isfinite(X.perigee1_km) & isfinite(X.apogee1_km);
+                tc.verifyTrue(all(X.perigee1_km(fine) <= X.apogee1_km(fine) + 1e-6), script);
+                % the budget for any burn; the burn window when a plotted object burned
+                has = @(name) ~isempty(findobj(groot, "Type", "figure", "Name", name));
+                tc.verifyEqual(has("Delta-v budget"), ~isempty(done), script + ": budget");
+                tc.verifyEqual(has("Burn window"), any(ismember(done.name, out.shown)), ...
+                    script + ": burn window");
+            end
+        end
+
+        function checkBurnsAgainst(tc, out, scenario, duration)
+            % the states just before and after each burn applied at once, against the
+            % simulator's own (matlab/tests/burn_states.py): to the cross-check's
+            % tolerance in position, and in velocity to a centimetre a second
+            file = fullfile(tc.Tmp, "burn_states.csv");
+            runPython([fullfile(tc.Root, "matlab", "tests", "burn_states.py"), scenario, ...
+                string(duration), file]);
+            R = readtable(file, TextType="string");
+            B = out.burns(out.burns.t1_s == out.burns.t0_s, :);
+            tc.verifyEqual(height(B), height(R), scenario + ": burns applied at once");
+            for k = 1:min(height(B), height(R))
+                tc.verifyEqual(B.name(k), R.name(k), scenario);
+                tc.verifyEqual(B.t0_s(k), R.t_s(k), scenario + ": burn time", AbsTol=1e-6);
+                ref = [R{k, ["x0", "y0", "z0"]}; R{k, ["x1", "y1", "z1"]}];
+                got = [B.y0(k, 1:3); B.y1(k, 1:3)];
+                tc.verifyLessThan(max(vecnorm(got - ref, 2, 2)), tc.Tolerance, ...
+                    sprintf("%s: burn %d position", scenario, k));
+                ref = [R{k, ["vx0", "vy0", "vz0"]}; R{k, ["vx1", "vy1", "vz1"]}];
+                got = [B.y0(k, 4:6); B.y1(k, 4:6)];
+                tc.verifyLessThan(max(vecnorm(got - ref, 2, 2)), 1e-5, ...
+                    sprintf("%s: burn %d velocity", scenario, k));
+            end
+        end
+
+        function checkDiagnostics(tc, script, out)
+            % over each coast of an object in orbit, what physics keeps constant there
+            % (energy with the gravity terms' potential, or the Jacobi constant with
+            % C22) held to the integrator's tolerance; with drag, energy never rises
+            % by more than that
+            K = out.conservation;
+            tc.verifyTrue(all(K.drift_rel >= 0), script);
+            kept = K(K.expected == "constant", :);
+            bad = kept(kept.drift_rel > 1e-6, :);
+            tc.verifyEmpty(bad, script + ": not conserved: " + formattedDisplayText(bad));
+            D = out.diagnostics;
+            tc.verifyTrue(all(ismember(D.name, unique(out.T.name))), script);
+            tc.verifyTrue(all(D.acc_central_ms2 > 0), script);
+            tc.verifyNotEmpty(findobj(groot, "Type", "figure", "Name", "Animation 3-D"), ...
+                script + ": no 3-D animation");
+        end
+
+        function checkTheme(tc, script)
+            % every figure, light and dark: each text against what it sits on (the
+            % figure, its axes, a night side drawn there) at 4.5:1 or more, legend
+            % text against its box, and a map's night side darker than its day side
+            figs = findall(groot, "Type", "figure", "Tag", "satflight");
+            tc.verifyNotEmpty(figs, script + ": no figure marked for the theme");
+            for f = reshape(figs, 1, [])
+                for style = ["light", "dark"]
+                    theme(f, style);
+                    where = sprintf("%s: %s, %s", script, f.Name, style);
+                    for problem = themeProblems(f)
+                        tc.verifyFail(where + ": " + problem);
+                    end
+                end
+            end
         end
 
         function [D, out] = check(tc, script)
@@ -246,6 +359,84 @@ for a = reshape(find(into | outof), 1, [])
 end
 end
 
+function problems = themeProblems(fig)
+% what in figure fig is hard to read in its theme now (see checkTheme)
+problems = strings(1, 0);
+texts = [findall(fig, Type="text"); findall(fig, Type="textboxshape")];
+for t = reshape(texts, 1, [])
+    if t.Visible == "off" || all(strip(string(t.String)) == "") || ~isnumeric(t.Color)
+        continue
+    end
+    back = fig.Color;
+    ax = ancestor(t, ["axes", "polaraxes"]);
+    if ~isempty(ax)
+        if isnumeric(ax.Color) && ax.Visible == "on"
+            back = [back; ax.Color]; %#ok<AGROW>
+        end
+        for night = reshape(findall(ax, Tag="satflight:night"), 1, [])
+            back = [back; night.FaceColor]; %#ok<AGROW>
+        end
+    end
+    ratio = min(arrayfun(@(k) contrast(t.Color, back(k, :)), 1:size(back, 1)));
+    if ratio < 4.5
+        problems(end + 1) = sprintf("text ""%s"" at contrast %.2f:1", ...
+            strjoin(string(t.String), " "), ratio); %#ok<AGROW>
+    end
+end
+for lg = reshape(findall(fig, Type="legend"), 1, [])
+    if isnumeric(lg.Color) && contrast(lg.TextColor, lg.Color) < 4.5
+        problems(end + 1) = sprintf("legend text at contrast %.2f:1", ...
+            contrast(lg.TextColor, lg.Color)); %#ok<AGROW>
+    end
+end
+for night = reshape(findall(fig, Tag="satflight:night"), 1, [])
+    ax = ancestor(night, "axes");
+    if luminance(night.FaceColor) >= luminance(ax.Color)
+        problems(end + 1) = "the night side is not darker than the day side"; %#ok<AGROW>
+    end
+end
+end
+
+function r = contrast(a, b)
+% WCAG contrast ratio of two RGB colours
+la = luminance(a);
+lb = luminance(b);
+r = (max(la, lb) + 0.05) / (min(la, lb) + 0.05);
+end
+
+function l = luminance(c)
+c = double(c);
+lin = c / 12.92;
+hi = c > 0.04045;
+lin(hi) = ((c(hi) + 0.055) / 1.055) .^ 2.4;
+l = [0.2126 0.7152 0.0722] * lin(:);
+end
+
+function r = twoBody(y, dt, mu)
+% the position (km) dt seconds on along the two-body orbit through state y: the
+% orbit's mean motion carried forward (Kepler's equation, Newton's method)
+r0 = y(1:3);
+v0 = y(4:6);
+h = cross(r0, v0);
+ev = cross(v0, h) / mu - r0 / norm(r0);
+e = norm(ev);
+a = 1 / (2 / norm(r0) - dot(v0, v0) / mu);
+if e < 1e-9
+    ev = r0 / norm(r0) * 1e-9;
+    e = 1e-9;
+end
+P = ev / e;
+Q = cross(h / norm(h), P);
+nu0 = atan2(dot(r0, Q), dot(r0, P));
+E0 = 2 * atan(sqrt((1 - e) / (1 + e)) * tan(nu0 / 2));
+M = E0 - e * sin(E0) + sqrt(mu / a ^ 3) * dt;
+E = M;
+for k = 1:50
+    E = E - (E - e * sin(E) - M) / (1 - e * cos(E));
+end
+r = a * (cos(E) - e) * P + a * sqrt(1 - e ^ 2) * sin(E) * Q;
+end
+
 function out = runScript(file)
 % runs the exported script here; its variables land in this workspace
 run(file);
@@ -253,7 +444,9 @@ run(file);
 % A MATLAB-only script has no P, differences or eventDifferences.
 out = struct();
 for name = ["T", "P", "differences", "events", "eventDifferences", "launches", "sim", ...
-        "passes", "eclipses", "maneuvers", "deltaV", "approaches", "drift", "shown", "coverage", "betaAngles"]
+        "passes", "eclipses", "maneuvers", "deltaV", "approaches", "drift", "shown", ...
+        "coverage", "betaAngles", "burns", "objects", "transfers", "diagnostics", ...
+        "conservation", "savedFiles"]
     if exist(name, "var") == 1
         out.(name) = eval(name);
     end

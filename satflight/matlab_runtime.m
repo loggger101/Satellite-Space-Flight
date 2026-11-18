@@ -7,7 +7,7 @@
 % same physics, the same rocket ascents and logs the same events without Python.
 % ==========================================================================================
 
-function [T, events, launches] = satflightRun(sim, duration, step, opts)
+function [T, events, launches, burns, objects] = satflightRun(sim, duration, step, opts)
 %SATFLIGHTRUN Run the exported simulation as the simulator does.
 %   [T, events, launches] = satflightRun(sim, duration, step) returns one table row
 %   per object per sample - the columns of the simulator's ephemeris CSV, with a
@@ -15,6 +15,12 @@ function [T, events, launches] = satflightRun(sim, duration, step, opts)
 %   event log (the simulator's lines: launches, burns, eclipses, station passes,
 %   close approaches, re-entries) and one entry per launch: outcome, insertion
 %   orbit, delta-v budget and ascent profile.
+%   [T, events, launches, burns, objects] = satflightRun(...) also returns the burns
+%   (one row per burn: object, label, kind, start and end time, delta-v in total and
+%   along the velocity, orbit normal and binormal (VNB) at ignition, mass, and the
+%   exact state just before and just after it, which T samples only at its step) and
+%   the objects (one row each: family, drag area and coefficient, mass at the end and
+%   dry mass), for the transfer and diagnostic sections.
 %   satflightRun(..., PlanLaunches=true) plans the launches still on their pads here
 %   (launch window and pitch kick, as the simulator does when a scenario loads)
 %   instead of flying the simulator's plan: needed after editing a launch.
@@ -55,6 +61,9 @@ s = stationSetup(s, sim.stations);
 s.man = sim.maneuvers;
 s.pending = true(1, numel(s.man));
 s.burns = struct("sat", {}, "man", {}, "t0", {}, "t1", {}, "m0", {}, "mdot", {});
+s.burnLog = struct("sat", zeros(0, 1), "label", strings(0, 1), "kind", strings(0, 1), ...
+    "t0", zeros(0, 1), "t1", zeros(0, 1), "y0", zeros(0, 6), "y1", zeros(0, 6), ...
+    "m0", zeros(0, 1), "m1", zeros(0, 1), "dv", zeros(0, 3));
 s.ascents = {};
 s.reports = {};
 s.evT = zeros(0, 1);
@@ -141,6 +150,9 @@ else
     [~, order] = sort(arrayfun(@(R) find(s.names == R.name, 1), launches));
     launches = launches(order);
 end
+burns = burnTable(s);
+objects = table(s.names, s.family, s.area, s.cd, s.mass, s.dry, VariableNames=["name", ...
+    "family", "area_m2", "cd", "mass_end_kg", "dry_kg"]);
 end
 
 function idx = freeIdx(s)
@@ -368,9 +380,11 @@ for j = find(s.pending)
         dv = dv * (room / dvm);
         dvm = room;
     end
+    m0 = s.mass(i);
     s.Y(i, 4:6) = v + dv;
     s.dvUsed(i) = s.dvUsed(i) + dvm;
     s.mass(i) = max(s.mass(i) * exp(-dvm / (m.isp * C.G0)), s.dry(i));
+    s = logBurn(s, i, m, s.t, [r, v], m0, dv);
     s = logEvent(s, s.t, sprintf("%s: executed %s - dV %.2f m/s", m.sat, m.label, dvm * 1000), ...
         "maneuver");
 end
@@ -415,15 +429,20 @@ if s.sim.propagator ~= "cowell"
         dvm = m.isp * C.G0 * log(s.mass(i) / mf);
     end
     d = finiteDirection(m, s.Y(i, 1:3), s.Y(i, 4:6));
+    before = s.Y(i, :);
+    m0 = s.mass(i);
     s.Y(i, 4:6) = s.Y(i, 4:6) + dvm * d;
     s.dvUsed(i) = s.dvUsed(i) + dvm;
     s.mass(i) = mf;
+    s = logBurn(s, i, m, s.t, before, m0, dvm * d);
     s = logEvent(s, s.t, sprintf("%s: finite burn applied impulsively (%.1f m/s) - switch " + ...
         "to Cowell to integrate thrust", m.sat, dvm * 1000), "maneuver");
     return
 end
 s.burns(end + 1) = struct("sat", i, "man", j, "t0", s.t, "t1", s.t + duration, ...
     "m0", s.mass(i), "mdot", mdot);
+% opened here, closed at burnout with the state then (finishBurns)
+s = logBurn(s, i, m, s.t, s.Y(i, :), s.mass(i), NaN(1, 3));
 s = logEvent(s, s.t, sprintf("%s: ignition - %.0f N for %.0f s", m.sat, m.thrust, duration), ...
     "maneuver");
 end
@@ -445,10 +464,56 @@ for k = 1:numel(s.burns)
     end
     s.mass(b.sat) = mf;
     s.dvUsed(b.sat) = s.dvUsed(b.sat) + dvm;
+    open = find(s.burnLog.sat == b.sat & s.burnLog.t0 == b.t0 & isnan(s.burnLog.t1), 1);
+    y0 = s.burnLog.y0(open, :);
+    % the delta-v the thrust gave, along the direction it pointed at ignition
+    s.burnLog.dv(open, :) = dvm * finiteDirection(m, y0(1:3), y0(4:6));
+    s.burnLog.t1(open) = s.t;
+    s.burnLog.y1(open, :) = s.Y(b.sat, :);
+    s.burnLog.m1(open) = mf;
     s = logEvent(s, s.t, sprintf("%s: burnout - dV %.1f m/s, mass %.1f kg", m.sat, dvm * 1000, ...
         mf), "maneuver");
 end
 s.burns = s.burns(keep);
+end
+
+function s = logBurn(s, i, m, t, before, m0, dv)
+% a burn for the burns table: object i's state and mass just before it (km, km/s, kg)
+% and the delta-v it got (ECI, km/s). An impulse is done at once; a finite burn is
+% opened with dv NaN and closed by finishBurns at burnout.
+L = s.burnLog;
+k = numel(L.t0) + 1;
+L.sat(k, 1) = i;
+L.label(k, 1) = string(m.label);
+L.kind(k, 1) = string(m.kind);
+L.t0(k, 1) = t;
+L.y0(k, :) = before;
+L.m0(k, 1) = m0;
+L.dv(k, :) = dv;
+if all(isfinite(dv))
+    L.t1(k, 1) = t;
+    L.y1(k, :) = s.Y(i, :);
+    L.m1(k, 1) = s.mass(i);
+else
+    L.t1(k, 1) = NaN;
+    L.y1(k, :) = NaN(1, 6);
+    L.m1(k, 1) = NaN;
+end
+s.burnLog = L;
+end
+
+function B = burnTable(s)
+% the burns table satflightRun returns: one row per burn, in the order they fired
+L = s.burnLog;
+n = numel(L.t0);
+parts = NaN(n, 3);
+for k = 1:n
+    parts(k, :) = L.dv(k, :) * vnbBasis(L.y0(k, 1:3), L.y0(k, 4:6)).';
+end
+B = table(s.names(L.sat), L.label, L.kind, L.t0, L.t1, s.sim.epoch + seconds(L.t0), ...
+    1000 * vecnorm(L.dv, 2, 2), 1000 * parts(:, 1), 1000 * parts(:, 2), 1000 * parts(:, 3), ...
+    L.m0, L.m1, L.y0, L.y1, VariableNames=["name", "label", "kind", "t0_s", "t1_s", "utc", ...
+    "dv_ms", "dvV_ms", "dvN_ms", "dvB_ms", "mass0_kg", "mass1_kg", "y0", "y1"]);
 end
 
 function s = scheduleAtApsis(s, i, m)
@@ -1144,16 +1209,16 @@ if F.j4
     a = a + [k .* x .* txy, k .* y .* txy, k .* z .* tz];
 end
 if F.c22
-    c = cos(theta); s = sin(theta);
-    xe = c * x + s * y;
-    ye = -s * x + c * y;
+    c = cos(theta); s = sin(theta);    % theta: one angle, or one per row of r
+    xe = c .* x + s .* y;
+    ye = -s .* x + c .* y;
     k = 3 * C.MU * C.RE ^ 2 ./ (r2 .* r2 .* rm);
     w = C.C22 * (xe .* xe - ye .* ye) + 2 * C.S22 * xe .* ye;
     q = 5 * w ./ r2;
     gx = k .* (2 * (C.C22 * xe + C.S22 * ye) - q .* xe);
     gy = k .* (2 * (C.S22 * xe - C.C22 * ye) - q .* ye);
     gz = -k .* q .* z;
-    a = a + [c * gx - s * gy, s * gx + c * gy, gz];
+    a = a + [c .* gx - s .* gy, s .* gx + c .* gy, gz];
 end
 if F.drag
     vRel = v - [-C.OMEGA * y, C.OMEGA * x, zeros(size(x))];
@@ -2936,6 +3001,71 @@ function styleAxes(ax)
 colororder(ax, orderedcolors("gem12"));
 end
 
+function P = satflightPalette(style)
+%SATFLIGHTPALETTE The colours the plots draw with in a light or a dark theme (style
+%   "light" or "dark", as a figure's Theme.BaseColorStyle): what the theme does not
+%   colour itself. Map day and night sides, coastlines on a map and on the globe, the
+%   Earth, stations, marker rims, muted lines, timeline bars, burn marks and labels.
+if style == "dark"
+    P = struct("text", [0.88 0.88 0.88], "back", [0.07 0.07 0.07], ...
+        "day", [0.15 0.18 0.24], "night", [0.025 0.03 0.05], "coast", [0.62 0.66 0.72], ...
+        "earth", [0.17 0.29 0.47], "land", [0.68 0.78 0.9], "station", [0.95 0.95 0.95], ...
+        "rim", [0.92 0.92 0.92], "muted", [0.62 0.62 0.62], "life", [0.5 0.5 0.5], ...
+        "shadow", [0.3 0.34 0.44], "burn", [1 0.55 0.15]);
+else
+    P = struct("text", [0.13 0.13 0.13], "back", [1 1 1], ...
+        "day", [0.985 0.99 1], "night", [0.78 0.82 0.9], "coast", [0.33 0.36 0.4], ...
+        "earth", [0.6 0.74 0.92], "land", [0.16 0.26 0.4], "station", [0.1 0.1 0.1], ...
+        "rim", [0.1 0.1 0.1], "muted", [0.45 0.45 0.45], "life", [0.62 0.62 0.62], ...
+        "shadow", [0.33 0.33 0.33], "burn", [0.85 0.33 0]);
+end
+end
+
+function themed(h, role)
+% marks graphics h as drawn in palette colour role; applyTheme colours them
+set(h, Tag="satflight:" + role);
+end
+
+function themeFigure(fig)
+% colours fig's marked graphics for its theme now and again whenever the theme
+% changes (MATLAB settles a new figure's theme only after it is made: a figure that
+% says "light" when created can be drawn dark)
+fig.Tag = "satflight";
+fig.ThemeChangedFcn = @(f, ~) applyTheme(f);
+applyTheme(fig);
+end
+
+function applyTheme(fig)
+P = satflightPalette(string(fig.Theme.BaseColorStyle));
+paint = @(role, varargin) set(findall(fig, Tag="satflight:" + role), varargin{:});
+paint("day", Color=P.day);
+paint("night", FaceColor=P.night);
+paint("coast", Color=P.coast);
+paint("earth", FaceColor=P.earth);
+paint("land", Color=P.land);
+paint("station", MarkerFaceColor=P.station, MarkerEdgeColor=P.back);
+paint("rim", MarkerEdgeColor=P.rim);
+paint("muted", Color=P.muted);
+paint("life", Color=P.life);
+paint("shadow", Color=P.shadow);
+paint("burn", Color=P.burn, MarkerFaceColor=P.burn);
+paint("label", Color=P.text);
+for h = reshape(findall(fig, Tag="satflight:fade"), 1, [])
+    fadeTrail(h, P);
+end
+end
+
+function fadeTrail(h, P)
+% a trail (a patch line, its colour in UserData) fading from the background at its
+% oldest point to its full colour at the newest, without transparency (slow to draw)
+n = numel(h.XData);
+if n < 2
+    return
+end
+w = linspace(0.12, 1, n)';
+h.FaceVertexCData = w * h.UserData + (1 - w) * P.back;
+end
+
 function c = lineColor(k)
 % the k-th of styleAxes' colours, for a line and its marker drawn with the same one
 % (a marker plotted without a colour would take the next colour in the order)
@@ -2971,8 +3101,7 @@ box(ax, "on");
 [night, sun] = drawNight(ax);       % as at the end markers
 moveNight(night, sun, julianAt(T, max(T.t_s)), satflightConstants());
 coast = satflightCoastline();
-plot(ax, coast(:, 1), coast(:, 2), Color=[0.55 0.55 0.55], LineWidth=0.5, ...
-    HandleVisibility="off");
+themed(plot(ax, coast(:, 1), coast(:, 2), LineWidth=0.5, HandleVisibility="off"), "coast");
 for k = 1:numel(names)
     rows = T(T.name == names(k), :);
     lon = rows.lon_deg;
@@ -2982,20 +3111,21 @@ for k = 1:numel(names)
         lat = [lat(1:j); NaN; lat(j + 1:end)];
     end
     plot(ax, lon, lat, Color=lineColor(k), LineWidth=1.2, DisplayName=names(k));
-    plot(ax, rows.lon_deg(end), rows.lat_deg(end), "o", Color=lineColor(k), ...
-        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
+    themed(plot(ax, rows.lon_deg(end), rows.lat_deg(end), "o", Color=lineColor(k), ...
+        MarkerFaceColor=lineColor(k), MarkerSize=7, HandleVisibility="off"), "rim");
 end
 for g = reshape(stations, 1, [])
-    plot(ax, g.lon, g.lat, "^", MarkerSize=8, MarkerFaceColor="k", MarkerEdgeColor="w", ...
-        HandleVisibility="off");
-    text(ax, g.lon + 2, g.lat, g.name, FontSize=8);
+    themed(plot(ax, g.lon, g.lat, "^", MarkerSize=8, HandleVisibility="off"), "station");
+    themed(text(ax, g.lon + 2, g.lat, g.name, FontSize=8, Interpreter="none"), "label");
 end
 xlim(ax, [-180 180]); ylim(ax, [-90 90]); daspect(ax, [1 1 1]);
 xticks(ax, -180:60:180); yticks(ax, -90:30:90); grid(ax, "on");
 xlabel(ax, "Longitude (deg)"); ylabel(ax, "Latitude (deg)");
 fmt = "yyyy-MM-dd HH:mm";
 title(ax, sprintf("Ground track, %s to %s UTC", string(T.utc(1), fmt), string(T.utc(end), fmt)));
+subtitle(ax, "o where each object is at the end; the night side as then");
 legend(ax, Location="eastoutside", Interpreter="none");
+themeFigure(fig);
 end
 
 function fig = satflightPlotAltitude(T, names)
@@ -3016,6 +3146,7 @@ grid(ax, "on");
 ax.YLim(1) = 0;          % the ground; nothing is plotted below it
 xlabel(ax, "Time since epoch (h)"); ylabel(ax, "Altitude (km)"); title(ax, "Altitude");
 legend(ax, Location="eastoutside", Interpreter="none");
+themeFigure(fig);
 end
 
 function fig = satflightPlotElements(T, names)
@@ -3026,8 +3157,8 @@ end
 names = plotNames(T, names);
 C = satflightConstants();
 panels = ["a_km", "Semi-major axis (km)"; "e", "Eccentricity"; "i_deg", "Inclination (deg)"; ...
-    "raan_deg", sprintf("RAAN (deg), i \\geq %g\\circ", C.I_DEFINED); ...
-    "argp_deg", sprintf("Arg. of perigee (deg), e \\geq %g", C.E_DEFINED); ...
+    "raan_deg", sprintf("RAAN (deg)|where i \\geq %g\\circ", C.I_DEFINED); ...
+    "argp_deg", sprintf("Arg. of perigee (deg)|where e \\geq %g", C.E_DEFINED); ...
     "alt_km", "Altitude (km)"];
 fig = figure(Name="Orbital elements");
 layout = tiledlayout(fig, 2, 3, TileSpacing="compact");
@@ -3062,10 +3193,11 @@ for p = 1:size(panels, 1)
     if panels(p, 1) == "alt_km"
         ax.YLim(1) = 0;      % the ground
     end
-    xlabel(ax, "Time (h)"); ylabel(ax, panels(p, 2));
+    xlabel(ax, "Time (h)"); ylabel(ax, split(panels(p, 2), "|"));
 end
 lg = legend(ax, Interpreter="none");
 lg.Layout.Tile = "east";     % beside the panels, not over one of them
+themeFigure(fig);
 end
 
 function fig = satflightPlotOrbits(T, names)
@@ -3086,14 +3218,15 @@ for k = 1:numel(names)
     rows = T(T.name == names(k), :);
     plot3(ax, rows.x_km, rows.y_km, rows.z_km, Color=lineColor(k), LineWidth=1.2, ...
         DisplayName=names(k));
-    plot3(ax, rows.x_km(end), rows.y_km(end), rows.z_km(end), "o", Color=lineColor(k), ...
-        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
+    themed(plot3(ax, rows.x_km(end), rows.y_km(end), rows.z_km(end), "o", ...
+        Color=lineColor(k), MarkerFaceColor=lineColor(k), HandleVisibility="off"), "rim");
 end
 axis(ax, "equal"); grid(ax, "on"); view(ax, 35, 25);
 xlabel(ax, "x (km)"); ylabel(ax, "y (km)"); zlabel(ax, "z (km)");
 title(ax, "Trajectories, ECI", "the Earth turned as at " + string(T.utc(find(T.t_s == tEnd, ...
     1)), "yyyy-MM-dd HH:mm") + " UTC");
 legend(ax, Location="eastoutside", Interpreter="none");
+themeFigure(fig);
 end
 
 function fig = satflightPlotAscent(launches, names)
@@ -3126,25 +3259,26 @@ for L = reshape(launches, 1, [])
         ax = nexttile(layout);
         hold(ax, "on");
         grid(ax, "on");
-        plot(ax, L.planned.(panels(k, 1)), L.planned.(panels(k, 2)), "--", ...
-            Color=[0.6 0.6 0.6], DisplayName="plan");
+        themed(plot(ax, L.planned.(panels(k, 1)), L.planned.(panels(k, 2)), "--", ...
+            DisplayName="plan"), "muted");
         plot(ax, L.profile.(panels(k, 1)), L.profile.(panels(k, 2)), LineWidth=1.3, ...
             DisplayName="flown");
         xlabel(ax, panels(k, 3));
         ylabel(ax, panels(k, 4));
         if k == 1
-            plot(ax, L.marks.downrange_km, L.marks.alt_km, "o", MarkerFaceColor="k", ...
-                MarkerEdgeColor="w", HandleVisibility="off");
+            themed(plot(ax, L.marks.downrange_km, L.marks.alt_km, "o", ...
+                HandleVisibility="off"), "station");
             [x, y, labels] = mergeMarks(L.marks.downrange_km, L.marks.alt_km, ...
                 string(L.marks.label), L.profile.downrange_km, L.profile.alt_km);
-            text(ax, x, y, "  " + labels, FontSize=7);
+            themed(text(ax, x, y, "  " + labels, FontSize=7, Interpreter="none"), "label");
             legend(ax, Location="southeast");
         else
             for j = 1:height(L.marks)
-                xline(ax, L.marks.met_s(j), ":", Color=[0.4 0.4 0.4], HandleVisibility="off");
+                themed(xline(ax, L.marks.met_s(j), ":", HandleVisibility="off"), "muted");
             end
         end
     end
+    themeFigure(fig(end));
 end
 end
 
@@ -3175,23 +3309,24 @@ function earth = drawEarth(ax, C)
 earth = hgtransform(ax);
 [x, y, z] = sphere(48);
 % opaque: it hides what is behind it (and a see-through one is twice as slow to draw)
-surf(C.RE * x, C.RE * y, C.RE * (1 - C.F) * z, Parent=earth, FaceColor=[0.55 0.7 0.9], ...
-    EdgeColor="none", HandleVisibility="off");
+themed(surf(C.RE * x, C.RE * y, C.RE * (1 - C.F) * z, Parent=earth, FaceColor=[0.55 0.7 0.9], ...
+    EdgeColor="none", HandleVisibility="off"), "earth");
 coast = deg2rad(satflightCoastline());
 lon = coast(:, 1);
 lat = coast(:, 2);
 up = C.RE * 1.002;       % just above the surface, so that its facets do not hide them
-plot3(up * cos(lat) .* cos(lon), up * cos(lat) .* sin(lon), up * (1 - C.F) * sin(lat), ...
-    Parent=earth, Color=[0.2 0.3 0.45], LineWidth=0.6, HandleVisibility="off");
+themed(plot3(up * cos(lat) .* cos(lon), up * cos(lat) .* sin(lon), up * (1 - C.F) * sin(lat), ...
+    Parent=earth, LineWidth=0.6, HandleVisibility="off"), "land");
 end
 
 function [night, sun] = drawNight(ax)
 % the night side of a longitude-latitude map and the point where the Sun is overhead;
 % moveNight places them. Call it first: the rest of the map is drawn over the night
-% side. Its colour is the axes' background tinted blue, so it reads on a light or a
-% dark theme without transparency (which would make each animation frame slow to draw).
-tint = 0.75 * ax.Color + 0.25 * [0.35 0.45 0.8];
-night = patch(ax, NaN, NaN, tint, EdgeColor="none", DisplayName="night side");
+% side. The theme colours the day side (the axes) and the night side darker, opaque:
+% transparency would make each animation frame slow to draw.
+themed(ax, "day");
+night = patch(ax, NaN, NaN, [0.5 0.5 0.5], EdgeColor="none", DisplayName="night side");
+themed(night, "night");
 sun = plot(ax, NaN, NaN, "p", Color=[0.55 0.35 0], MarkerSize=13, ...
     MarkerFaceColor=[1 0.8 0.1], MarkerEdgeColor=[0.55 0.35 0], DisplayName="Sun overhead");
 end
@@ -3388,7 +3523,7 @@ for k = 1:numel(names)
     plot(ax, [t; NaN; t], [rows.limit_deg; NaN; -rows.limit_deg], "--", ...
         Color=lineColor(k), LineWidth=0.6, HandleVisibility="off");
 end
-yline(ax, 0, Color=[0.5 0.5 0.5], HandleVisibility="off");
+themed(yline(ax, 0, HandleVisibility="off"), "muted");
 ylim(ax, [-90 90]);
 yticks(ax, -90:30:90);
 grid(ax, "on");
@@ -3397,6 +3532,7 @@ ylabel(ax, "Beta angle (deg)");
 title(ax, "Sun angle to each orbit's plane", "dashed: beyond it a near-circular " + ...
     "orbit never enters the Earth's shadow");
 legend(ax, Location="eastoutside", Interpreter="none");
+themeFigure(fig);
 end
 
 function [el, az] = elevationDeg(rows, g, C)
@@ -3463,8 +3599,8 @@ for j = 1:numel(places)
     set(pax, ThetaZeroLocation="top", ThetaDir="clockwise", RLim=[0 90], ...
         RTick=30:30:90, RTickLabel=["60", "30", "0"], RAxisLocation=112);
     g = stations(find([stations.name] == places(j), 1));
-    polarplot(pax, around, repmat(90 - g.minEl, size(around)), "--", Color=[0.5 0.5 0.5], ...
-        HandleVisibility="off");
+    themed(polarplot(pax, around, repmat(90 - g.minEl, size(around)), "--", ...
+        HandleVisibility="off"), "muted");
     for q = reshape(find([paths{:, 1}] == places(j)), 1, [])
         color = lineColor(find(names == paths{q, 2}, 1));
         theta = deg2rad(paths{q, 3});
@@ -3480,9 +3616,10 @@ for nm = seen
     polarplot(pax, NaN, NaN, Color=lineColor(find(names == nm, 1)), LineWidth=1.2, ...
         DisplayName=nm);
 end
-polarplot(pax, NaN, NaN, "--", Color=[0.5 0.5 0.5], DisplayName="elevation mask");
+themed(polarplot(pax, NaN, NaN, "--", DisplayName="elevation mask"), "muted");
 lg = legend(pax, Interpreter="none");
 lg.Layout.Tile = "east";
+themeFigure(fig);
 end
 
 function ok = inOrbit(rows, C)
@@ -3690,8 +3827,8 @@ for k = 1:numel(names)
     t = T.t_s(T.name == names(k) & T.status == "active");
     life{k, ["t0", "t1"]} = [min([t; NaN]), max([t; NaN])];
 end
-bars(ax, life, names, 0, [0.6 0.6 0.6], 1.5, "in the run");
-bars(ax, shadow, names, 0, [0.35 0.35 0.35], 9, "Earth's shadow");
+themed(bars(ax, life, names, 0, [0.6 0.6 0.6], 1.5, "in the run"), "life");
+themed(bars(ax, shadow, names, 0, [0.35 0.35 0.35], 9, "Earth's shadow"), "shadow");
 % passes as thinner bars over the shadow, the stations side by side in each row
 offsets = zeros(size(stations));
 if numel(stations) > 1
@@ -3712,9 +3849,10 @@ set(ax, YDir="reverse", XGrid="on");     % no row lines: they would look like ti
 xlabel(ax, "Time since epoch (h)");
 title(ax, "Eclipses and station passes");
 legend(ax, Location="eastoutside", Interpreter="none");
+themeFigure(fig);
 end
 
-function bars(ax, S, names, offset, color, width, label)
+function h = bars(ax, S, names, offset, color, width, label)
 % the spans S as horizontal bars, one row per object of names; one legend entry
 % (none when there are no spans)
 row = arrayfun(@(nm) find(names == nm), S.name) + offset;
@@ -3724,7 +3862,7 @@ shown = "off";
 if height(S) > 0
     shown = "on";
 end
-plot(ax, [NaN; x(:)], [NaN; y(:)], Color=color, LineWidth=width, DisplayName=label, ...
+h = plot(ax, [NaN; x(:)], [NaN; y(:)], Color=color, LineWidth=width, DisplayName=label, ...
     HandleVisibility=shown);
 end
 
@@ -3738,7 +3876,8 @@ function fig = satflightAnimate(T, events, stations, names, opts)
 %   Seconds - how long it plays in a figure window (20). In the Live Editor every
 %   frame is drawn and the output becomes an animation with its own playback
 %   controls. A batch run (matlab -batch) draws only the last frame. File - also
-%   write it to this animated GIF, every frame, to play in Seconds.
+%   write it, every frame, to this animated GIF (.gif) or video (.mp4), to play in
+%   Seconds.
 arguments
     T table
     events table
@@ -3763,11 +3902,9 @@ hold(map, "on");
 box(map, "on");
 [night, sun] = drawNight(map);
 coast = satflightCoastline();
-plot(map, coast(:, 1), coast(:, 2), Color=[0.55 0.55 0.55], LineWidth=0.5, ...
-    HandleVisibility="off");
+themed(plot(map, coast(:, 1), coast(:, 2), LineWidth=0.5, HandleVisibility="off"), "coast");
 for g = reshape(stations, 1, [])
-    plot(map, g.lon, g.lat, "^", MarkerSize=7, MarkerFaceColor="k", MarkerEdgeColor="w", ...
-        HandleVisibility="off");
+    themed(plot(map, g.lon, g.lat, "^", MarkerSize=7, HandleVisibility="off"), "station");
 end
 xlim(map, [-180 180]); ylim(map, [-90 90]); daspect(map, [1 1 1]);
 xticks(map, -180:60:180); yticks(map, -90:30:90); grid(map, "on");
@@ -3801,16 +3938,19 @@ for k = 1:n
     track(k) = struct("t", t, "lon", lon, "lat", lat, "rows", rows);
     trail(k) = plot(map, NaN, NaN, Color=lineColor(k), LineWidth=1.1, DisplayName=names(k));
     marker(k) = plot(map, NaN, NaN, "o", MarkerSize=7, Color=lineColor(k), ...
-        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
+        MarkerFaceColor=lineColor(k), HandleVisibility="off");
     orbit(k) = plot3(globe, NaN, NaN, NaN, Color=lineColor(k), LineWidth=1.1, ...
         HandleVisibility="off");
     marker3(k) = plot3(globe, NaN, NaN, NaN, "o", MarkerSize=6, Color=lineColor(k), ...
-        MarkerFaceColor=lineColor(k), MarkerEdgeColor="k", HandleVisibility="off");
+        MarkerFaceColor=lineColor(k), HandleVisibility="off");
 end
-lg = legend(map, Orientation="horizontal", NumColumns=min(n + 2, 7),Interpreter="none");
+themed([marker, marker3], "rim");
+lg = legend(map, Orientation="horizontal", NumColumns=min(n + 2, 7), Interpreter="none");
 lg.Layout.Tile = "north";
+themeFigure(fig);
 
 delay = opts.Seconds / numel(frames);
+W = frameWriter(opts.File, numel(frames) / max(opts.Seconds, eps));
 % a figure window shows each frame as it is drawn (paced to play in Seconds); the Live
 % Editor's figures are not on screen but it records each frame drawn, as an animation;
 % a batch run (whose figures report Visible "on" all the same) has no one to show the
@@ -3859,22 +3999,948 @@ for f = 1:numel(frames)
     if everyFrame
         drawnow
     end
-    if opts.File ~= ""
-        [img, map256] = rgb2ind(frame2im(getframe(fig)), 256);
-        if f == 1
-            imwrite(img, map256, opts.File, "gif", LoopCount=Inf, DelayTime=max(delay, 0.02));
-        else
-            imwrite(img, map256, opts.File, "gif", WriteMode="append", ...
-                DelayTime=max(delay, 0.02));
-        end
-    end
+    W = writeFrame(W, fig);
     if onScreen
         pause(max(0, f * delay - toc(started)));
     end
 end
-if opts.File ~= ""
-    fprintf("Wrote the animation (%d frames) to %s\n", numel(frames), opts.File);
+closeWriter(W, numel(frames));
 end
+
+% --- orbit transfers ------------------------------------------------------------------------
+
+function X = satflightTransfers(burns)
+%SATFLIGHTTRANSFERS One row per burn of satflightRun's burns: when, which object, the
+%   delta-v in total and along the velocity (V), the orbit normal (N) and the binormal
+%   (B) at ignition (m/s), the orbit just before and just after it (perigee and apogee
+%   altitude, km; inclination, deg; period, min) and the propellant it used (kg). The
+%   orbits come from the exact states at the burn, not from the run's samples.
+C = satflightConstants();
+before = orbitSummary(burns.y0, C);
+after = orbitSummary(burns.y1, C);
+X = table(burns.name, burns.label, burns.utc, burns.t1_s - burns.t0_s, burns.dv_ms, ...
+    burns.dvV_ms, burns.dvN_ms, burns.dvB_ms, before.perigee_km, after.perigee_km, ...
+    before.apogee_km, after.apogee_km, before.i_deg, after.i_deg, before.period_min, ...
+    after.period_min, burns.mass0_kg - burns.mass1_kg, VariableNames=["name", "label", ...
+    "utc", "burn_s", "dv_ms", "dvV_ms", "dvN_ms", "dvB_ms", "perigee0_km", "perigee1_km", ...
+    "apogee0_km", "apogee1_km", "i0_deg", "i1_deg", "period0_min", "period1_min", ...
+    "propellant_kg"]);
+if isempty(X)
+    fprintf("No burns were made in this run.\n");
+end
+end
+
+function S = orbitSummary(Y, C)
+% perigee and apogee altitude (km, above the equator's radius), inclination (deg) and
+% period (min) of the states Y (one per row); NaN for the apogee and period of an
+% open orbit
+n = size(Y, 1);
+S = table(NaN(n, 1), NaN(n, 1), NaN(n, 1), NaN(n, 1), VariableNames=["perigee_km", ...
+    "apogee_km", "i_deg", "period_min"]);
+ok = all(isfinite(Y), 2);
+if ~any(ok)
+    return
+end
+el = rv2coe(Y(ok, 1:3), Y(ok, 4:6), C.MU);
+p = el.a .* (1 - el.e .* el.e);
+S.perigee_km(ok) = p ./ (1 + el.e) - C.RE;
+bound = el.e < 1;
+apo = NaN(size(p));
+apo(bound) = el.a(bound) .* (1 + el.e(bound)) - C.RE;
+S.apogee_km(ok) = apo;
+S.i_deg(ok) = rad2deg(el.i);
+period = NaN(size(p));
+period(bound) = 2 * pi * sqrt(el.a(bound) .^ 3 / C.MU) / 60;
+S.period_min(ok) = period;
+end
+
+function P = orbitCurve(y, C, n)
+% n points (n x 3, km) around the two-body orbit through state y: all of it when it is
+% closed, the part out to 4 times the radius at y when it is open
+r = y(1:3);
+v = y(4:6);
+h = cross(r, v);
+ev = cross(v, h) / C.MU - r / norm(r);
+e = norm(ev);
+p = dot(h, h) / C.MU;
+w = h / norm(h);
+if e > 1e-9
+    P1 = ev / e;
+else
+    P1 = r / norm(r);
+end
+Q1 = cross(w, P1);
+if e < 1
+    nu = linspace(0, 2 * pi, n)';
+else
+    reach = acos(min(max((p / (4 * norm(r)) - 1) / e, -1), 1));
+    nu = linspace(-reach, reach, n)';
+end
+rad = p ./ (1 + e * cos(nu));
+P = rad .* (cos(nu) * P1 + sin(nu) * Q1);
+end
+
+function fig = satflightPlotTransfer(T, burns, names)
+%SATFLIGHTPLOTTRANSFER For each object in names that burns: its orbit before the first
+%   burn (dashed), the path it flies between burns, its orbit after the last one, and
+%   each burn where it fires (numbered, with its delta-v and an arrow along it); in 3-D
+%   about the Earth, and seen along the line where the first and last orbits' planes
+%   cross, so that a change of plane shows as the angle between them. Burns are
+%   numbered by their row in burns (and in satflightTransfers' table).
+arguments
+    T table
+    burns table
+    names = string.empty
+end
+C = satflightConstants();
+names = plotNames(T, names);
+fig = gobjects(0);
+for nm = names
+    ids = find(burns.name == nm & isfinite(burns.t1_s));
+    B = burns(ids, :);
+    if isempty(B)
+        continue
+    end
+    rows = T(T.name == nm, :);
+    start = orbitCurve(B.y0(1, :), C, 361);
+    final = orbitCurve(B.y1(end, :), C, 361);
+    legs = cell(height(B) - 1, 1);
+    for k = 1:height(B) - 1
+        between = rows(rows.t_s > B.t1_s(k) & rows.t_s < B.t0_s(k + 1), :);
+        legs{k} = [B.y1(k, 1:3); [between.x_km, between.y_km, between.z_km]; B.y0(k + 1, 1:3)];
+    end
+    fired = cell(height(B), 1);       % the path flown under thrust (finite burns)
+    for k = 1:height(B)
+        during = rows(rows.t_s > B.t0_s(k) & rows.t_s < B.t1_s(k), :);
+        fired{k} = [B.y0(k, 1:3); [during.x_km, during.y_km, during.z_km]; B.y1(k, 1:3)];
+    end
+    reach = max(vecnorm([start; final; vertcat(legs{:})], 2, 2));
+    before = orbitSummary(B.y0(1, :), C);
+    after = orbitSummary(B.y1(end, :), C);
+
+    fig(end + 1) = figure(Name="Transfer: " + nm, Position=[80 80 1250 560]); %#ok<AGROW>
+    layout = tiledlayout(fig(end), 1, 3, TileSpacing="compact", Padding="compact");
+    title(layout, sprintf("%s: %d burn%s, %.1f m/s in all", nm, height(B), ...
+        plural(height(B)), sum(B.dv_ms)), Interpreter="none");
+    subtitle(layout, sprintf("from %s to %s", orbitText(before), orbitText(after)), ...
+        Interpreter="none");
+
+    ax = nexttile(layout, [1 2]);
+    hold(ax, "on");
+    earth = drawEarth(ax, C);
+    earth.Matrix = makehgtform("zrotate", gmst(julianAt(T, B.t0_s(1))));
+    themed(plot3(ax, start(:, 1), start(:, 2), start(:, 3), "--", LineWidth=1.1, ...
+        DisplayName="orbit before"), "muted");
+    plot3(ax, final(:, 1), final(:, 2), final(:, 3), Color=lineColor(2), LineWidth=1.8, ...
+        DisplayName="orbit after");
+    for k = 1:numel(legs)
+        plot3(ax, legs{k}(:, 1), legs{k}(:, 2), legs{k}(:, 3), Color=lineColor(1), ...
+            LineWidth=1.6, DisplayName="transfer", HandleVisibility=onlyFirst(k));
+    end
+    burnMarks(ax, B, ids, fired, reach);
+    axis(ax, "equal"); grid(ax, "on"); view(ax, 35, 25);
+    xlabel(ax, "x (km)"); ylabel(ax, "y (km)"); zlabel(ax, "z (km)");
+    title(ax, "In 3-D (ECI)");
+    legend(ax, Location="southoutside", Orientation="horizontal", Interpreter="none");
+
+    % the second view: along the line where the planes before and after cross
+    n0 = cross(B.y0(1, 1:3), B.y0(1, 4:6));
+    n1 = cross(B.y1(end, 1:3), B.y1(end, 4:6));
+    n0 = n0 / norm(n0);
+    n1 = n1 / norm(n1);
+    nodes = cross(n0, n1);
+    if norm(nodes) < 1e-6        % one plane: look along the first burn's position
+        nodes = B.y0(1, 1:3);
+    end
+    ex = nodes / norm(nodes);
+    ez = n1;
+    ey = cross(ez, ex);
+    side = @(P) [P * ey.', P * ez.'];
+    ax2 = nexttile(layout);
+    hold(ax2, "on");
+    around = linspace(0, 2 * pi, 121)';
+    themed(fill(ax2, C.RE * cos(around), C.RE * sin(around), [0.5 0.5 0.5], ...
+        EdgeColor="none", HandleVisibility="off"), "earth");
+    q = side(start);
+    themed(plot(ax2, q(:, 1), q(:, 2), "--", LineWidth=1.1, HandleVisibility="off"), "muted");
+    q = side(final);
+    plot(ax2, q(:, 1), q(:, 2), Color=lineColor(2), LineWidth=1.8, HandleVisibility="off");
+    for k = 1:numel(legs)
+        q = side(legs{k});
+        plot(ax2, q(:, 1), q(:, 2), Color=lineColor(1), LineWidth=1.6, HandleVisibility="off");
+    end
+    q = side(B.y0(:, 1:3));
+    themed(plot(ax2, q(:, 1), q(:, 2), "p", MarkerSize=13, HandleVisibility="off"), "burn");
+    axis(ax2, "equal"); grid(ax2, "on"); box(ax2, "on");
+    xlabel(ax2, "across the line of nodes (km)"); ylabel(ax2, "out of the final plane (km)");
+    tilt = acosd(min(max(dot(n0, n1), -1), 1));
+    title(ax2, sprintf("Edge-on: the planes %.2f%s apart", tilt, char(176)));
+    themeFigure(fig(end));
+end
+if isempty(fig)
+    fprintf("None of the plotted objects burned: no transfer plot.\n");
+end
+end
+
+function burnMarks(ax, B, ids, fired, reach)
+% the burns of table B in 3-D axes ax: the path flown under thrust (finite burns), a
+% star where each fires, an arrow along its delta-v and its number (ids: its row in
+% the burns table) and size
+scale = 0.18 * reach;
+for k = 1:height(B)
+    if size(fired{k}, 1) > 2
+        themed(plot3(ax, fired{k}(:, 1), fired{k}(:, 2), fired{k}(:, 3), LineWidth=4, ...
+            HandleVisibility="off"), "burn");
+    end
+    p = B.y0(k, 1:3);
+    d = B.y1(k, 4:6) - B.y0(k, 4:6);
+    if B.t1_s(k) > B.t0_s(k) || norm(d) == 0
+        d = [B.dvV_ms(k), B.dvN_ms(k), B.dvB_ms(k)] * vnbBasis(p, B.y0(k, 4:6));
+    end
+    d = scale * d / max(norm(d), eps);
+    themed(plot3(ax, p(1), p(2), p(3), "p", MarkerSize=15, DisplayName="burn", ...
+        HandleVisibility=onlyFirst(k)), "burn");
+    themed(quiver3(ax, p(1), p(2), p(3), d(1), d(2), d(3), 0, LineWidth=2, ...
+        MaxHeadSize=0.6, HandleVisibility="off"), "burn");
+    themed(text(ax, p(1) + d(1), p(2) + d(2), p(3) + d(3), sprintf("  #%d  %.1f m/s", ...
+        ids(k), B.dv_ms(k)), FontSize=11, FontWeight="bold", Interpreter="none"), "label");
+end
+end
+
+function v = onlyFirst(k)
+% HandleVisibility for the k-th of a set of lines sharing one legend entry
+v = "off";
+if k == 1
+    v = "on";
+end
+end
+
+function s = plural(n)
+s = "";
+if n ~= 1
+    s = "s";
+end
+end
+
+function text = orbitText(S)
+% "185 x 35,786 km, 28.5 deg" for one row of orbitSummary
+if isnan(S.apogee_km)
+    text = sprintf("an open path (perigee %s km), %.2f deg", commaNum(S.perigee_km), S.i_deg);
+else
+    text = sprintf("%s x %s km, %.2f deg", commaNum(S.perigee_km), commaNum(S.apogee_km), ...
+        S.i_deg);
+end
+end
+
+function fig = satflightPlotDeltaV(burns, tEnd)
+%SATFLIGHTPLOTDELTAV The delta-v budget: each burn's delta-v along the velocity (V),
+%   the orbit normal (N) and the binormal (B), with its total (numbered by its row in
+%   burns); each object's delta-v added up over the run (to tEnd, s); and its mass,
+%   stepping down as the burns use propellant.
+arguments
+    burns table
+    tEnd (1,1) double = NaN
+end
+ids = find(isfinite(burns.t1_s));
+B = burns(ids, :);
+fig = gobjects(0);
+if isempty(B)
+    fprintf("No burns were made: no delta-v budget plot.\n");
+    return
+end
+fig = figure(Name="Delta-v budget", Position=[90 90 1250 500]);
+layout = tiledlayout(fig, 1, 3, TileSpacing="compact", Padding="compact");
+title(layout, sprintf("Delta-v budget: %.1f m/s in %d burn%s", sum(B.dv_ms), height(B), ...
+    plural(height(B))));
+ax = nexttile(layout);
+hold(ax, "on");
+parts = [B.dvV_ms, B.dvN_ms, B.dvB_ms];
+bar(ax, 1:height(B), parts, "grouped");
+themed(plot(ax, 1:height(B), B.dv_ms, "_", MarkerSize=22, LineWidth=3, ...
+    DisplayName="total"), "label");
+legend(ax, ["V (along the velocity)", "N (orbit normal)", "B (binormal)", "total"], ...
+    Location="southoutside");
+xticks(ax, 1:height(B));
+xticklabels(ax, compose("#%d", ids));
+ax.TickLabelInterpreter = "none";
+grid(ax, "on");
+xlabel(ax, "Burn (row of transfers)");
+ylabel(ax, "Delta-v (m/s)");
+title(ax, "Each burn, by direction");
+ax.YLim(2) = 1.2 * max([B.dv_ms; parts(:)]);
+lift = 0.03 * diff(ax.YLim);
+for k = 1:height(B)
+    themed(text(ax, k, B.dv_ms(k) + lift, sprintf("%.1f\n%s", B.dv_ms(k), B.name(k)), ...
+        HorizontalAlignment="center", VerticalAlignment="bottom", FontSize=8, ...
+        Interpreter="none"), "label");
+end
+
+ax = nexttile(layout);
+hold(ax, "on");
+ax2 = nexttile(layout);
+hold(ax2, "on");
+who = unique(B.name, "stable")';
+if ~isfinite(tEnd)
+    tEnd = 1.05 * max(B.t1_s) + 1;
+end
+for k = 1:numel(who)
+    b = B(B.name == who(k), :);
+    t = [0; reshape([b.t0_s, b.t1_s]', [], 1); tEnd] / 3600;
+    used = [0; reshape([zeros(height(b), 1), b.dv_ms]', [], 1)];
+    used = cumsum(used);
+    used(end + 1) = used(end); %#ok<AGROW>
+    plot(ax, t, used, Color=lineColor(k), LineWidth=1.6, DisplayName=who(k));
+    mass = [b.mass0_kg(1); reshape([b.mass0_kg, b.mass1_kg]', [], 1); b.mass1_kg(end)];
+    plot(ax2, t, mass, Color=lineColor(k), LineWidth=1.6, DisplayName=who(k));
+    themed(text(ax2, t(end), mass(end), sprintf(" %.0f kg used", b.mass0_kg(1) - ...
+        b.mass1_kg(end)), FontSize=8, VerticalAlignment="bottom", HorizontalAlignment="right"), ...
+        "label");
+end
+grid(ax, "on");
+xlabel(ax, "Time since epoch (h)");
+ylabel(ax, "Delta-v so far (m/s)");
+title(ax, "Added up");
+legend(ax, Location="southoutside", Interpreter="none");
+grid(ax2, "on");
+xlabel(ax2, "Time since epoch (h)");
+ylabel(ax2, "Mass (kg)");
+title(ax2, "Mass (rocket equation)");
+themeFigure(fig);
+end
+
+function fig = satflightPlotBurnWindow(T, burns, names)
+%SATFLIGHTPLOTBURNWINDOW The orbit of each object in names that burns, over the part of
+%   the run that holds the burns: perigee and apogee altitude, inclination and period,
+%   from the run's samples and the exact states just before and after each burn (so
+%   each impulse is a clean step), the burns marked.
+arguments
+    T table
+    burns table
+    names = string.empty
+end
+C = satflightConstants();
+names = plotNames(T, names);
+ids = find(isfinite(burns.t1_s) & ismember(burns.name, names));
+B = burns(ids, :);
+fig = gobjects(0);
+if isempty(B)
+    fprintf("None of the plotted objects burned: no burn window plot.\n");
+    return
+end
+span = max(B.t1_s) - min(B.t0_s);
+pad = max(0.15 * span, 1800);
+t0 = max(min(B.t0_s) - pad, min(T.t_s));
+t1 = min(max(B.t1_s) + pad, max(T.t_s));
+fig = figure(Name="Burn window", Position=[100 100 1100 640]);
+layout = tiledlayout(fig, 2, 2, TileSpacing="compact", Padding="compact");
+title(layout, sprintf("The orbit around the burns, %s to %s UTC", ...
+    string(julianUtc(T, t0), "yyyy-MM-dd HH:mm"), string(julianUtc(T, t1), "yyyy-MM-dd HH:mm")));
+subtitle(layout, "osculating elements; dotted lines: the burns, numbered by their row " + ...
+    "of transfers");
+panels = ["perigee_km", "Perigee altitude (km)"; "apogee_km", "Apogee altitude (km)"; ...
+    "i_deg", "Inclination (deg)"; "period_min", "Period (min)"];
+axs = gobjects(1, 4);
+for p = 1:4
+    axs(p) = nexttile(layout);
+    hold(axs(p), "on");
+    grid(axs(p), "on");
+    ylabel(axs(p), panels(p, 2));
+    xlabel(axs(p), "Time since epoch (h)");
+end
+who = unique(B.name, "stable")';
+for k = 1:numel(who)
+    rows = T(T.name == who(k) & T.t_s >= t0 & T.t_s <= t1, :);
+    rows = rows(inOrbit(rows, C), :);
+    b = B(B.name == who(k), :);
+    t = [rows.t_s; b.t0_s; b.t1_s];   % (rows of burns, before and after each)
+    Y = [rows.x_km, rows.y_km, rows.z_km, rows.vx_kms, rows.vy_kms, rows.vz_kms; b.y0; b.y1];
+    % at a burn's instant, the state before comes first, then the state after
+    order = [zeros(height(rows), 1); -ones(height(b), 1); ones(height(b), 1)];
+    [~, sorted] = sortrows([t, order]);
+    S = orbitSummary(Y(sorted, :), C);
+    tt = t(sorted) / 3600;
+    c = find(names == who(k), 1);
+    for p = 1:4
+        plot(axs(p), tt, S.(panels(p, 1)), Color=lineColor(c), LineWidth=1.5, ...
+            DisplayName=who(k));
+    end
+end
+for p = 1:4
+    for k = 1:height(B)
+        themed(xline(axs(p), B.t0_s(k) / 3600, ":", HandleVisibility="off"), "muted");
+    end
+    xlim(axs(p), [t0, t1] / 3600);
+end
+top = axs(1).YLim(2);
+for k = 1:height(B)
+    themed(text(axs(1), B.t0_s(k) / 3600, top, sprintf(" #%d", ids(k)), VerticalAlignment="top", ...
+        FontSize=9, FontWeight="bold"), "label");
+end
+lg = legend(axs(1), Interpreter="none");
+lg.Layout.Tile = "east";
+themeFigure(fig);
+end
+
+function u = julianUtc(T, t)
+% the UTC time t seconds into the run of T
+k = find(T.t_s == T.t_s(1), 1);
+u = T.utc(k) + seconds(t - T.t_s(k));
+end
+
+% --- physics diagnostics --------------------------------------------------------------------
+
+function [D, K] = satflightDiagnostics(T, sim, burns, objects)
+%SATFLIGHTDIAGNOSTICS The physics of the run, per object and sample while it is in
+%   orbit: specific orbital energy (two-body, and with the potential of the gravity
+%   terms the run applies), angular momentum (its size and its z part), speed,
+%   distance from the centre and period, the Jacobi constant (energy less the Earth's
+%   spin times h_z), and the size of the acceleration from each force the run applies
+%   (D). And for each coast, the stretch between burns in orbit, how far the quantity
+%   that physics keeps constant there drifted (K): energy for gravity alone, the Jacobi
+%   constant with the C22 field (which turns with the Earth); with drag on, energy
+%   falls. A conserved quantity that drifts by more than the integrator's tolerance
+%   would point to a fault.
+C = satflightConstants();
+F = sim.forces;
+terms = ["j2", "j3", "j4", "c22", "drag"];
+applied = false(1, 5);
+if sim.propagator == "cowell"
+    applied = [F.j2, F.j3, F.j4, F.c22, F.drag];
+end
+present = unique(T.name, "stable")';
+D = cell(numel(present), 1);
+for q = 1:numel(present)
+    rows = T(T.name == present(q), :);
+    rows = rows(inOrbit(rows, C), :);
+    r = [rows.x_km, rows.y_km, rows.z_km];
+    v = [rows.vx_kms, rows.vy_kms, rows.vz_kms];
+    rm = vecnorm(r, 2, 2);
+    speed = vecnorm(v, 2, 2);
+    h = cross(r, v, 2);
+    theta = gmst(juliandate(rows.utc));
+    kepler = speed .^ 2 / 2 - C.MU ./ rm;
+    total = speed .^ 2 / 2 + potential(r, theta, applied, C);
+    period = NaN(size(rm));
+    bound = kepler < 0;
+    period(bound) = 2 * pi * sqrt((-C.MU ./ (2 * kepler(bound))) .^ 3 / C.MU) / 60;
+    acc = NaN(height(rows), 6);
+    acc(:, 1) = 1000 * C.MU ./ rm .^ 2;
+    props = objects(objects.name == present(q), :);
+    for j = find(applied)
+        G = struct("j2", false, "j3", false, "j4", false, "c22", false, "drag", false, ...
+            "densityScale", F.densityScale);
+        G.(terms(j)) = true;
+        cdam = zeros(height(rows), 1);
+        if terms(j) == "drag" && ~isempty(props)
+            cdam = props.cd(1) * props.area_m2(1) ./ massAt(burns, props, rows.t_s);
+        end
+        % (theta: the Earth's turn at each sample, for the C22 field that turns with it)
+        extra = acceleration(r, v, cdam, theta, G, C) + C.MU * r ./ rm .^ 3;
+        acc(:, j + 1) = 1000 * vecnorm(extra, 2, 2);
+    end
+    D{q} = table(repmat(present(q), height(rows), 1), rows.t_s, kepler, total, ...
+        total - C.OMEGA * h(:, 3), vecnorm(h, 2, 2), h(:, 3), speed, rm, period, acc(:, 1), ...
+        acc(:, 2), acc(:, 3), acc(:, 4), acc(:, 5), acc(:, 6), VariableNames=["name", "t_s", ...
+        "energy_MJkg", "energy_total_MJkg", "jacobi_MJkg", "h_km2s", "hz_km2s", "speed_kms", ...
+        "r_km", "period_min", "acc_central_ms2", "acc_j2_ms2", "acc_j3_ms2", "acc_j4_ms2", ...
+        "acc_c22_ms2", "acc_drag_ms2"]);
+end
+D = vertcat(D{:});
+if isempty(D)
+    D = table(strings(0, 1), zeros(0, 1), VariableNames=["name", "t_s"]);
+end
+
+% the coasts, and the quantity physics keeps there
+if applied(4)
+    kept = "jacobi_MJkg";
+    what = "Jacobi constant";
+else
+    kept = "energy_total_MJkg";
+    what = "energy";
+end
+K = table('Size', [0 8], 'VariableTypes', ["string", "double", "double", "double", "string", ...
+    "double", "double", "string"], 'VariableNames', ["name", "from_s", "to_s", "samples", ...
+    "quantity", "drift_rel", "hz_drift_rel", "expected"]);
+expected = "constant";
+if applied(5)
+    expected = "falls (drag)";
+elseif sim.propagator == "j2mean"
+    % the J2-mean propagator moves mean elements: the osculating energy of its states
+    % swings with J2's short-period terms, by about 1e-3
+    expected = "not kept (J2 mean elements)";
+end
+for q = 1:numel(present)
+    d = D(D.name == present(q), :);
+    if height(d) < 3
+        continue
+    end
+    b = burns(burns.name == present(q), :);
+    % a new coast after each burn and wherever the samples skip (not in orbit)
+    step = median(diff(d.t_s));
+    cut = [1; find(diff(d.t_s) > 1.5 * step) + 1];
+    for k = 1:height(b)
+        cut = [cut; find(d.t_s > b.t0_s(k), 1)]; %#ok<AGROW>
+    end
+    cut = unique([cut; height(d) + 1]);
+    for k = 1:numel(cut) - 1
+        seg = d(cut(k):cut(k + 1) - 1, :);
+        if ~isempty(b)
+            firing = any(seg.t_s' >= b.t0_s & seg.t_s' <= b.t1_s, 1)';
+            seg = seg(~firing, :);
+        end
+        if height(seg) < 3
+            continue
+        end
+        x = seg.(kept);
+        hz = seg.hz_km2s;
+        K(end + 1, :) = {present(q), seg.t_s(1), seg.t_s(end), height(seg), what, ...
+            (max(x) - min(x)) / abs(mean(x)), (max(hz) - min(hz)) / max(abs(mean(hz)), ...
+            eps), expected}; %#ok<AGROW>
+    end
+end
+end
+
+function U = potential(r, theta, applied, C)
+% the specific potential energy (km^2/s^2) at positions r (one per row) of point-mass
+% gravity and the terms applied (J2, J3, J4, C22; theta the Earth's turn): the
+% potential whose gradient is minus acceleration()'s gravity
+rm = vecnorm(r, 2, 2);
+s = r(:, 3) ./ rm;
+U = -C.MU ./ rm;
+if applied(1)
+    U = U + C.MU * C.J2 * C.RE ^ 2 ./ rm .^ 3 .* (3 * s .^ 2 - 1) / 2;
+end
+if applied(2)
+    U = U + C.MU * C.J3 * C.RE ^ 3 ./ rm .^ 4 .* (5 * s .^ 3 - 3 * s) / 2;
+end
+if applied(3)
+    U = U + C.MU * C.J4 * C.RE ^ 4 ./ rm .^ 5 .* (35 * s .^ 4 - 30 * s .^ 2 + 3) / 8;
+end
+if applied(4)
+    c = cos(theta);
+    sn = sin(theta);
+    xe = c .* r(:, 1) + sn .* r(:, 2);
+    ye = -sn .* r(:, 1) + c .* r(:, 2);
+    U = U - 3 * C.MU * C.RE ^ 2 * (C.C22 * (xe .^ 2 - ye .^ 2) + 2 * C.S22 * xe .* ye) ./ rm .^ 5;
+end
+end
+
+function m = massAt(burns, props, t)
+% the mass (kg) of the object of props at times t: what it ends with, plus the
+% propellant of each burn still to come
+m = props.mass_end_kg(1) * ones(size(t));
+b = burns(burns.name == props.name(1) & isfinite(burns.t1_s), :);
+for k = 1:height(b)
+    later = t < b.t0_s(k);
+    m(later) = m(later) + b.mass0_kg(k) - b.mass1_kg(k);
+end
+end
+
+function fig = satflightPlotDiagnostics(D, burns, names)
+%SATFLIGHTPLOTDIAGNOSTICS The physics of satflightDiagnostics for the objects in names:
+%   energy, angular momentum, speed and period against time (burns dotted), the size
+%   of each force on the first of them that burns (or the first), and how far each
+%   object's energy (with the gravity terms' potential) has moved from its value at
+%   the start of the coast it is in.
+fig = gobjects(0);
+names = names(ismember(names, D.name));
+if isempty(names)
+    fprintf("No object was in orbit at a sample: no diagnostics plot.\n");
+    return
+end
+fig = figure(Name="Physics diagnostics", Position=[70 70 1250 700]);
+layout = tiledlayout(fig, 2, 3, TileSpacing="compact", Padding="compact");
+title(layout, "Physics diagnostics");
+subtitle(layout, "in orbit only; dotted lines: burns");
+panels = ["energy_MJkg", "Specific energy, two-body (MJ/kg)"; ...
+    "h_km2s", "Angular momentum |h| (km^2/s)"; "speed_kms", "Speed (km/s)"; ...
+    "period_min", "Period (min)"];
+B = burns(isfinite(burns.t1_s) & ismember(burns.name, names), :);
+for p = 1:size(panels, 1)
+    ax = nexttile(layout);
+    hold(ax, "on");
+    for k = 1:numel(names)
+        d = D(D.name == names(k), :);
+        plot(ax, d.t_s / 3600, gaps(d.t_s, d.(panels(p, 1))), Color=lineColor(k), ...
+            LineWidth=1.2, DisplayName=names(k));
+    end
+    burnLines(ax, B);
+    grid(ax, "on");
+    xlabel(ax, "Time since epoch (h)");
+    ylabel(ax, panels(p, 2));
+end
+lg = legend(ax, Interpreter="none");
+lg.Layout.Tile = "east";
+
+% the forces on one object
+focus = names(1);
+if ~isempty(B)
+    focus = B.name(1);
+end
+ax = nexttile(layout);
+hold(ax, "on");
+d = D(D.name == focus, :);
+forces = ["acc_central_ms2", "central gravity"; "acc_j2_ms2", "J2"; "acc_j3_ms2", "J3"; ...
+    "acc_j4_ms2", "J4"; "acc_c22_ms2", "C22"; "acc_drag_ms2", "drag"];
+for j = 1:size(forces, 1)
+    y = d.(forces(j, 1));
+    if any(isfinite(y))
+        plot(ax, d.t_s / 3600, gaps(d.t_s, y), LineWidth=1.3, DisplayName=forces(j, 2));
+    end
+end
+ax.YScale = "log";
+burnLines(ax, B(B.name == focus, :));
+grid(ax, "on");
+xlabel(ax, "Time since epoch (h)");
+ylabel(ax, "Acceleration (m/s^2)");
+title(ax, "Forces on " + focus, Interpreter="none");
+legend(ax, Location="best", FontSize=8);
+
+% the drift of energy within each coast
+ax = nexttile(layout);
+hold(ax, "on");
+for k = 1:numel(names)
+    d = D(D.name == names(k), :);
+    if height(d) < 2
+        continue
+    end
+    b = B(B.name == names(k), :);
+    coast = cumsum([1; diff(d.t_s) > 1.5 * median(diff(d.t_s))]);
+    for j = 1:height(b)
+        coast = coast + (d.t_s > b.t0_s(j));
+    end
+    drift = NaN(height(d), 1);
+    for c = unique(coast)'
+        in = coast == c;
+        e = d.energy_total_MJkg(in);
+        drift(in) = abs(e - e(1)) / abs(e(1));
+    end
+    drift(drift == 0) = NaN;
+    plot(ax, d.t_s / 3600, gaps(d.t_s, drift), Color=lineColor(k), LineWidth=1.1, ...
+        DisplayName=names(k));
+end
+ax.YScale = "log";
+burnLines(ax, B);
+grid(ax, "on");
+xlabel(ax, "Time since epoch (h)");
+ylabel(ax, "|\DeltaE / E| since the coast began");
+title(ax, "Energy drift (with the gravity terms)");
+themeFigure(fig);
+end
+
+function y = gaps(t, y)
+% y with NaN where the samples t skip (the object was not in orbit), so the line breaks
+skip = [false; diff(t) > 1.5 * median(diff(t))];
+y(skip) = NaN;
+end
+
+function burnLines(ax, B)
+for k = 1:height(B)
+    themed(xline(ax, B.t0_s(k) / 3600, ":", HandleVisibility="off"), "muted");
+end
+end
+
+% --- the 3-D animation ----------------------------------------------------------------------
+
+function fig = satflightAnimate3D(T, events, burns, names, opts)
+%SATFLIGHTANIMATE3D Plays the run back in 3-D: the orbits about the turning Earth, each
+%   object with a trail over its last orbit that fades with age and its current orbit
+%   dotted, a flash and an arrow where a burn fires, the latest lines of the event log
+%   underneath, and the camera turning slowly. Time runs at its own pace: slower about
+%   the burns and launches, faster over the coasts between them (the title gives the
+%   speed). Options as satflightAnimate's: Frames (240), Seconds (20) and File (an
+%   animated .gif or an .mp4 video).
+arguments
+    T table
+    events table
+    burns table
+    names = string.empty
+    opts.Frames (1,1) double {mustBeInteger, mustBePositive} = 240
+    opts.Seconds (1,1) double {mustBeNonnegative, mustBeFinite} = 20
+    opts.File (1,1) string = ""
+end
+C = satflightConstants();
+names = plotNames(T, names);
+B = burns(isfinite(burns.t1_s) & ismember(burns.name, names), :);
+logged = events(events.kind ~= "info", :);
+moments = [B.t0_s; B.t1_s; logged.t_s(logged.kind == "launch" | logged.kind == "maneuver")];
+frames = frameTimes(min(T.t_s), max(T.t_s), opts.Frames, moments);
+epoch = T.utc(1) - seconds(T.t_s(1));
+pace = opts.Seconds / numel(frames);
+
+fig = figure(Name="Animation 3-D", Position=[120 80 1000 760]);
+ax = axes(fig, Position=[0.02 0.1 0.96 0.82]);
+hold(ax, "on");
+earth = drawEarth(ax, C);
+shownRows = T(ismember(T.name, names), :);
+reach = max([vecnorm([shownRows.x_km, shownRows.y_km, shownRows.z_km], 2, 2); 1.3 * C.RE]);
+reach = min(reach, 12 * max([shownRows.a_km(shownRows.a_km > 0); C.RE]));
+lim = 1.05 * [-reach, reach];
+axis(ax, "equal");
+xlim(ax, lim); ylim(ax, lim); zlim(ax, lim);
+axis(ax, "vis3d");
+axis(ax, "off");
+n = numel(names);
+[trail, marker, ghost] = deal(gobjects(1, n));
+for k = 1:n
+    trail(k) = patch(ax, XData=NaN, YData=NaN, ZData=NaN, FaceVertexCData=[0 0 0], ...
+        FaceColor="none", EdgeColor="interp", LineWidth=1.8, UserData=lineColor(k), ...
+        HandleVisibility="off");
+    themed(trail(k), "fade");
+    ghost(k) = plot3(ax, NaN, NaN, NaN, ":", Color=lineColor(k), LineWidth=0.8, ...
+        HandleVisibility="off");
+    marker(k) = plot3(ax, NaN, NaN, NaN, "o", MarkerSize=8, Color=lineColor(k), ...
+        MarkerFaceColor=lineColor(k), DisplayName=names(k));
+end
+themed(marker, "rim");
+flash = plot3(ax, NaN, NaN, NaN, "p", MarkerSize=26, DisplayName="burn");
+themed(flash, "burn");
+arrow = quiver3(ax, NaN, NaN, NaN, NaN, NaN, NaN, 0, LineWidth=2.5, MaxHeadSize=0.7, ...
+    HandleVisibility="off");
+themed(arrow, "burn");
+note = text(ax, NaN, NaN, NaN, "", FontSize=11, FontWeight="bold", Interpreter="none");
+themed(note, "label");
+legend(ax, [marker, flash], Location="northeast", Interpreter="none");
+heading = annotation(fig, "textbox", [0.02 0.93 0.96 0.06], String="", EdgeColor="none", ...
+    FontSize=12, FontWeight="bold", HorizontalAlignment="center", Interpreter="none");
+ticker = annotation(fig, "textbox", [0.02 0.005 0.96 0.09], String="", EdgeColor="none", ...
+    FontSize=9, Interpreter="none", VerticalAlignment="bottom");
+themed([heading, ticker], "label");
+themeFigure(fig);
+
+tracks = cell(1, n);
+for k = 1:n
+    tracks{k} = T(T.name == names(k), :);
+end
+W = frameWriter(opts.File, numel(frames) / max(opts.Seconds, eps));
+batch = batchStartupOptionUsed;
+onScreen = fig.Visible == "on" && ~batch;
+everyFrame = ~batch || opts.File ~= "";
+started = tic;
+P = satflightPalette(string(fig.Theme.BaseColorStyle));
+for f = 1:numel(frames)
+    t = frames(f);
+    for k = 1:n
+        [y, active, rows, i] = stateAt(tracks{k}, B(B.name == names(k), :), t, C);
+        if isempty(i)
+            set([trail(k), marker(k), ghost(k)], Visible="off");
+            continue
+        end
+        a = rows.a_km(i);
+        since = -Inf;
+        if a > 0
+            since = t - 2 * pi * sqrt(a ^ 3 / C.MU);
+        end
+        past = rows(rows.t_s >= since & rows.t_s <= t, :);
+        pts = [past.x_km, past.y_km, past.z_km; y(1:3)];
+        set(trail(k), XData=[pts(:, 1); NaN], YData=[pts(:, 2); NaN], ZData=[pts(:, 3); NaN], ...
+            FaceVertexCData=zeros(size(pts, 1) + 1, 3), Visible="on");
+        fadeTrail(trail(k), P);
+        mark = "o";
+        if ~active
+            mark = "x";
+        end
+        set(marker(k), XData=y(1), YData=y(2), ZData=y(3), Marker=mark, Visible="on");
+        if active && norm(y(1:3)) > C.RE
+            o = orbitCurve(y, C, 181);
+            set(ghost(k), XData=o(:, 1), YData=o(:, 2), ZData=o(:, 3), Visible="on");
+        else
+            set(ghost(k), Visible="off");
+        end
+    end
+    % a burn firing (or just fired) now
+    near = 0.012 * (frames(end) - frames(1));
+    firing = find(t >= B.t0_s - near & t <= B.t1_s + near, 1);
+    if isempty(firing)
+        set([flash, arrow], Visible="off");
+        note.String = "";
+    else
+        p = B.y0(firing, 1:3);
+        d = [B.dvV_ms(firing), B.dvN_ms(firing), B.dvB_ms(firing)] * ...
+            vnbBasis(p, B.y0(firing, 4:6));
+        d = 0.2 * reach * d / max(norm(d), eps);
+        set(flash, XData=p(1), YData=p(2), ZData=p(3), Visible="on");
+        set(arrow, XData=p(1), YData=p(2), ZData=p(3), UData=d(1), VData=d(2), WData=d(3), ...
+            Visible="on");
+        set(note, Position=p + 1.15 * d, String=sprintf("%s\n%s: %.1f m/s", B.name(firing), ...
+            B.label(firing), B.dv_ms(firing)));
+    end
+    earth.Matrix = makehgtform("zrotate", gmst(julianAt(T, t)));
+    view(ax, 35 + 50 * (f - 1) / max(numel(frames) - 1, 1), 22);
+    speed = 0;
+    if f > 1
+        speed = (frames(f) - frames(f - 1)) / max(pace, eps);
+    end
+    heading.String = sprintf("%s UTC   (T+%s)   time x%s", string(epoch + seconds(t), ...
+        "yyyy-MM-dd HH:mm:ss"), formatDuration(t), commaNum(speed));
+    recent = logged(logged.t_s <= t, :);
+    recent = recent(max(1, end - 2):end, :);
+    ticker.String = string(recent.utc, "HH:mm:ss") + "  " + recent.text;
+    if everyFrame
+        drawnow
+    end
+    W = writeFrame(W, fig);
+    if onScreen
+        pause(max(0, f * pace - toc(started)));
+    end
+end
+closeWriter(W, numel(frames));
+end
+
+function t = frameTimes(t0, t1, n, moments)
+% n frame times from t0 to t1, closer together about the moments (burns, launches):
+% each moment draws frames to it as if the run spent 6 times longer there. The
+% moments themselves are among the frames.
+if t1 <= t0 || n < 2
+    t = t0;
+    return
+end
+tg = linspace(t0, t1, 4000)';
+width = max(0.015 * (t1 - t0), 60);
+density = ones(size(tg));
+for m = reshape(moments(moments >= t0 & moments <= t1), 1, [])
+    density = density + 6 * exp(-0.5 * ((tg - m) / width) .^ 2);
+end
+total = cumtrapz(tg, density);
+[total, keep] = unique(total);
+t = interp1(total, tg(keep), linspace(0, total(end), n)');
+for m = reshape(moments(moments >= t0 & moments <= t1), 1, [])
+    [~, j] = min(abs(t - m));
+    t(j) = m;
+end
+t = unique(t);
+end
+
+function [y, active, rows, i] = stateAt(rows, b, t, C)
+% the state of an object at time t: its last sample at or before t (or the end of a
+% burn since then), carried on along its two-body orbit to t; active false when it
+% has come down or gone
+i = find(rows.t_s <= t, 1, "last");
+y = NaN(1, 6);
+active = false;
+if isempty(i)
+    return
+end
+y = [rows.x_km(i), rows.y_km(i), rows.z_km(i), rows.vx_kms(i), rows.vy_kms(i), rows.vz_kms(i)];
+tb = rows.t_s(i);
+active = rows.status(i) == "active";
+done = find(b.t1_s > tb & b.t1_s <= t, 1, "last");
+if ~isempty(done)
+    y = b.y1(done, :);
+    tb = b.t1_s(done);
+end
+firing = find(b.t0_s > tb & b.t0_s <= t, 1, "last");
+if ~isempty(firing) && b.t1_s(firing) > t      % a finite burn under way: from its start
+    y = b.y0(firing, :);
+    tb = b.t0_s(firing);
+end
+if active && t > tb && norm(y(1:3)) > C.RE
+    [r, v] = keplerPropagate(y(1:3), y(4:6), t - tb, C.MU);
+    y = [r, v];
+end
+end
+
+% --- writing animations and figures ---------------------------------------------------------
+
+function W = frameWriter(file, fps)
+% an animation file to write frames to: an animated GIF (.gif) or an MPEG-4 video
+% (.mp4) at fps frames a second; none for file ""
+W = struct("kind", "", "file", file, "video", [], "size", [], "delay", 1 / max(fps, 1e-3), ...
+    "count", 0);
+if file == ""
+    return
+end
+[~, ~, ext] = fileparts(file);
+switch lower(ext)
+    case ".gif"
+        W.kind = "gif";
+    case ".mp4"
+        W.kind = "mp4";
+        W.video = VideoWriter(file, "MPEG-4");
+        W.video.FrameRate = min(max(fps, 1), 60);
+        W.video.Quality = 95;
+        open(W.video);
+    otherwise
+        error("satflight:animationFile", "An animation is written as .gif or .mp4, not %s.", ...
+            file);
+end
+end
+
+function W = writeFrame(W, fig)
+if W.kind == ""
+    return
+end
+img = frame2im(getframe(fig));
+if isempty(W.size)
+    W.size = 2 * floor([size(img, 1), size(img, 2)] / 2);    % even, for the video codec
+end
+% every frame the size of the first (a window can be resized while it plays)
+img = img(1:min(end, W.size(1)), 1:min(end, W.size(2)), :);
+img(end + 1:W.size(1), :, :) = 255;
+img(:, end + 1:W.size(2), :) = 255;
+W.count = W.count + 1;
+if W.kind == "mp4"
+    writeVideo(W.video, img);
+    return
+end
+[ind, cmap] = rgb2ind(img, 256);
+if W.count == 1
+    imwrite(ind, cmap, W.file, "gif", LoopCount=Inf, DelayTime=max(W.delay, 0.02));
+else
+    imwrite(ind, cmap, W.file, "gif", WriteMode="append", DelayTime=max(W.delay, 0.02));
+end
+end
+
+function closeWriter(W, frames)
+if W.kind == ""
+    return
+end
+if W.kind == "mp4"
+    close(W.video);
+end
+fprintf("Wrote the animation (%d frames) to %s\n", frames, W.file);
+end
+
+function files = satflightSaveFigures(folder, figs)
+%SATFLIGHTSAVEFIGURES Saves figures (all this script's figures still open when none are
+%   given) to folder, each as a PNG at 300 dpi and a PDF, named after the figure:
+%   "Ground track" -> ground_track.png and .pdf. The PDF is vector graphics, sharp at
+%   any zoom, except for a figure with a 3-D Earth (a surface, which a PDF holds as an
+%   image at 300 dpi). Returns the files written.
+arguments
+    folder (1,1) string
+    figs = findall(groot, Type="figure", Tag="satflight")
+end
+if ~isfolder(folder)
+    mkdir(folder);
+end
+figs = flip(figs(:));                 % findall lists the newest first
+files = strings(0, 1);
+taken = strings(0, 1);
+for k = 1:numel(figs)
+    fig = figs(k);
+    base = lower(strip(regexprep(string(fig.Name), "[^A-Za-z0-9]+", "_"), "_"));
+    if base == ""
+        base = "figure";
+    end
+    stem = base;
+    j = 2;
+    while ismember(stem, taken)
+        stem = base + "_" + j;
+        j = j + 1;
+    end
+    taken(end + 1) = stem; %#ok<AGROW>
+    png = fullfile(folder, stem + ".png");
+    pdf = fullfile(folder, stem + ".pdf");
+    exportgraphics(fig, png, Resolution=300);
+    if isempty(findall(fig, Type="surface"))
+        exportgraphics(fig, pdf, ContentType="vector");
+    else
+        exportgraphics(fig, pdf, ContentType="image", Resolution=300);
+    end
+    files = [files; png; pdf]; %#ok<AGROW>
+end
+fprintf("Saved %d figures to %s (PNG and PDF).\n", numel(figs), folder);
 end
 
 % --- cross-check against the simulator ------------------------------------------------------
@@ -3938,6 +5004,7 @@ grid(ax, "on");
 xlabel(ax, "Time since epoch (h)"); ylabel(ax, "Position difference (m)");
 title(ax, "This script vs the simulator");
 legend(ax, Location="eastoutside", Interpreter="none");
+themeFigure(fig);
 end
 
 function M = satflightCompareEvents(events, E)

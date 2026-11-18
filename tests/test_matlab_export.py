@@ -57,7 +57,8 @@ def test_every_scenario_exports_its_exact_starting_state(path, tmp_path):
     assert lines[0].startswith("%[text] # ")
     assert lines[-5:] == ['%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
                           '%   data: {"layout":"inline"}', "%---"]
-    assert "function [T, events, launches] = satflightRun(sim, duration, step, opts)" in text
+    assert ("function [T, events, launches, burns, objects] = satflightRun(sim, duration, "
+            "step, opts)") in text
     vehicles = {id(a.sat) for a in sim.ascents}
     rows = [i for i, s in enumerate(sim.sats) if id(s) not in vehicles]
     if rows:
@@ -138,15 +139,17 @@ def lone_satellite() -> Scenario:
 @pytest.mark.parametrize("scenario, compare, sections", [
     ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Plots",
                           "Passes and eclipses", "Maneuvers and close approaches",
-                          "Orbit evolution", "Animation", "Save",
-                          "Cross-check against the simulator"]),
+                          "Orbit transfers", "Orbit evolution", "Physics diagnostics",
+                          "Animation", "Save", "Cross-check against the simulator"]),
     ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
-                               "Maneuvers and close approaches", "Orbit evolution",
-                               "Animation", "Save"]),
+                               "Maneuvers and close approaches", "Orbit transfers",
+                               "Orbit evolution", "Physics diagnostics", "Animation",
+                               "Save"]),
     ("default", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
-                        "Close approaches", "Orbit evolution", "Animation", "Save"]),
+                        "Close approaches", "Orbit evolution", "Physics diagnostics",
+                        "Animation", "Save"]),
     (None, False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
-                   "Orbit evolution", "Animation", "Save"])])
+                   "Orbit evolution", "Physics diagnostics", "Animation", "Save"])])
 def test_sections_in_order(scenario, compare, sections, tmp_path):
     """Every section starts a new %% cell; the passes table only with stations, the
     maneuvers with maneuvers or launches (which schedule circularizations), the close
@@ -167,9 +170,16 @@ def test_sections_in_order(scenario, compare, sections, tmp_path):
     assert "satflightPlotTimeline(T, events, shown);" in text
     assert ("satflightPlotSky(T, events, sim.stations, shown);" in text) == bool(sim.stations)
     assert "drift = satflightDrift(T, events, sim.forces);\ndisplay(drift)" in text
-    assert re.search(r'^animate = true;   % .+\nanimationFile = "";   % ', text, re.M)
-    assert ("if animate\n    satflightAnimate(T, events, sim.stations, shown, "
-            "File=animationFile);\nend") in text
+    assert re.search(r'^animate = true;   % .+\nanimationFile = "";   % .+\n'
+                     r'animation3DFile = "";   % .+\nfigureFolder = "";   % ', text, re.M)
+    assert ("    satflightAnimate(T, events, sim.stations, shown, File=mapFile);\n"
+            "    satflightAnimate3D(T, events, burns, shown, File=globeFile);\nend") in text
+    assert ('if figureFolder ~= ""\n    savedFiles = satflightSaveFigures(figureFolder);'
+            in text)
+    burns = scenario is not None and scenario != "default"
+    assert ("transfers = satflightTransfers(burns);" in text) == burns
+    assert ("[diagnostics, conservation] = satflightDiagnostics(T, sim, burns, objects);"
+            in text)
     assert ("coverage = satflightCoverage(T, passes, sim.stations);" in text) == bool(
         sim.stations)
     assert "betaAngles = satflightBeta(T);\nsatflightPlotBeta(betaAngles, shown);" in text
@@ -209,8 +219,12 @@ def test_the_introduction_counts_in_words(tmp_path):
     ("hohmann_to_geo", {"satflightNoBurns", "satflightPlan", "satflightPlotAscent",
                         "mergeMarks", "satflightPasses", "elevationDeg", "satflightPlotSky",
                         "satflightCoverage"}),
-    # the maneuvers stay without burns: the orbit evolution reads them
-    ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks"}),
+    # the maneuvers stay without burns: the orbit evolution reads them; the transfer
+    # section goes with the burns
+    ("default", {"satflightPlan", "satflightPlotAscent", "mergeMarks", "satflightTransfers",
+                 "satflightPlotTransfer", "satflightPlotDeltaV", "satflightPlotBurnWindow",
+                 "burnMarks", "onlyFirst", "plural", "orbitText", "orbitSummary",
+                 "julianUtc"}),
     ("launch_day", set())])
 def test_a_script_holds_only_the_helpers_it_calls(scenario, gone, tmp_path):
     """Helpers the sections never call are left out (MATLAB marks an unused local

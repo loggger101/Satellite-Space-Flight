@@ -56,7 +56,8 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("launchDay", "reEntry"),                                  # 90 + 30
                 ("everyKindOfBurn", "fromTheCurrentMoment", "midBurnSnapshot"),  # 84+26+21
                 ("launchDayMidAscent", "hohmannFromTheStart"),             # 78 + 42
-                ("launchesPlannedHere", "passesAndAnimationFile"))         # 49 + 59
+                ("launchesPlannedHere", "passesAndAnimationFile"),         # 49 + 59
+                ("transferFiguresAndFiles",))                              # ~150 (2 videos)
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
 BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
                       # one session (launch_day, starlink_shell the slowest), so

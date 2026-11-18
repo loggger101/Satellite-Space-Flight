@@ -20,6 +20,7 @@ from ..planner import (
     plan_bielliptic,
     plan_hohmann,
     plan_rendezvous,
+    plan_target_orbit,
     plane_change_summary,
     scan_rendezvous,
 )
@@ -323,7 +324,8 @@ def walker_dialog(app):
 
 # --- Maneuvers -------------------------------------------------------------------------------
 
-KINDS = {"Impulse (V/N/B components)": "impulse", "Hohmann transfer": "hohmann",
+KINDS = {"Change orbit to...": "target_orbit",
+         "Impulse (V/N/B components)": "impulse", "Hohmann transfer": "hohmann",
          "Bi-elliptic transfer": "bielliptic", "Circularize": "circularize",
          "Plane change": "plane_change", "Rendezvous (Lambert)": "rendezvous",
          "Finite burn (thrust)": "finite"}
@@ -333,6 +335,9 @@ TIMINGS = {"Now": "now", "After delay": "delay", "Next periapsis": "periapsis",
 DIRECTIONS = {"Prograde": (1, 0, 0), "Retrograde": (-1, 0, 0), "Normal": (0, 1, 0),
               "Anti-normal": (0, -1, 0), "Radial out": (0, 0, 1), "Radial in": (0, 0, -1)}
 KIND_TIPS = {
+    "Change orbit to...": "Give the orbit you want (perigee, apogee, tilt) and get the two "
+                          "burns that reach it, with the plane change split between them "
+                          "the cheapest way. GTO to GEO is the classic case.",
     "Impulse (V/N/B components)": "An instant kick of the velocity, given by its three "
                                   "components.",
     "Hohmann transfer": "Two burns to a new circular altitude: one to enter a transfer "
@@ -383,6 +388,9 @@ def maneuver_dialog(app):
         return None
     cur = sim.sats[app.selected].name if 0 <= app.selected < sim.n else names[0]
     other = next((n for n in names if n != cur), cur)
+    now = rv2coe(*np.split(sim.y[sim.require(cur)], 2))      # the target starts as "as is"
+    now_p = max(now.a * (1 - now.e) - R_EARTH, 0.0)
+    now_a = now.a * (1 + now.e) - R_EARTH if now.e < 1 else now_p
     specs = [
         F("sat", "Satellite", "choice", cur, names, tip="The satellite that will burn."),
         F("kind", "Maneuver", "choice", "Hohmann transfer", list(KINDS),
@@ -400,6 +408,18 @@ def maneuver_dialog(app):
         F("target_alt", "Target altitude (km)", "float", "35786",
           visible=_kind("hohmann", "bielliptic"),
           tip="Height of the circular orbit to end in (35,786 km is geostationary)."),
+        F("tgt_perigee", "Target perigee (km)", "float", f"{now_p:.0f}",
+          visible=_kind("target_orbit"),
+          tip="Height of the new orbit's lowest point above the equator's sea level. "
+              "It starts at the satellite's present value."),
+        F("tgt_apogee", "Target apogee (km)", "float", f"{now_a:.0f}",
+          visible=_kind("target_orbit"),
+          tip="Height of the new orbit's highest point (equal to the perigee for a circle; "
+              "35,786 km for both is geostationary)."),
+        F("tgt_inc", "Target inclination (deg)", "float", f"{math.degrees(now.i):.2f}",
+          visible=_kind("target_orbit"),
+          tip="Tilt of the new orbit against the equator (0 is equatorial). Tilting is "
+              "cheapest where the satellite is slow, so most of it goes to the higher burn."),
         F("rb_alt", "Intermediate apoapsis (km)", "float", "100000", visible=_kind("bielliptic"),
           tip="How high the first transfer ellipse reaches before the second burn."),
         F("delta_i", "Inclination change (deg)", "float", "-10", visible=_kind("plane_change"),
@@ -475,7 +495,10 @@ def _plan_maneuver(sim, v: dict, scan_cache: dict, aim: bool = True):
     delay = v.get("delay", 0.0)
     sat = v["sat"]
     common = dict(timing=timing, delay=delay, isp=v["isp"])
-    if kind == "hohmann":
+    if kind == "target_orbit":
+        burns, summary = plan_target_orbit(sim, sat, v["tgt_perigee"], v["tgt_apogee"],
+                                           v["tgt_inc"], timing, delay, aim)
+    elif kind == "hohmann":
         burns, summary = plan_hohmann(sim, sat, v["target_alt"], timing, delay, aim)
     elif kind == "bielliptic":
         burns, summary = plan_bielliptic(sim, sat, v["rb_alt"], v["target_alt"], timing, delay,

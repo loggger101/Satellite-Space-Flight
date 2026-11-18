@@ -500,9 +500,18 @@ def maneuver_dialog(app):
             sim.schedule(Maneuver.from_dict(b.to_dict()))
         return None
 
+    def to_node(dlg):
+        """Close this and open a burn node on the chosen satellite instead."""
+        app.select(sim.require(dlg.values()["sat"]))
+        app.close_dialog(dlg)
+        app.open("node")
+
     dlg = FormDialog(app, "Plan maneuver", specs, on_ok, "Schedule", width=560,
                      on_change=on_change, ok_hint="Schedule the burns; the event log shows "
                                                   "them when they fire",
+                     extra_buttons=[("Burn node", to_node,
+                                     "Shape the burn yourself by dragging handles on the "
+                                     "orbit in the view (Shift+B)")],
                      subtitle="VNB: V prograde, N orbit normal, B = V x N "
                               "(radial out on circular orbits)", dock="right")
     preview = app.plan_preview = PlanPreview(app, dlg)

@@ -18,7 +18,7 @@ from ..orbitinfo import orbit_info
 from ..scenario import Scenario, j2_acts, orbit_state, palette_color
 from ..simulation import ACTIVE, Simulation
 from ..tle import split_tles
-from . import background, dialogs, launchui, theme, tips, welcome
+from . import background, burnnode, dialogs, launchui, theme, tips, welcome
 from .camera import Camera
 from .groundtrack import GroundTrackView
 from .orbitviz import MODES as GEOMETRY_MODES
@@ -300,6 +300,8 @@ class App:
             MenuItem("Edit...", "Ctrl+E", lambda: self.open("edit"),
                      "Rename it or change its mass and drag area."),
             MenuItem("Maneuver...", "B", lambda: self.open("maneuver"), "Plan a burn for it."),
+            MenuItem("Burn node...", "Shift+B", lambda: self.open("node"),
+                     "Shape a burn by dragging handles on its orbit in the view."),
             MenuItem("Plot", "G", lambda: setattr(self.opts, "plot", True),
                      "Show its telemetry plot under the view."),
             MenuItem("Delete", "Del", self.delete_selected, "Remove it from the simulation."),
@@ -445,7 +447,7 @@ class App:
                    "maneuver": dialogs.maneuver_dialog, "station": dialogs.station_dialog,
                    "physics": dialogs.physics_dialog, "scenario": dialogs.scenario_dialog,
                    "edit": dialogs.edit_satellite_dialog, "launch": launchui.launch_dialog,
-                   "matlab": dialogs.matlab_export_dialog,
+                   "matlab": dialogs.matlab_export_dialog, "node": burnnode.node_dialog,
                    "start": welcome.StartScreen}[name]
         dlg = factory(self)
         if dlg is not None:
@@ -645,6 +647,9 @@ class App:
             return
         if ev.mod & pygame.KMOD_ALT and k in (pygame.K_RETURN, pygame.K_KP_ENTER):
             self.toggle_fullscreen()
+            return
+        if shift and k == pygame.K_b:
+            self.open("node")
             return
         simple = {
             pygame.K_SPACE: self.toggle_pause,

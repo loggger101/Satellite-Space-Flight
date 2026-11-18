@@ -223,6 +223,209 @@ def plan_bielliptic(sim, sat: str, rb_alt: float, target_alt: float, timing: str
     return burns, summary if aim else ESTIMATE + summary
 
 
+ONE_BURN_KM = 25.0        # km; burn 1 this close to a target apsis: one burn does it all
+SPLIT_SAMPLES = 41        # tilt splits tried before the golden-section refinement
+SPLIT_TOL = 1e-6          # fraction of the tilt; golden section stops this close
+NODE_SLACK_DEG = 0.5      # deg; a burn this far off the plane it needs takes the nearest one
+#                           (under J2 a GTO's perigee drifts off the equator: GEO's i = 0
+#                           cannot pass through it, and the summary reports what is reached)
+
+
+def plane_through(r, h_near, inc_deg: float, slack: float = 0.0) -> np.ndarray:
+    """Unit orbit normal of the plane through position ``r`` (it has to pass
+    through the burn point) with inclination ``inc_deg``, the one of the two
+    such planes nearer the normal ``h_near`` (so the satellite keeps going the
+    same way round). ValueError when no such plane exists: an orbit cannot be
+    tilted less than the latitude it is at; within ``slack`` deg of possible it
+    returns the nearest plane instead (the caller reports what it reaches)."""
+    rh = unit(np.asarray(r, dtype=float))
+    lat = math.degrees(math.asin(max(-1.0, min(1.0, float(rh[2])))))
+    z = np.array([0.0, 0.0, 1.0])
+    east = np.cross(z, rh)
+    if np.linalg.norm(east) < 1e-12:
+        raise ValueError("a burn over a pole cannot choose the orbit's tilt")
+    east = unit(east)
+    north = np.cross(rh, east)            # its z part is cos(latitude)
+    b = math.cos(math.radians(inc_deg)) / float(north[2])
+    short = abs(abs(inc_deg - 90.0) - (90.0 - abs(lat))) if abs(b) > 1.0 else 0.0
+    if abs(b) > 1.0 + 1e-12 and short > slack:
+        raise ValueError(f"a burn at latitude {abs(lat):.1f} deg cannot reach "
+                         f"{inc_deg:g} deg inclination (an orbit passing there is tilted at "
+                         f"least {abs(lat):.1f} deg); fire it at a node, where the orbit "
+                         "crosses the equator")
+    b = max(-1.0, min(1.0, b))
+    a = math.sqrt(1.0 - b * b)
+    pick = [a * east + b * north, -a * east + b * north]
+    return max(pick, key=lambda h: float(np.dot(h, h_near)))
+
+
+def _apsis_speed(r: float, r_other: float) -> float:
+    """Two-body speed, moving level at radius ``r``, of the orbit whose other
+    apsis is at radius ``r_other``."""
+    return math.sqrt(2.0 * MU_EARTH * r_other / (r * (r + r_other)))
+
+
+def _inclination(h) -> float:
+    """Inclination (deg) of the orbit with normal ``h``."""
+    return math.degrees(math.acos(max(-1.0, min(1.0, float(unit(np.asarray(h))[2])))))
+
+
+def _reach_note(h, inc: float) -> str:
+    """Summary text when the final plane misses the asked-for inclination."""
+    got = _inclination(h)
+    if abs(got - inc) < 1e-3:
+        return ""
+    return (f"; it reaches {got:.3f} deg, not {inc:g}: the burn is {abs(got - inc):.3f} deg "
+            "off the equator (J2 moves the apsides off the nodes), so trim it later")
+
+
+def _split_cost(r, v, r_far: float, r_other: float, i0: float, i_t: float, f: float,
+                strict: bool = False):
+    """Two-body delta-v (km/s) of the two burns when burn 1 at (r, v) tilts the
+    plane to ``i0 + f (i_t - i0)`` and aims the far apsis at ``r_far``, and
+    burn 2 there does the rest of the tilt and sends the opposite apsis to
+    ``r_other``. Returns (total, dv1, dv2) or infinities if a plane cannot be
+    reached (with ``strict``, the ValueError saying why)."""
+    try:
+        r = np.asarray(r, dtype=float)
+        r1 = float(np.linalg.norm(r))
+        h1 = plane_through(r, np.cross(r, v), i0 + f * (i_t - i0), NODE_SLACK_DEG)
+        s1 = _apsis_speed(r1, r_far)
+        dv1 = float(np.linalg.norm(s1 * unit(np.cross(h1, r)) - v))
+        r2v = -r * (r_far / r1)
+        v2 = (s1 * r1 / r_far) * unit(np.cross(h1, r2v))
+        h2 = plane_through(r2v, h1, i_t, NODE_SLACK_DEG)
+        dv2 = float(np.linalg.norm(_apsis_speed(r_far, r_other) * unit(np.cross(h2, r2v))
+                                   - v2))
+    except ValueError:
+        if strict:
+            raise
+        return math.inf, math.inf, math.inf
+    return dv1 + dv2, dv1, dv2
+
+
+def best_split(r, v, r_far: float, r_other: float, i0: float, i_t: float):
+    """(share f of the tilt done by burn 1, total two-body delta-v km/s) that
+    makes the two burns cheapest: a scan of ``SPLIT_SAMPLES`` shares, then a
+    golden-section search around the best one. A plane change costs
+    2 v sin(di/2), so most of it belongs where the satellite is slowest."""
+    fs = np.linspace(0.0, 1.0, SPLIT_SAMPLES)
+    costs = [_split_cost(r, v, r_far, r_other, i0, i_t, f)[0] for f in fs]
+    k = int(np.argmin(costs))
+    if not math.isfinite(costs[k]):
+        _split_cost(r, v, r_far, r_other, i0, i_t, 1.0, strict=True)    # raises the reason
+        raise ValueError("no split of the plane change can be flown from here")
+    lo, hi = fs[max(k - 1, 0)], fs[min(k + 1, len(fs) - 1)]
+    g = (math.sqrt(5.0) - 1.0) / 2.0
+
+    def cost(f):
+        return _split_cost(r, v, r_far, r_other, i0, i_t, f)[0]
+
+    a, b = hi - g * (hi - lo), lo + g * (hi - lo)
+    ca, cb = cost(a), cost(b)
+    while hi - lo > SPLIT_TOL:
+        if ca < cb:
+            hi, b, cb = b, a, ca
+            a = hi - g * (hi - lo)
+            ca = cost(a)
+        else:
+            lo, a, ca = a, b, cb
+            b = lo + g * (hi - lo)
+            cb = cost(b)
+    f = (lo + hi) / 2.0
+    return (f, cost(f)) if cost(f) <= costs[k] else (float(fs[k]), costs[k])
+
+
+def _level_burn(r, v, h_new, speed: float):
+    """(VNB delta-v km/s, |dv| km/s) that leaves (r, v) moving level at ``speed``
+    in the plane with normal ``h_new``."""
+    r = np.asarray(r, dtype=float)
+    v = np.asarray(v, dtype=float)
+    dv = speed * unit(np.cross(h_new, r)) - v
+    return tuple(float(x) for x in vnb_basis(r, v) @ dv), float(np.linalg.norm(dv))
+
+
+def plan_target_orbit(sim, sat: str, perigee_alt: float, apogee_alt: float, inc: float,
+                      timing: str = "periapsis", delay: float = 0.0, aim: bool = True):
+    """Move ``sat`` to the orbit with perigee and apogee altitudes (km) and
+    inclination ``inc`` (deg). Returns (burns, summary).
+
+    Burn 1 fires at ``timing``: it leaves the satellite moving level (so the
+    burn point becomes an apsis), aims the far apsis at one of the target
+    apsides and turns part of the plane. Burn 2 at that far apsis sends the
+    opposite apsis to the other target and turns the rest. The share of the
+    turn each burn takes is the cheapest two-body split (``best_split``); the
+    far apsis is aimed with the run's own forces as for Hohmann, and burn 2 is
+    worked out from the state predicted there. When burn 1 is already within
+    ``ONE_BURN_KM`` of a target apsis, that one burn does everything. Without
+    ``aim`` it is the two-body estimate for the preview."""
+    perigee_alt = within(perigee_alt, 0.0, MAX_ALT, "target perigee altitude (km)")
+    apogee_alt = within(apogee_alt, 0.0, MAX_ALT, "target apogee altitude (km)")
+    inc = within(inc, 0.0, 180.0, "target inclination (deg)")
+    if perigee_alt > apogee_alt:
+        raise ValueError("the target perigee is above the apogee; swap them")
+    t_b, r, v = _burn_state(sim, sat, timing, delay, aim)
+    i = sim.require(sat)
+    r1 = float(np.linalg.norm(r))
+    i0 = _inclination(np.cross(r, v))
+    rp, ra = R_EARTH + perigee_alt, R_EARTH + apogee_alt
+    near = min((rp, ra), key=lambda x: abs(x - r1))
+    if abs(near - r1) <= ONE_BURN_KM:                       # one burn: r1 is a target apsis
+        r_other = ra if near == rp else rp
+        h = plane_through(r, np.cross(r, v), inc, NODE_SLACK_DEG)
+        if abs(r_other - r1) <= ONE_BURN_KM:
+            speed = math.sqrt(MU_EARTH / r1)
+        else:
+            direction = unit(np.cross(h, r))
+            speed, _, _ = _transfer(sim, i, t_b, r, direction, r_other, aim)
+        dv_vnb, dv = _level_burn(r, v, h, speed)
+        burns = [Maneuver(sat, "impulse", timing="absolute", t=t_b, dv=dv_vnb, frame="VNB",
+                          label=f"Orbit change burn ({dv * 1000:.1f} m/s)")]
+        miss = abs(near - r1)
+        which = "height" if rp == ra else "perigee" if near == rp else "apogee"
+        summary = (f"one burn of {dv * 1000:.1f} m/s does it all (it fires {miss:,.1f} km "
+                   f"from the target {which}), "
+                   f"inclination {i0:.2f} -> {inc:.2f} deg" + _reach_note(h, inc))
+        return burns, summary if aim else ESTIMATE + summary
+    options = []
+    for r_far, r_other in ((rp, ra), (ra, rp)):
+        if abs(r_far - r1) <= ONE_BURN_KM:
+            continue                      # that transfer would have no far apsis to aim at
+        f, cost = best_split(r, v, r_far, r_other, i0, inc)
+        options.append((cost, f, r_far, r_other))
+    if not options:
+        raise ValueError("the target orbit is circular at the burn's height; use one burn")
+    cost, f, r_far, r_other = min(options)
+    if not math.isfinite(cost):
+        raise ValueError("no two-burn transfer reaches that orbit from this burn point")
+    h1 = plane_through(r, np.cross(r, v), i0 + f * (inc - i0), NODE_SLACK_DEG)
+    speed, t_2, y2 = _transfer(sim, i, t_b, r, unit(np.cross(h1, r)), r_far, aim)
+    dv1_vnb, dv1 = _level_burn(r, v, h1, speed)
+    r2 = float(np.linalg.norm(y2[:3]))
+    h2 = plane_through(y2[:3], np.cross(y2[:3], y2[3:]), inc, NODE_SLACK_DEG)
+    s2 = (math.sqrt(MU_EARTH / r2) if abs(r_other - r_far) <= ONE_BURN_KM
+          else _apsis_speed(r2, r_other))
+    dv2_vnb, dv2 = _level_burn(y2[:3], y2[3:], h2, s2)
+    tilt1 = f * (inc - i0)
+    burns = [
+        Maneuver(sat, "impulse", timing="absolute", t=t_b, dv=dv1_vnb, frame="VNB",
+                 label=f"Orbit change burn 1 ({dv1 * 1000:.1f} m/s)"),
+        Maneuver(sat, "impulse", timing="absolute", t=t_2, dv=dv2_vnb, frame="VNB",
+                 label=f"Orbit change burn 2 ({dv2 * 1000:.1f} m/s)"),
+    ]
+    v1 = float(np.linalg.norm(v))
+    v2 = float(np.linalg.norm(y2[3:]))
+    summary = (f"dV1 {dv1 * 1000:.1f} m/s (tilt {tilt1:+.2f} deg), dV2 {dv2 * 1000:.1f} m/s "
+               f"(tilt {inc - i0 - tilt1:+.2f} deg), total {(dv1 + dv2) * 1000:.1f} m/s, "
+               f"coast {(t_2 - t_b) / 3600:.2f} h" + _reach_note(h2, inc))
+    if abs(inc - i0) > 0.01:
+        big, share = ("burn 1", f) if f >= 0.5 else ("burn 2", 1.0 - f)
+        fast, slow = (v1, v2) if big == "burn 2" else (v2, v1)
+        summary += (f"; {big} takes {share:.0%} of the tilt: it fires at {slow:.2f} km/s "
+                    f"against {fast:.2f}, and turning a slower velocity costs less")
+    return burns, summary if aim else ESTIMATE + summary
+
+
 def aim(sim, sat: str, r1, v_guess, t_b: float, tof: float, r2):
     """Departure velocity that takes ``sat`` from ``r1`` at ``t_b`` to ``r2`` after
     ``tof`` s under the run's own forces: Newton iteration on the arrival miss,

@@ -640,15 +640,18 @@ class FormDialog:
     fields: any object with ``width``, ``min_height``, ``draw(surf, rect,
     dialog)`` and ``handle(ev, dialog) -> bool``. It is left out when the
     window is too narrow for it. ``extra_buttons`` are (text, callback) or
-    (text, callback, hint); ``ok_hint`` explains the OK button."""
+    (text, callback, hint); ``ok_hint`` explains the OK button. ``dock="right"``
+    puts it at the window's right edge with no shade over the rest, and mouse
+    input beside it is returned untaken (``handle`` gives False) for the view."""
 
     ROW = 32                       # design px, like ``width`` and the side panel's sizes
     MIN_ROW = 22
 
     def __init__(self, app, title: str, specs: list[FieldSpec], on_ok, ok_text: str = "OK",
                  width: int = 520, on_change=None, extra_buttons=None, subtitle: str = "",
-                 side=None, ok_hint: str = ""):
+                 side=None, ok_hint: str = "", dock: str | None = None):
         self.app = app
+        self.dock = dock
         self.title = title
         self.subtitle = subtitle
         self.specs = specs
@@ -744,7 +747,10 @@ class FormDialog:
             body = max(body, min(px(self.side.min_height), avail + px(12)))
         h = min(top + body + px(78), sh - px(20))
         self.row_h = row
-        self.rect = pygame.Rect((sw - total_w) // 2, max(px(10), (sh - h) // 2), total_w, h)
+        x = sw - total_w - px(8) if self.dock == "right" else (sw - total_w) // 2
+        y = px(46) if self.dock == "right" else max(px(10), (sh - h) // 2)
+        h = min(h, sh - y - px(10))
+        self.rect = pygame.Rect(x, y, total_w, h)
         self.side_rect = (pygame.Rect(self.rect.x + width, self.rect.y + top - px(6), side_w,
                                       self.rect.bottom - px(56) - (self.rect.y + top - px(6)))
                           if side_w else None)
@@ -821,6 +827,7 @@ class FormDialog:
                     step = -1 if ev.mod & pygame.KMOD_SHIFT else 1
                     tf[(cur + step) % len(tf)].focused = True
                 return True
+        beside = self._beside(ev)
         for b in self.buttons:
             if b.handle(ev):
                 return True
@@ -831,7 +838,9 @@ class FormDialog:
             # every widget sees clicks so text fields can lose focus
             for s in visible:
                 self.widgets[s.key].handle(ev)
-            return True
+            return not beside
+        if beside:
+            return False
         for s in visible:
             w = self.widgets[s.key]
             before = w.value
@@ -841,6 +850,18 @@ class FormDialog:
                 return True
         return True    # modal: swallow everything
 
+    def _beside(self, ev) -> bool:
+        """True for mouse input outside a docked dialog (it belongs to the view)."""
+        if self.dock is None:
+            return False
+        if ev.type == pygame.MOUSEWHEEL:
+            pos = self.app.mouse
+        elif ev.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+            pos = ev.pos
+        else:
+            return False
+        return pos is not None and not self.rect.collidepoint(pos)
+
     def field_tip(self, s: FieldSpec, raw: dict) -> str:
         """The hover tip of field ``s`` (see :func:`field_tip`)."""
         return field_tip(s, raw)
@@ -848,8 +869,11 @@ class FormDialog:
     def draw(self, surf):
         """Shade the window, then draw the frame, rows, side panel, buttons and error."""
         fonts = self.app.fonts
-        surf.blit(theme.veil(surf.get_size(), (0, 0, 0, 110)), (0, 0))
-        tips.block(surf.get_rect())             # nothing under the shade explains itself
+        if self.dock is None:
+            surf.blit(theme.veil(surf.get_size(), (0, 0, 0, 110)), (0, 0))
+            tips.block(surf.get_rect())         # nothing under the shade explains itself
+        else:
+            tips.block(self.rect)               # the view beside it keeps its tips
         theme.panel(surf, self.rect, (14, 20, 36, 245), theme.ACCENT)
         head = fonts.draw(surf, self.title, (self.rect.x + px(18), self.rect.y + px(14)),
                           theme.TEXT, fonts.title)
@@ -863,7 +887,8 @@ class FormDialog:
         for s, r in self._rows:
             if s.kind == "info":
                 text = self.info.get(s.key, "")
-                fonts.draw(surf, text, (r.x, r.centery), theme.ACCENT, fonts.small, "midleft")
+                fonts.draw(surf, fonts.fit(text, r.w, fonts.small), (r.x, r.centery),
+                           theme.ACCENT, fonts.small, "midleft")   # the tip has all of it
                 tips.add(r, "\n".join(p for p in (text, s.tip) if p))
                 continue
             fonts.draw(surf, s.label, (self.rect.x + px(18), r.centery), theme.DIM, fonts.ui,

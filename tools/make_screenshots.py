@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
@@ -49,6 +50,29 @@ def hohmann():
     """Half-way up a Hohmann transfer to GEO."""
     app = _app("hohmann_to_geo", 3 * 3600, "Transfer")
     app.camera.distance = 110000.0      # the whole transfer ellipse
+    return app
+
+
+def orbit_change():
+    """Planning the parking-orbit-to-GEO change, with its preview and card (the
+    plan as it is being made: the scenario's own burns for it are left out)."""
+    app = _app("gto_to_geo", 0, "From parking")
+    app.sim.maneuvers = [m for m in app.sim.maneuvers if m.sat != "From parking"]
+    app.paused = True
+    app.camera.distance = 160000.0
+    app.open("maneuver")
+    dlg = app.dialogs[-1]
+    for key, value in (("kind", "Change orbit to..."), ("timing", "Ascending node"),
+                       ("tgt_perigee", 35786), ("tgt_apogee", 35786), ("tgt_inc", 0)):
+        dlg.set(key, value)
+    dlg.changed("tgt_inc")
+    start = time.monotonic()
+    while not (app.plan_preview.plan() is not None and app.plan_preview.plan().aimed):
+        if time.monotonic() - start > 120:
+            raise RuntimeError("the aimed preview never came")
+        app.plan_preview._rested_at = 0.0         # no need to wait out the debounce
+        app.update(0.0)
+        time.sleep(0.05)
     return app
 
 
@@ -119,7 +143,8 @@ def start_screen():
     return app
 
 
-SCENES = {f.__name__: f for f in (overview, hohmann, starlink, molniya_ecef_map, j2_plot,
+SCENES = {f.__name__: f for f in (overview, hohmann, orbit_change, starlink, molniya_ecef_map,
+                                  j2_plot,
                                   follow_iss, orbit_inspector, launch_dialog, launch_ascent,
                                   start_screen)}
 

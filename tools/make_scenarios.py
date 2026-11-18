@@ -20,7 +20,12 @@ sys.path.insert(0, str(ROOT))
 
 from satflight.forces import ForceModel  # noqa: E402
 from satflight.launch import LAUNCH_SITES, LaunchSpec, pad_state, vehicle_preset  # noqa: E402
-from satflight.planner import plan_hohmann, plan_rendezvous, scan_rendezvous  # noqa: E402
+from satflight.planner import (  # noqa: E402
+    plan_hohmann,
+    plan_rendezvous,
+    plan_target_orbit,
+    scan_rendezvous,
+)
 from satflight.scenario import (  # noqa: E402
     DEFAULT_STATIONS,
     ConstellationSpec,
@@ -67,6 +72,33 @@ def hohmann():
     burns, summary = plan_hohmann(sim, "Transfer", 35786.0, "now")
     sc.maneuvers = burns
     sc.description += f" Plan: {summary}."
+    return sc
+
+
+def gto_to_geo():
+    """The classic way to geostationary orbit from Cape Canaveral (28.5 deg), two ways."""
+    gto = el(perigee_alt=185.0, apogee_alt=35786.0, i=28.5, raan=40.0, argp=180.0, nu=120.0)
+    sc = Scenario(
+        name="GTO to GEO",
+        description="Two satellites go from a Cape Canaveral launch (28.5 deg) to "
+                    "geostationary orbit with the Change-orbit planner. 'Apogee kick' rides "
+                    "a 185 x 35,786 km transfer orbit and fires once at apogee, turning the "
+                    "whole 28.5 deg there, where it moves slowest. 'From parking' starts in "
+                    "a 185 km circular orbit: its first burn (the transfer injection) takes "
+                    "a little of the turn for almost nothing, the second does the rest at "
+                    "apogee.",
+        epoch=EPOCH, forces=ForceModel(j2=True), warp=600,
+        satellites=[
+            SatSpec("Apogee kick", gto, mass=4000, area=15),
+            SatSpec("From parking", el(altitude=185.0, i=28.5, raan=40.0, nu=300.0),
+                    mass=6000, area=15)])
+    sim = Simulation(sc)
+    kick, kick_summary = plan_target_orbit(sim, "Apogee kick", 35786.0, 35786.0, 0.0,
+                                           "apoapsis")
+    park, park_summary = plan_target_orbit(sim, "From parking", 35786.0, 35786.0, 0.0,
+                                           "ascending_node")
+    sc.maneuvers = kick + park
+    sc.description += f" Apogee kick: {kick_summary}. From parking: {park_summary}."
     return sc
 
 
@@ -251,7 +283,8 @@ def geo_drift():
                     for lon in lons])
 
 
-ALL = {"default": default, "hohmann_to_geo": hohmann, "rendezvous": rendezvous,
+ALL = {"default": default, "hohmann_to_geo": hohmann, "gto_to_geo": gto_to_geo,
+       "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
        "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift}

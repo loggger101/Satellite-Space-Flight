@@ -167,8 +167,9 @@ def test_walker_dialog(app):
 
 
 def test_maneuver_dialog_every_kind(app):
-    kinds = ["Impulse (V/N/B components)", "Hohmann transfer", "Bi-elliptic transfer",
-             "Circularize", "Plane change", "Rendezvous (Lambert)", "Finite burn (thrust)"]
+    kinds = ["Change orbit to...", "Impulse (V/N/B components)", "Hohmann transfer",
+             "Bi-elliptic transfer", "Circularize", "Plane change", "Rendezvous (Lambert)",
+             "Finite burn (thrust)"]
     for kind in kinds:
         app.select(0)
         app.open("maneuver")
@@ -177,6 +178,11 @@ def test_maneuver_dialog_every_kind(app):
         dlg.changed("kind")
         if kind == "Circularize":
             dlg.set("timing", "Next apoapsis")
+        if kind == "Change orbit to...":
+            dlg.set("timing", "Ascending node")
+            fill(dlg, "tgt_perigee", 800)
+            fill(dlg, "tgt_apogee", 1500)
+            fill(dlg, "tgt_inc", 45)
         dlg.submit()
         assert not app.dialogs, (kind, dlg.error)
     assert len(app.sim.maneuvers) >= 8

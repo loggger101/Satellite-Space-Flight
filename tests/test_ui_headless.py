@@ -634,7 +634,10 @@ def test_start_screen_opens_on_request_and_covers_every_bundled_scenario(tmp_pat
         frame(a, 2)
         bundled = {p.stem for p in a.scenario_dir.glob("*.json")}
         assert bundled == {stem for stem, *_ in CARDS}   # a new scenario needs a label and blurb
-        assert len(a.dialogs[-1].cards) == len(bundled)
+        scr = a.dialogs[-1]
+        assert [c[0].stem for c in scr.mission] == ["default"]       # Sentinel-1 leads
+        assert len(scr.mission) + len(scr.cards) == len(bundled)
+        assert not scr.card_rects                        # the demos wait behind their button
     finally:
         pygame.quit()
 
@@ -652,9 +655,11 @@ def test_start_screen_fits_the_smallest_window_without_cutting_text(scaled_app, 
     scr.changed("drag")
     assert len(scr.form_rows) == len(SETUP_FIELDS)
     assert app.screen.get_rect().contains(scr.rect)
-    inside = [scr.setup_rect, scr.file_rect, scr.examples_rect, scr.path.rect,
-              *scr.card_rects, *scr.file_rects, *(b.rect for b in scr.buttons)]
+    inside = [scr.mission_rect, scr.setup_rect, scr.file_rect, scr.demos_row, scr.path.rect,
+              *scr.mission_rects, *scr.file_rects, *(b.rect for b in scr.buttons)]
     assert all(scr.rect.contains(r) for r in inside)
+    assert all(scr.mission_rect.contains(r) for r in scr.mission_rects)
+    assert not scr.setup_rect.colliderect(scr.mission_rect)
     assert all(scr.setup_rect.contains(row) and scr.setup_rect.contains(w.rect)
                for _, row, w in scr.form_rows)
     assert all(scr.file_rect.contains(r) for r in scr.file_rects)
@@ -665,6 +670,15 @@ def test_start_screen_fits_the_smallest_window_without_cutting_text(scaled_app, 
         if isinstance(w, Choice):                        # the arrows take the right 26 px
             for opt in w.options:
                 assert fonts.ui.size(opt)[0] <= w.rect.w - px(34), opt
+    frame(app)
+    scr.toggle_demos()                                   # the demos in place of the form
+    assert not scr.form_rows and not scr.file_rects
+    assert len(scr.card_rects) == len(scr.cards)
+    assert all(scr.demos_rect.contains(r) for r in scr.card_rects)
+    assert not any(a.colliderect(b) for i, a in enumerate(scr.card_rects)
+                   for b in scr.card_rects[i + 1:])
+    assert all(r.h >= px(12) + fonts.ui.get_linesize() + fonts.small.get_linesize()
+               for r in scr.card_rects)                  # a title and a line of blurb
     for k in range(len(scr.cards)):
         assert not scr.chip_label(k).endswith("..."), scr.chip_label(k)
     frame(app)
@@ -785,7 +799,16 @@ def test_start_screen_opens_files_and_examples(app, tmp_path, monkeypatch):
     from satflight.ui import welcome
     app.open("start")
     scr = app.dialogs[-1]
-    pos = scr.card_rects[2].center                       # an example
+    pos = scr.mission_rects[0].center                    # Sentinel-1, at the top
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert not app.dialogs and app.scenario_path.stem == "default"
+    assert [s.name for s in app.sim.sats] == ["Sentinel-1A", "Sentinel-1C"]
+    app.open("start")
+    scr = app.dialogs[-1]
+    app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1,
+                                  pos=scr.demos_button.rect.center))
+    assert scr.show_demos and scr.card_rects
+    pos = scr.card_rects[2].center                       # a demo
     app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
     assert not app.dialogs and app.scenario_path.stem == scr.cards[2][0].stem
     saved = app.user_scenario_dir / "mine.json"
@@ -991,7 +1014,7 @@ def test_every_part_of_the_window_has_a_tip_that_fits(scaled_app):
                 if s.kind != "info":
                     assert tips.at((dlg.rect.x + px(22), r.centery))[1] == dlg.field_tip(s, raw)
         else:                                               # the start screen
-            for r in dlg.card_rects + dlg.file_rects:
+            for r in dlg.mission_rects + dlg.card_rects + dlg.file_rects:
                 assert "click" in tips.at(r.center)[1].lower()
             raw = dlg.raw()
             for s, r, _ in dlg.form_rows:
@@ -1655,3 +1678,19 @@ def test_a_click_on_an_event_selects_the_satellite_it_names(app):
     app.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=hub.center))
     assert app.selected == sats.index("Hubble") and not app.follow
     frame(app)
+
+
+def test_start_screen_demos_open_and_close_by_key(app):
+    app.open("start")
+    scr = app.dialogs[-1]
+    key(app, pygame.K_d)
+    assert scr.show_demos and scr.demos_button.text == "Back to setup"
+    key(app, pygame.K_RETURN)                            # no form to start while hidden
+    key(app, pygame.K_TAB)
+    assert app.in_menu and scr.show_demos
+    frame(app, 2)
+    key(app, pygame.K_ESCAPE)                            # closes the demos, not the menu
+    assert app.in_menu and not scr.show_demos and scr.form_rows
+    scr.widgets["name"].focused = True                   # D types while a field has focus
+    key(app, pygame.K_d, text="d")
+    assert not scr.show_demos

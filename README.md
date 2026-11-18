@@ -20,14 +20,18 @@ connection and takes about a minute. After that, it starts in a couple of
 seconds.
 
 The simulator opens on a start menu that fills the window. Nothing is loaded or
-running until you choose. Most of the menu sets up a new simulation: its name,
+running until you choose. At the top, **Sentinel-1 mission** opens the
+project's own scenario: Sentinel-1A and 1C on their reference orbit. Under it,
+the menu sets up a new simulation of your own: its name,
 start date and time (UTC, or **Now**), what it begins with (one satellite, a
 constellation, a rocket launch or an empty Earth, and the matching form opens
 next; a line under the form says which), time speed, ground stations, and the
 physics (propagator, integrator, J2/J3/J4, C22, air drag and solar activity).
 Beside it, **Open a file** takes a scenario
 (`.json`) or TLE file: type its path, **Browse...** (`Ctrl+O`) for it, or click
-one you saved. A row of ready-made examples runs along the bottom. `Ctrl+N` (or
+one you saved. The other bundled scenarios, proofs of concept that each show
+one idea, wait behind **Demos** (`D`), which shows them in place of the form;
+`Esc` or **Back to setup** returns. `Ctrl+N` (or
 **Start menu** in the left panel) brings the menu back and holds the simulation
 still; `Esc` or **Resume** returns to it where it stopped. `H` lists every key.
 To open a scenario file directly, drop it onto the Windows launcher.
@@ -285,10 +289,11 @@ plan (liftoff time, plane, pitch kick), and one in powered flight keeps its
 whole flight state (stage, propellant, steering) and goes on flying. "Export MATLAB" writes the simulation as a MATLAB
 live script (see [Using it from MATLAB](#using-it-from-matlab)).
 
-The start menu's examples row shows every bundled scenario, with a short label
-and a plain-language line from `CARDS` in
-[`satflight/ui/welcome.py`](satflight/ui/welcome.py); a new bundled scenario
-needs an entry there too (a test checks).
+The start menu shows every bundled scenario, with a short label and a
+plain-language line from [`satflight/ui/welcome.py`](satflight/ui/welcome.py):
+`MISSION` (the Sentinel-1 box at the top; more Sentinel-1 scenarios go there)
+or `DEMOS` (behind the Demos button). A new bundled scenario needs an entry in
+one of them (a test checks).
 
 ## Calculating without graphics
 
@@ -432,7 +437,7 @@ satflight/            physics engine (numpy only)
   strict.py           strict reading and range checks of scenario input
   ui/                 pygame front end
     app.py            window, main loop, input and time control
-    welcome.py        start menu: new-simulation setup, open a file, examples
+    welcome.py        start menu: Sentinel-1 mission, new-simulation setup, open a file, demos
     camera.py         perspective camera, projection and Earth occlusion
     render3d.py       3-D scene: stars, Sun, orbits, trails, satellites, stations
     earth.py          ray-traced, textured and sunlit Earth

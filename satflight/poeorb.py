@@ -351,9 +351,11 @@ class Arc:
         t0 = self.utc[0] if t0 is None else np.datetime64(t0, "us")
         return _seconds(self.utc - t0)
 
-    def eci(self):
-        """(r, v) in the simulator's ECI frame (km, km/s), see :func:`to_eci`."""
-        return to_eci(self.utc, self.dut1, self.r, self.v)
+    def eci(self, eop=None):
+        """(r, v) in the simulator's ECI frame (km, km/s), see :func:`to_eci`;
+        with ``eop`` (an ``eop.Table``) polar motion is taken out."""
+        pole = None if eop is None else eop.pole(self.utc)
+        return to_eci(self.utc, self.dut1, self.r, self.v, pole=pole)
 
 
 def julian_dates(utc: np.ndarray) -> np.ndarray:
@@ -362,14 +364,22 @@ def julian_dates(utc: np.ndarray) -> np.ndarray:
     return 2440587.5 + _seconds(np.asarray(utc, "datetime64[us]") - unix) / 86400.0
 
 
-def to_eci(utc, dut1, r_ecef, v_ecef):
+def to_eci(utc, dut1, r_ecef, v_ecef, pole=None):
     """Earth-fixed states (km, km/s) into the simulator's ECI frame: the Earth
     turned back by GMST at each state's UT1 (``frames``: ECI is of-date, so no
-    precession or nutation enters). Polar motion (~10 m) is neglected."""
+    precession or nutation enters). ``pole`` = (x_p, y_p) rad per state (see
+    ``eop``) first takes the ITRF onto the spin axis; without it polar motion
+    (~15 m, a daily cross-track wobble) is neglected."""
     from .frames import ecef_to_eci_state
     from .timeutil import gmst
+    r_ecef, v_ecef = np.asarray(r_ecef, float), np.asarray(v_ecef, float)
+    if pole is not None:
+        from .eop import itrf_to_tirs
+        W = itrf_to_tirs(*pole)
+        r_ecef = np.einsum("nij,nj->ni", W, r_ecef)
+        v_ecef = np.einsum("nij,nj->ni", W, v_ecef)
     theta = gmst(julian_dates(utc) + np.asarray(dut1, float) / 86400.0)
-    return ecef_to_eci_state(np.asarray(r_ecef, float), np.asarray(v_ecef, float), theta)
+    return ecef_to_eci_state(r_ecef, v_ecef, theta)
 
 
 # m: neighbouring days' solutions must agree this well where they overlap (at

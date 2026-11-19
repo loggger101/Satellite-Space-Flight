@@ -393,6 +393,8 @@ repository (about half a GB for a year):
 
 ```bash
 python tools/fetch_poeorb.py            # S1A and S1C, 2025-07-01 to 2026-06-30
+python tools/fetch_eop.py               # IERS polar motion and UT1-UTC (~4 MB)
+python tools/fit_arc.py S1A 2025-07-03 --check 24   # fit a day, fly one more
 ```
 
 It downloads into `$SATFLIGHT_DATA/poeorb/` (default `~/satflight-data`),
@@ -401,8 +403,10 @@ skips days already there and reports days ESA has no file for.
 frame, the 10 s spacing, units, quality flags, UT1 and leap seconds, and
 velocities against positions. It stitches days into one arc, measures how
 well neighbouring days agree, and converts the states into the simulator's
-frame at each sample's UT1. Burn windows (`DEGRADED-MANOEUVRE`) are kept
-and flagged. The plan for the rest of this work (EGM2008, fitting,
+frame at each sample's UT1, taking out polar motion with the IERS table.
+Burn windows (`DEGRADED-MANOEUVRE`) are kept and flagged. `satflight.fit`
+fits the simulator's forces to a day of it (start state, drag, sunlight
+pressure and each burn as an impulse): 2.3 m RMS over a burn-free day. The plan for the rest of this work (EGM2008, fitting,
 replay, reports) is in
 [docs/specs/2026-11-18-sentinel1-poeorb-plan.md](docs/specs/2026-11-18-sentinel1-poeorb-plan.md).
 Contains modified Copernicus Sentinel data.

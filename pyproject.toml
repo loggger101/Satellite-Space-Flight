@@ -23,7 +23,7 @@ include = ["satflight*"]
 
 [tool.setuptools.package-data]
 # the MATLAB port of the engine that satflight.matlab_export appends to every script
-satflight = ["matlab_runtime.m"]
+satflight = ["matlab_runtime.m", "data/*.gfc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

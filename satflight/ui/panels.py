@@ -669,7 +669,9 @@ def _environment_rows(sim, i, r, v):
     rows = [("Illumination", f"{shadow_state(s.shadow)} ({s.shadow * 100:.0f}%)"),
             ("Beta angle", num(math.degrees(beta_angle(r, v, sun_position(sim.jd()))), "deg", 2))]
     cd_am = s.cd * s.area / s.mass
-    for name, (mag, on) in sim.forces.breakdown(r, v, cd_am, sim.gmst()).items():
+    cr_am = s.cr * s.area / s.mass
+    for name, (mag, on) in sim.forces.breakdown(r, v, cd_am, sim.gmst(), sim.jd(),
+                                                cr_am).items():
         rows.append((f"  a_{name}" + ("" if on else " (off)"), f"{mag * 1e3:.3e} m/s^2"))
     e_now = sim.energy(i)
     if s.energy_ref is None or any(b.man.sat == s.name for b in sim.burns):

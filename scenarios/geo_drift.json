@@ -16,7 +16,11 @@
     "j4": false,
     "c22": true,
     "drag": false,
-    "density_scale": 1.0
+    "density_scale": 1.0,
+    "gravity_degree": 0,
+    "sun": false,
+    "moon": false,
+    "srp": false
   },
   "record_dt": 20.0,
   "warp": 86400,

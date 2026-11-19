@@ -24,10 +24,14 @@ J4 = -1.61962159137e-6
 C22 = 1.57446037456e-6
 S22 = -9.03803806639e-7
 
-# --- Sun (position only: lighting, eclipses, beta angle) -------------------
-# The Sun and Moon exert no force in this simulator; see docs/SCOPE.md.
+# --- Sun and Moon --------------------------------------------------------
+# Their gravity and sunlight pressure are per-scenario switches (ForceModel
+# sun, moon, srp: on for Sentinel-1, off for the demos); see docs/SCOPE.md.
 R_SUN = 696000.0                  # km
 AU = 149597870.7                  # km
+MU_SUN = 1.32712440018e11         # km^3/s^2 (IAU / DE)
+MU_MOON = 4902.800066             # km^3/s^2 (DE)
+P_SRP = 4.56e-6                   # N/m^2, solar radiation pressure at 1 AU
 SOI_EARTH = 924000.0              # km, Earth's sphere of influence w.r.t. the Sun
 
 # --- Time ---------------------------------------------------------------

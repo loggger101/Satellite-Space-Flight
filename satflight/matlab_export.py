@@ -178,6 +178,16 @@ def _epoch_text(epoch: datetime) -> str:
     return ensure_utc(epoch).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def unported_forces(forces) -> list[str]:
+    """The enabled force terms ``matlab_runtime.m`` cannot fly yet."""
+    out = [f"the EGM2008 {forces.gravity_degree}x{forces.gravity_degree} field"
+           ] if forces.field else []
+    return out + [label for key, label in (("sun", "the Sun's gravity"),
+                                           ("moon", "the Moon's gravity"),
+                                           ("srp", "sunlight pressure"))
+                  if getattr(forces, key)]
+
+
 def export_live_script(sim: Simulation, path, start: str = "now", duration: float = 86400.0,
                        step: float = 60.0, compare: bool = True) -> Path:
     """Write ``sim`` as a MATLAB live script at ``path`` (see the module notes).
@@ -197,6 +207,11 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
         raise ValueError(f"{path.name}: a MATLAB script needs a .m name made of letters, "
                          "digits and underscores, starting with a letter "
                          f"(e.g. {matlab_name(path.stem)}.m)")
+    missing = unported_forces(sim.forces)
+    if missing:
+        raise ValueError(f"the MATLAB runtime does not model {', '.join(missing)} yet; "
+                         "switch them off in Physics (P) to export, or wait for the "
+                         "MATLAB port (docs/specs/2026-11-18-sentinel1-poeorb-plan.md, step 6)")
 
     if start == "now":
         scenario = sim.snapshot_scenario(sim.scenario.name)

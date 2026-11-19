@@ -27,8 +27,7 @@ period and a 1584-satellite shell closes its gaps within days.
 
 Reading is strict (``satflight.strict``): an unknown key, a missing required
 one, an unknown option or a value out of range raises ValueError naming where
-it is. Only out-of-scope forces and properties (Sun, Moon, SRP, ``cr``) are
-let through, and reported in ``Scenario.out_of_scope``.
+it is.
 """
 
 from __future__ import annotations
@@ -92,19 +91,12 @@ ORBIT_REQUIRED = {"state": ("r", "v"), "tle": ("line1", "line2")}
 SIZES = (("a",), ("altitude",), ("perigee_alt", "apogee_alt"))
 
 
-# satellite properties of forces that are out of scope (see docs/SCOPE.md):
-# older files carry them; they are reported like the forces, never refused
-OUT_OF_SCOPE_PROPS = {"cr": "Cr reflectivity (solar radiation pressure)"}
+CR_DEFAULT = 1.3      # reflectivity: 1 absorbs all sunlight, 2 mirrors it straight back
 
 
-def _out_of_scope_props(d, ignored: list):
-    """``d`` without out-of-scope properties, each noted once in ``ignored``."""
-    if not isinstance(d, dict):
-        return d
-    for key, label in OUT_OF_SCOPE_PROPS.items():
-        if key in d and label not in ignored:
-            ignored.append(label)
-    return {k: v for k, v in d.items() if k not in OUT_OF_SCOPE_PROPS}
+def check_cr(cr, what: str):
+    """Raise ValueError unless ``cr`` is a reflectivity coefficient (0..2.5)."""
+    within(cr, 0.0, 2.5, f"{what} reflectivity Cr")
 
 
 def check_orbit(orbit, where: str = "orbit"):
@@ -186,7 +178,8 @@ def _check_numbers(orbit, where: str):
 
 @dataclass
 class SatSpec:
-    """One satellite (or ``count`` copies sharing an orbit) and its drag properties."""
+    """One satellite (or ``count`` copies sharing an orbit), its drag properties
+    and its sunlight reflectivity ``cr`` (used when sunlight pressure is on)."""
 
     name: str
     orbit: dict
@@ -196,19 +189,24 @@ class SatSpec:
     cd: float = 2.2
     count: int = 1
     dry_mass: float = 0.0    # kg left when the propellant is gone; 0 = no limit
+    cr: float = CR_DEFAULT   # sunlight reflectivity (area as for drag)
 
     def __post_init__(self):
         drag_props(self.mass, self.area, self.cd, f"satellite {self.name!r}")
+        check_cr(self.cr, f"satellite {self.name!r}")
         check_dry_mass(self.dry_mass, self.mass, f"satellite {self.name!r}")
         whole(self.count, 1, MAX_GROUP, f"satellite {self.name!r} count")
 
     def to_dict(self):
-        """JSON-ready dict (the color as a list; no dry mass when there is no limit)."""
+        """JSON-ready dict (the color as a list; no dry mass when there is no
+        limit, no Cr when it is the default)."""
         d = asdict(self)
         if d["color"] is not None:
             d["color"] = list(d["color"])
         if not d["dry_mass"]:
             del d["dry_mass"]
+        if d["cr"] == CR_DEFAULT:
+            del d["cr"]
         return d
 
 
@@ -229,6 +227,7 @@ class ConstellationSpec:
     cd: float = 2.2
     raan0: float = 0.0
     dry_mass: float = 0.0    # kg each, 0 = no propellant limit
+    cr: float = CR_DEFAULT   # sunlight reflectivity of each
 
     def __post_init__(self):
         where = f"constellation {self.name!r}"
@@ -239,13 +238,17 @@ class ConstellationSpec:
         whole(self.phasing, 0, MAX_GROUP, f"{where} phasing")
         finite(self.raan0, f"{where} raan0")
         drag_props(self.mass, self.area, self.cd, where)
+        check_cr(self.cr, where)
         check_dry_mass(self.dry_mass, self.mass, where)
 
     def to_dict(self):
-        """JSON-ready dict of the constellation's fields (no dry mass when unlimited)."""
+        """JSON-ready dict of the constellation's fields (no dry mass when
+        unlimited, no Cr when it is the default)."""
         d = asdict(self)
         if not d["dry_mass"]:
             del d["dry_mass"]
+        if d["cr"] == CR_DEFAULT:
+            del d["cr"]
         return d
 
 
@@ -316,12 +319,10 @@ class Scenario:
     integrator: IntegratorSettings = field(default_factory=IntegratorSettings)
     record_dt: float = 20.0              # s between trail / telemetry samples
     warp: float = 60.0                   # initial time acceleration
-    # out-of-scope forces the source file asked for (not saved back)
-    out_of_scope: list = field(default_factory=list, repr=False)
 
     # --- serialization ---
     def to_dict(self):
-        """The JSON form written by :meth:`save` (out-of-scope requests are dropped)."""
+        """The JSON form written by :meth:`save`."""
         return {
             "name": self.name,
             "description": self.description,
@@ -346,13 +347,12 @@ class Scenario:
         """Build from the JSON form; missing keys take their defaults, and an
         unknown key or value raises ValueError naming it."""
         check_keys(d, cls.KEYS, "scenario")
-        ignored = ForceModel.ignored_terms(d.get("forces", {}))
         sats = []
         for k, s in enumerate(d.get("satellites", [])):
             where = f"satellite {s.get('name', k + 1)!r}" if isinstance(s, dict) else "satellite"
-            sats.append(build(SatSpec, _out_of_scope_props(s, ignored), where))
+            sats.append(build(SatSpec, s, where))
             check_orbit(s["orbit"], where + " orbit")
-        cons = [build(ConstellationSpec, _out_of_scope_props(c, ignored), f"constellation {k + 1}")
+        cons = [build(ConstellationSpec, c, f"constellation {k + 1}")
                 for k, c in enumerate(d.get("constellations", []))]
         for c in cons:
             one_of(c.pattern, PATTERNS, f"constellation {c.name!r} pattern")
@@ -373,7 +373,6 @@ class Scenario:
                       for k, g in enumerate(d.get("stations", []))],
             maneuvers=[Maneuver.from_dict(m) for m in d.get("maneuvers", [])],
             launches=[LaunchSpec.from_dict(s) for s in d.get("launches", [])],
-            out_of_scope=ignored,
         )
 
     @classmethod
@@ -568,12 +567,13 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
         for k, (rr, vv) in enumerate(states):
             name = spec.name if len(states) == 1 else f"{spec.name}-{k + 1}"
             color = tuple(spec.color) if spec.color else palette_color(idx)
-            props = dict(mass=spec.mass, area=spec.area, cd=spec.cd, dry_mass=spec.dry_mass)
+            props = dict(mass=spec.mass, area=spec.area, cd=spec.cd, dry_mass=spec.dry_mass,
+                         cr=spec.cr)
             out.append((name, color, props, rr, vv))
             idx += 1
     for c in scenario.constellations:
         color = tuple(c.color) if c.color else palette_color(idx)
-        props = dict(mass=c.mass, area=c.area, cd=c.cd, dry_mass=c.dry_mass)
+        props = dict(mass=c.mass, area=c.area, cd=c.cd, dry_mass=c.dry_mass, cr=c.cr)
         for name, rr, vv in walker_states(c, j2_acts(scenario.propagator, scenario.forces)):
             out.append((name, color, props, rr, vv))
         idx += 1

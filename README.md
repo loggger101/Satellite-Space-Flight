@@ -123,7 +123,10 @@ taking shape and the time to cutoff.
 **Dynamics** (all vectorized over the whole satellite ensemble)
 
 - Two-body gravity plus zonal harmonics **J2, J3, J4** and the tesseral **C22/S22** term
-  (the Earth's equatorial ellipticity, which makes geostationary satellites drift)
+  (the Earth's equatorial ellipticity, which makes geostationary satellites drift), or
+  the full **EGM2008** field to degree and order 70 in their place
+- **Sun and Moon gravity** and **sunlight pressure** (cannonball `Cr`, off in the
+  Earth's shadow)
 - **Atmospheric drag** (piecewise-exponential atmosphere, co-rotating with the Earth,
   solar-activity scale factor)
 - Impulsive burns and **finite-thrust burns** with propellant use (Tsiolkovsky), and an
@@ -132,10 +135,11 @@ taking shape and the time to cutoff.
   Atmosphere's pressure, drag, staging, fairing jettison, an optional g-limit, a gravity
   turn and closed-loop guidance
 
-Only the Earth acts on the satellites. Sun and Moon gravity, solar radiation
-pressure and the Moon itself are **out of the present scope**; the Sun's
-position is still computed for lighting, eclipses, beta angle and local solar
-time. [docs/SCOPE.md](docs/SCOPE.md) lists everything that was removed.
+Every term is a switch in the scenario and in Physics (`P`). The demos fly the
+Earth's J2-J4. The Sentinel-1 work flies the full set: started from one of ESA's
+precise states, Sentinel-1A stays within 49 m of its real track after 6 h,
+against 938 m with J2-J4 alone, before any fitting.
+[docs/SCOPE.md](docs/SCOPE.md) has what is in and out.
 
 **Propagators**
 
@@ -439,9 +443,10 @@ satflight/            physics engine (numpy only)
   timeutil.py         Julian dates, GMST, clock
   frames.py           ECI, ECEF, geodetic, ENU, RSW, VNB
   elements.py         elements <-> state, anomalies, universal Kepler, conics
-  forces.py           gravity, J2-J4, C22/S22, drag
+  forces.py           gravity, J2-J4, C22/S22, drag, Sun, Moon, sunlight pressure
+  gravity.py          EGM2008 spherical harmonics to 70x70 (data/egm2008_70.gfc)
   atmosphere.py       exponential atmosphere
-  ephemeris.py        Sun position (lighting and eclipses only)
+  ephemeris.py        Sun and Moon positions
   eclipse.py          umbra / penumbra
   integrators.py      DOPRI5, RK4, Wisdom-Holman, leapfrog
   maneuvers.py        transfers, Lambert, maneuver objects

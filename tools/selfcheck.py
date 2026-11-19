@@ -140,7 +140,8 @@ def physics(path: Path, hours: float):
     notes = [f"{hours:g} h in {cost:.1f} s"]
     ok = True
     # energy: only where nothing adds or removes any
-    if not (sc.forces.drag or sc.maneuvers or sc.launches) and sim.n == n0:
+    if not (sc.forces.drag or sc.forces.needs_time or sc.maneuvers or sc.launches) \
+            and sim.n == n0:
         e1 = conservative_energy(sim.y[:, :3], sim.y[:, 3:], model, sim.gmst())
         drift = float(np.max(np.abs((e1 - e0) / e0)))
         fixed = sim.integrator.method != "dopri5" and sim.propagator == "cowell"

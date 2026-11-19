@@ -380,6 +380,29 @@ python -m satflight.matlab_export scenarios/hohmann_to_geo.json --out hohmann.m 
 The file is in MATLAB's plain-text Live Code format (`.m`, R2025a or later),
 which opens in the Live Editor with its headings and inline figures.
 
+## Sentinel-1 precise orbits
+
+The project's goal is to map Sentinel-1A and 1C accurately. The ground truth
+is ESA's precise orbit files (POEORB, a few cm accurate): one per satellite
+per day, with Earth-fixed state vectors every 10 s. They are kept outside the
+repository (about half a GB for a year):
+
+```bash
+python tools/fetch_poeorb.py            # S1A and S1C, 2025-07-01 to 2026-06-30
+```
+
+It downloads into `$SATFLIGHT_DATA/poeorb/` (default `~/satflight-data`),
+skips days already there and reports days ESA has no file for.
+`satflight.poeorb` reads them, refusing any file that fails a check: the
+frame, the 10 s spacing, units, quality flags, UT1 and leap seconds, and
+velocities against positions. It stitches days into one arc, measures how
+well neighbouring days agree, and converts the states into the simulator's
+frame at each sample's UT1. Burn windows (`DEGRADED-MANOEUVRE`) are kept
+and flagged. The plan for the rest of this work (EGM2008, fitting,
+replay, reports) is in
+[docs/specs/2026-11-18-sentinel1-poeorb-plan.md](docs/specs/2026-11-18-sentinel1-poeorb-plan.md).
+Contains modified Copernicus Sentinel data.
+
 ## Accuracy and validation
 
 The physics is checked by the `pytest` suite, including textbook reference
@@ -434,6 +457,7 @@ satflight/            physics engine (numpy only)
   matlab_export.py    the simulation as a MATLAB live script (Scenarios > Export MATLAB)
   matlab_runtime.m    the engine ported to MATLAB, appended to every exported script
   tle.py              TLE parsing (+ optional SGP4)
+  poeorb.py           ESA Sentinel-1 precise orbit files: read, check, stitch, to ECI
   strict.py           strict reading and range checks of scenario input
   ui/                 pygame front end
     app.py            window, main loop, input and time control
@@ -457,7 +481,8 @@ satflight/            physics engine (numpy only)
     theme.py          colors, fonts and drawing helpers
 scenarios/            example scenarios
 matlab/               MATLAB toolkit: build scenarios, run them, plot the results
-tools/                scenario and README-picture generators, asset downloader, selfcheck
+tools/                scenario and README-picture generators, asset and orbit-file
+                      downloaders, selfcheck
 tests/                pytest suite
 start.py              launcher: sets up numpy and pygame-ce if needed, then starts
 Start Satellite Space Flight.bat / .command    double-click launchers (Windows / macOS)

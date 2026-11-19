@@ -1,8 +1,8 @@
 """Time scales: Julian dates, sidereal time and epoch helpers.
 
-UT1 is approximated by UTC (|UT1-UTC| < 0.9 s), which shifts the Earth's
-rotation angle by at most ~13 arcseconds - far below what the display or the
-low-precision ephemerides resolve.
+UT1 is taken as UTC (|UT1-UTC| < 0.9 s, at most ~13 arcseconds of Earth
+rotation) unless a :class:`Clock` is given ``dut1``: precise orbit files
+(``poeorb``) carry it, and there 0.9 s is ~0.4 km of ground track.
 """
 
 from __future__ import annotations
@@ -74,9 +74,14 @@ def gmst(jd):
 class Clock:
     """Maps simulation seconds since the scenario epoch onto calendar time."""
 
-    def __init__(self, epoch: datetime):
+    def __init__(self, epoch: datetime, dut1: float = 0.0):
+        """``dut1`` is UT1 - UTC in s (|dut1| < 0.9), the Earth's rotation lag:
+        0 takes UT1 as UTC; precise orbit files give the real value."""
+        if not abs(dut1) < 0.9:
+            raise ValueError(f"UT1-UTC = {dut1} s; it is always within 0.9 s")
         self.epoch = ensure_utc(epoch)
         self.jd0 = julian_date(self.epoch)
+        self.dut1 = float(dut1)
 
     def jd(self, t):
         """Julian date at simulation time(s) ``t`` (s)."""
@@ -85,7 +90,10 @@ class Clock:
         return self.jd0 + float(t) / SECONDS_PER_DAY
 
     def gmst(self, t):
-        """Greenwich mean sidereal time (rad) at simulation time(s) ``t``."""
+        """Greenwich mean sidereal time (rad) at simulation time(s) ``t``: the
+        Earth's rotation, so taken at UT1 (UTC + ``dut1``)."""
+        if self.dut1:
+            return gmst(self.jd(t) + self.dut1 / SECONDS_PER_DAY)
         return gmst(self.jd(t))
 
     def datetime(self, t: float) -> datetime:

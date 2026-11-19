@@ -1,10 +1,10 @@
 # Physics and numerical models
 
 Units throughout: km, s, kg (accelerations km/s^2). The Earth is the central
-body; every state is geocentric. Only the Earth acts on the satellites: Sun
-and Moon gravity and solar radiation pressure are out of the present scope
-(see [SCOPE.md](SCOPE.md)). The Sun's position is still computed for
-lighting, eclipses, beta angle and local solar time.
+body; every state is geocentric. The Earth's gravity (J2-J4 and C22, or
+the full EGM2008 field), drag, the Sun's and Moon's gravity and sunlight
+pressure are each switched per scenario: the demos fly the Earth's J2-J4,
+and the Sentinel-1 work flies everything (see [SCOPE.md](SCOPE.md)).
 
 ## Frames and time
 
@@ -44,6 +44,8 @@ clearing the poles by 15 km is not "suborbital".
 ## Equations of motion
 
     r'' = -mu r / r^3 + a_J2 + a_J3 + a_J4 + a_C22 + a_drag + a_thrust
+                      (or a_EGM2008 in place of a_J2..a_C22)
+                      + a_Sun + a_Moon + a_SRP          (when switched on)
 
 **Zonal harmonics** - accelerations are the gradients of
 
@@ -66,6 +68,34 @@ effect is on geostationary satellites: they accelerate in longitude toward
 away, `geo_drift.json`). Launch ascents and the analytic propagators leave
 it out.
 
+**EGM2008 field** (`gravity_degree` N = 2..70, off by default). The Earth's
+measured field (Pavlis et al. 2012; fully normalized, tide-free, from ICGEM,
+GM = 398600.4415 km^3/s^2, Re = 6378.1363 km) to degree and order N stands
+in for the J2..C22 terms. Only degrees 2..N are added to the point mass,
+which keeps the simulator's GM: the two differ by 8e-10, about 0.25 m a day
+along track, and an orbit fit absorbs it. The acceleration comes from
+Cunningham's V/W recursion (Montenbruck & Gill 3.2.4-3.2.5) in Earth-fixed
+coordinates at GMST(UT1). It runs degree by degree with every order and
+satellite at once: about 1.6 ms for one satellite at 70x70 and 10 ms for 30.
+The tests check it against an independent potential from normalized Legendre
+functions: the gradient agrees to 5e-10 at degrees 2, 5, 20 and 70. Degree 2
+alone reproduces J2 + C22 to 3e-6, the C21/S21 remainder. The Jacobi integral
+`E - omega h_z` is conserved to 1e-11 over 3 h. The `j*` switches still
+drive the analytic helpers (sun-synchronous inclination, launch guidance,
+mean elements).
+
+**Sun and Moon** (`sun`, `moon`) add their tides,
+`mu_b (d/|d|^3 - r_b/|r_b|^3)` with `d = r_b - r`, from the almanac series
+(the Sun to ~0.01 deg; the Moon, Vallado Alg. 31, to ~0.3 deg and a few
+hundred km). At 700 km the Moon's tide peaks at 1.2e-6 m/s^2 and the
+Sun's at 5.6e-7. Their position errors change the force by under 1e-3.
+
+**Sunlight pressure** (`srp`): a cannonball,
+`a = P (AU/d)^2 Cr A/m * nu`, pointing away from the Sun, with
+P = 4.56e-6 N/m^2 at 1 AU, `Cr` per satellite (default 1.3; the area is the
+drag area) and `nu` the sunlit fraction below. For Sentinel-1 (about
+2,200 kg, 10 m^2) it is about 3e-8 m/s^2.
+
 **Geostationary slots.** A `geo` orbit sits where the equatorial pull
 `mu / r^2 (1 + 3/2 J2 (Re/r)^2)` matches the Earth's rotation when J2 acts,
 ~0.5 km above the two-body R_GEO; at R_GEO it drifted east 0.8 deg a month.
@@ -79,7 +109,7 @@ extrapolated to 2500 km and zero above. `density_scale` multiplies it to mimic
 solar maximum (~3x at 400 km) or minimum (~0.3x); real densities vary by an
 order of magnitude over the solar cycle, so decay times are indicative.
 
-**Sun position (no force)** - Astronomical Almanac series (~0.01 deg,
+**Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:
 `nu`, the visible fraction of the solar disc from the conical umbra /
 penumbra model (Montenbruck & Gill 3.4.2), dims satellites in shadow and
@@ -437,14 +467,16 @@ down, without flying the run forward (satflight/lifetime.py):
 
 ## Known simplifications
 
-- Of the non-zonal harmonics only C22/S22 (no C21/S21, C31, ...).
-- The inertial frame is of date (see Frames); no polar motion or UT1-UTC.
+- Without `gravity_degree`, of the non-zonal harmonics only C22/S22.
+- The inertial frame is of date (see Frames). There is no polar motion.
+  UT1-UTC is zero unless a Clock is given `dut1` (precise orbit files carry it).
 - The analytic propagators apply only two-body motion (kepler) or two-body
   plus J2 (j2mean); a run that has other terms switched on logs a warning
   naming them.
-- No Sun or Moon gravity and no solar radiation pressure (out of scope,
-  [SCOPE.md](SCOPE.md)); the low-precision Sun ephemeris is used for lighting
-  and eclipses only.
+- Sun and Moon from low-precision series; sunlight pressure as a cannonball
+  (no attitude-dependent panels, no Earth albedo or infrared). Tides, polar
+  motion and relativity are not modelled ([SCOPE.md](SCOPE.md)).
+- Launch ascents fly J2-J4 and drag whatever else the scenario switches on.
 - Static exponential atmosphere (no diurnal bulge, no space-weather input).
 - Launch vehicles: point mass with instantaneous attitude (no rotational
   dynamics or aerodynamic loads, no winds), serial staging only (no strap-on

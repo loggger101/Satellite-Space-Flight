@@ -213,28 +213,27 @@ def test_launch_from_surface_is_not_flagged_as_reentry():
     assert sim.sats[0].status in ("re-entered", "impacted")
 
 
-def test_sun_and_moon_forces_are_out_of_scope(tmp_path):
-    """Only the Earth acts on satellites: a scenario asking for Sun/Moon
-    gravity or SRP still loads, runs Earth-only and says what it ignored."""
+def test_older_files_asking_for_the_sun_and_moon_now_get_them(tmp_path):
+    """Files written while the Sun, Moon and sunlight pressure were out of scope
+    (they asked for them, and they were ignored) load and now fly them."""
     import json
-    assert set(ForceModel.TERMS) == {"j2", "j3", "j4", "c22", "drag"}   # Earth only
-    assert not {"sun", "moon", "srp"} & set(vars(ForceModel()))
     d = Scenario(name="old", satellites=[]).to_dict()
     d["forces"].update(sun=True, moon=True, srp=False)
+    for k in ("gravity_degree", "srp"):
+        d["forces"].pop(k, None)                   # old files did not have every key
     heo = {"type": "elements", "perigee_alt": 1000, "apogee_alt": 120000, "i": 60}
     d["satellites"] = [{"name": "HEO", "cr": 1.8, "orbit": heo}]
     path = tmp_path / "old.json"
     path.write_text(json.dumps(d), encoding="utf-8")
     sc = Scenario.load(path)
-    assert sc.out_of_scope == ["Sun third-body gravity", "Moon third-body gravity",
-                               "Cr reflectivity (solar radiation pressure)"]
-    assert "out_of_scope" not in sc.to_dict() and "sun" not in sc.to_dict()["forces"]
+    assert sc.forces.sun and sc.forces.moon and not sc.forces.srp
+    assert sc.satellites[0].cr == 1.8
     sim = Simulation(sc)
-    assert any(e.kind == "warn" and "Moon third-body" in e.text for e in sim.events)
+    assert not any(e.kind == "warn" for e in sim.events)
     ref = Simulation(Scenario(name="earth only", satellites=sc.satellites, forces=ForceModel()))
     sim.advance(6 * 3600)
     ref.advance(6 * 3600)
-    assert np.array_equal(sim.y, ref.y)
+    assert np.linalg.norm(sim.y[0, :3] - ref.y[0, :3]) > 0.1      # km: the Moon moved it
 
 
 def test_split_tles_reads_two_and_three_line_files():

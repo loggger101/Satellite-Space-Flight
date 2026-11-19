@@ -216,6 +216,7 @@ class Satellite:
     area: float = 5.0
     cd: float = 2.2
     dry_mass: float = 0.0         # kg left with the propellant gone; 0 = no limit
+    cr: float = 1.3               # sunlight reflectivity (scenario.CR_DEFAULT)
     status: str = ACTIVE
     dv_used: float = 0.0          # km/s
     shadow: float = 1.0           # illuminated fraction
@@ -337,8 +338,6 @@ class Simulation:
         self._post_step(self.t, force_record=True)
         self.log(f"Scenario '{scenario.name}' loaded: {len(self.sats)} satellites, "
                  f"{len(self.stations)} stations, propagator {self.propagator}")
-        if scenario.out_of_scope:
-            self.log("Ignored (out of scope): " + ", ".join(scenario.out_of_scope), "warn")
         self.warn_ignored()
 
     # --- bookkeeping -----------------------------------------------------------------
@@ -508,8 +507,8 @@ class Simulation:
         carry only two-body motion (kepler) or two-body plus J2 (j2mean)."""
         if self.propagator == "cowell":
             return []
-        used = ("j2",) if self.propagator == "j2mean" else ()
-        return [t.upper() for t in ForceModel.TERMS if getattr(self.forces, t) and t not in used]
+        used = ("J2",) if self.propagator == "j2mean" else ()
+        return [t for t in self.forces.active() if t not in used]
 
     def warn_ignored(self):
         """Log a warning naming the enabled terms this propagator leaves out."""
@@ -762,9 +761,14 @@ class Simulation:
         """Cd*A/m (m^2/kg) of satellites ``idx``."""
         return np.array([self.sats[i].cd * self.sats[i].area / self.sats[i].mass for i in idx])
 
+    def _cr_props(self, idx):
+        """Cr*A/m (m^2/kg) of satellites ``idx`` (sunlight pressure)."""
+        return np.array([self.sats[i].cr * self.sats[i].area / self.sats[i].mass for i in idx])
+
     def _derivative(self, idx: np.ndarray, burns: list):
         """State derivative f(t, y) for satellites ``idx`` including active finite burns."""
         cd_am = self._props(idx)
+        cr_am = self._cr_props(idx) if self.forces.srp else None
         rows = {int(i): k for k, i in enumerate(idx)}
         burn_rows = [(rows[j], b, self.sats[j].cd * self.sats[j].area)
                      for b in burns if (j := self.index_of(b.man.sat)) in rows]
@@ -777,7 +781,9 @@ class Simulation:
                 ka = cd_am.copy()
                 for k, b, cda in burn_rows:
                     ka[k] = cda / (b.m0 - b.mdot * (t - b.t0))
-            a = forces.acceleration(r, v, ka, float(clock.gmst(t)) if forces.c22 else 0.0)
+            # (a burn's mass loss is not passed on to sunlight pressure: Cr*A/m at ignition)
+            a = forces.acceleration(r, v, ka, float(clock.gmst(t)) if forces.earth_fixed else 0.0,
+                                    float(clock.jd(t)) if forces.needs_time else None, cr_am)
             for k, b, _ in burn_rows:
                 m = b.m0 - b.mdot * (t - b.t0)
                 d = finite_direction(b.man, r[k:k + 1], v[k:k + 1])[0]

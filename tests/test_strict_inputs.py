@@ -79,9 +79,14 @@ def test_bad_scenarios_are_refused_with_the_reason(d, words):
     assert words in str(err.value)
 
 
-def test_out_of_scope_forces_are_named_not_refused():
+def test_force_switches_are_read_strictly():
     sim = Simulation(Scenario.from_dict(scenario(forces={"j2": True, "sun": True})))
-    assert any("Sun third-body" in e.text and e.kind == "warn" for e in sim.events)
+    assert sim.forces.sun and not any(e.kind == "warn" for e in sim.events)
+    for bad, words in (({"sun": True, "comet": True}, "comet"),
+                       ({"gravity_degree": 1}, "gravity_degree")):
+        with pytest.raises(ValueError) as err:
+            Scenario.from_dict(scenario(forces=bad))
+        assert words in str(err.value)
 
 
 def test_every_bundled_and_generated_scenario_passes_the_strict_reader():

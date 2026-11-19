@@ -630,7 +630,34 @@ FORCE_TIPS = {
            "105 W) over weeks. Cowell only.",
     "drag": "Air resistance from the upper atmosphere. It makes low orbits decay until the "
             "satellite re-enters.",
+    "sun": "The Sun's pull, less its pull on the Earth: a tide that slowly tilts and "
+           "stretches orbits. Hundreds of metres a day for a low satellite.",
+    "moon": "The Moon's tide, about twice the Sun's. It matters most for high orbits.",
+    "srp": "Sunlight pushing on the satellite (Cr x area / mass), off in the Earth's "
+           "shadow. Tens to hundreds of metres a day for a low satellite.",
 }
+# the Earth's gravity field: the separate J2/J3/J4/C22 terms, or EGM2008 to N x N
+FIELD_CHOICES = {"J2-J4 terms": 0, "EGM2008 8x8": 8, "EGM2008 20x20": 20,
+                 "EGM2008 40x40": 40, "EGM2008 70x70": 70}
+FIELD_TIPS = {
+    "J2-J4 terms": "The Earth's shape as the switches below say: J2, J3, J4 and C22.",
+    "EGM2008 8x8": "The full measured field to degree and order 8: the big lumps.",
+    "EGM2008 20x20": "To degree 20: most of the effect on a low orbit.",
+    "EGM2008 40x40": "To degree 40.",
+    "EGM2008 70x70": "To degree 70, as precise orbit work uses for a 700 km satellite. "
+                     "About 2 ms per step.",
+}
+
+
+def field_choice(degree: int) -> str:
+    """The Physics dialog's label for ``gravity_degree`` (one is added if needed)."""
+    for label, n in FIELD_CHOICES.items():
+        if n == degree:
+            return label
+    label = f"EGM2008 {degree}x{degree}"
+    FIELD_CHOICES[label] = degree
+    FIELD_TIPS[label] = f"The full measured field to degree and order {degree}."
+    return label
 DENSITY_TIP = ("Multiplies the air density: about 0.3 at solar minimum, 1 on average, 3 at "
                "solar maximum (when the Sun heats and puffs up the upper atmosphere).")
 
@@ -657,6 +684,10 @@ def physics_dialog(app):
         F("h_fixed", "Fixed step (s)", "float", f"{it.h_fixed:g}",
           tip="Step length of the fixed-step methods rk4, wh and leapfrog. Low orbits need "
               "about 30 s or less with rk4, 60 s with wh, a few seconds with leapfrog."),
+        F("field", "Earth's gravity field", "choice", field_choice(fm.gravity_degree),
+          list(FIELD_CHOICES), option_tips=FIELD_TIPS,
+          tip="EGM2008 replaces J2/J3/J4/C22 in the motion when chosen; the switches "
+              "still set the analytic helpers (sun-synchronous tilt, launches)."),
         F("j2", "J2 oblateness", "bool", fm.j2, tip=FORCE_TIPS["j2"]),
         F("j3", "J3", "bool", fm.j3, tip=FORCE_TIPS["j3"]),
         F("j4", "J4", "bool", fm.j4, tip=FORCE_TIPS["j4"]),
@@ -664,6 +695,9 @@ def physics_dialog(app):
         F("drag", "Atmospheric drag", "bool", fm.drag, tip=FORCE_TIPS["drag"]),
         F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}",
           tip=DENSITY_TIP),
+        F("sun", "Sun's gravity", "bool", fm.sun, tip=FORCE_TIPS["sun"]),
+        F("moon", "Moon's gravity", "bool", fm.moon, tip=FORCE_TIPS["moon"]),
+        F("srp", "Sunlight pressure", "bool", fm.srp, tip=FORCE_TIPS["srp"]),
         F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}",
           tip="Seconds of simulated time between the points stored for trails, the map "
               "tracks and the plot."),
@@ -675,7 +709,9 @@ def physics_dialog(app):
         if v["rtol"] <= 0 or v["atol"] <= 0 or v["h_max"] <= 0 or v["h_fixed"] <= 0:
             return "tolerances and steps must be positive"
         sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
-                                drag=v["drag"], density_scale=v["density_scale"])
+                                drag=v["drag"], density_scale=v["density_scale"],
+                                gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
+                                moon=v["moon"], srp=v["srp"])
         sim.set_propagator(v["propagator"])
         it.method = v["method"]
         it.rtol, it.atol, it.h_max, it.h_fixed = v["rtol"], v["atol"], v["h_max"], v["h_fixed"]

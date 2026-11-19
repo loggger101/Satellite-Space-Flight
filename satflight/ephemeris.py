@@ -1,17 +1,20 @@
-"""Low-precision analytic Sun ephemeris.
+"""Low-precision analytic Sun and Moon ephemerides.
 
-Astronomical Almanac series (Vallado Alg. 29), ~0.01 deg accuracy - the
-series skyfield/astropy users reach for when a JPL DE kernel would be
-overkill. It is used only for lighting, eclipses, beta angle and local solar
-time; the Sun exerts no force on the satellites (docs/SCOPE.md). Results are
-geocentric ECI (mean equator and equinox of date, the simulator's ECI) in km.
+Astronomical Almanac series (Vallado Alg. 29 and 31): the Sun to ~0.01 deg,
+the Moon to ~0.3 deg and a few hundred km - the series skyfield/astropy users
+reach for when a JPL DE kernel would be overkill. The Sun serves lighting,
+eclipses, beta angle and local solar time, and with the Moon the third-body
+and sunlight-pressure forces when a scenario switches them on: for a
+satellite at 700 km those errors move the forces by under 1e-3 of their
+size. Results are geocentric ECI (mean equator and equinox of date, the
+simulator's ECI) in km.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from .constants import AU, DEG
+from .constants import AU, DEG, R_EARTH
 from .timeutil import centuries_since_j2000
 
 
@@ -32,6 +35,42 @@ def sun_position(jd) -> np.ndarray:
     return np.stack([r * np.cos(lam),
                      r * np.cos(eps) * np.sin(lam),
                      r * np.sin(eps) * np.sin(lam)], axis=-1)
+
+
+def moon_position(jd) -> np.ndarray:
+    """Geocentric Moon vector, km (Vallado Alg. 31). ``jd`` scalar -> (3,)."""
+    t = centuries_since_j2000(jd)
+
+    def s(deg):
+        return np.sin(deg * DEG)
+
+    def c(deg):
+        return np.cos(deg * DEG)
+
+    lam = (218.32 + 481267.8813 * t
+           + 6.29 * s(134.9 + 477198.85 * t)
+           - 1.27 * s(259.2 - 413335.38 * t)
+           + 0.66 * s(235.7 + 890534.23 * t)
+           + 0.21 * s(269.9 + 954397.70 * t)
+           - 0.19 * s(357.5 + 35999.05 * t)
+           - 0.11 * s(186.6 + 966404.05 * t)) * DEG
+    beta = (5.13 * s(93.3 + 483202.03 * t)
+            + 0.28 * s(228.2 + 960400.87 * t)
+            - 0.28 * s(318.3 + 6003.18 * t)
+            - 0.17 * s(217.6 - 407332.20 * t)) * DEG
+    parallax = (0.9508
+                + 0.0518 * c(134.9 + 477198.85 * t)
+                + 0.0095 * c(259.2 - 413335.38 * t)
+                + 0.0078 * c(235.7 + 890534.23 * t)
+                + 0.0028 * c(269.9 + 954397.70 * t)) * DEG
+    r = R_EARTH / np.sin(parallax)
+    eps = obliquity(jd)
+    cb, sb = np.cos(beta), np.sin(beta)
+    cl, sl = np.cos(lam), np.sin(lam)
+    ce, se = np.cos(eps), np.sin(eps)
+    return np.stack([r * cb * cl,
+                     r * (ce * cb * sl - se * sb),
+                     r * (se * cb * sl + ce * sb)], axis=-1)
 
 
 def subsolar_point(jd, gmst_rad):

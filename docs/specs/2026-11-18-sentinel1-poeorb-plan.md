@@ -106,6 +106,20 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
    - Each one is a per-scenario switch.
    - Tests against published values and against conserved quantities, and
      `docs/SCOPE.md` and `docs/PHYSICS.md` updated.
+   **Done 2026-11-18 (branch `forces-egm2008-sun-moon`):**
+   - EGM2008 is cut to degree 70 from ICGEM's file (SHA-256 recorded in the
+     header).
+   - The field is the gradient of an independent Legendre potential to 5e-10.
+     The Legendre functions are orthonormal to degree 70. A 70x70 evaluation
+     takes about 1.6 ms.
+   - Starting from one S1A precise state (2025-07-03), the gap from the truth
+     after 6 h is 938 m with J2-J4 and 49 m with EGM70 + drag + Sun + Moon +
+     SRP. After 24 h it is 670 m and 91 m (mostly along-track, which step 3
+     fits). Cross-track after 24 h falls from 16 m to 3.4 m with the Sun and
+     Moon.
+   - `default.json` keeps J2-J4 + drag until step 4's data-based scenario
+     replaces it. Switching it now would make the MATLAB export, which
+     refuses the new forces until step 6, refuse the default scenario.
 3. **Fitting and burns.**
    - Batch least squares for the state, Cd and Cr (finite-difference partials
      flown as extra satellites in one vectorized run).

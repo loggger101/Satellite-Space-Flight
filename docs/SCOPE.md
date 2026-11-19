@@ -1,77 +1,71 @@
 # Scope
 
-**Decision (2026-09-29):** the simulation models the Earth and the satellites
-only. The Sun, the Moon and every other body exert no influence on any
-satellite's orbit. Everything listed under "Removed" was declared **out of
-the present scope for now**; it was removed deliberately, not lost, and can be
-restored from git history (the last commit that has all of it is `c079ded`).
+**Decision (2026-11-18), revising 2026-09-29:** the project's goal is to map
+Sentinel-1A and 1C against ESA's precise orbits, accurate to a few cm. For that the
+user brought back the Sun's and the Moon's gravity and sunlight pressure, and
+added the full EGM2008 gravity field. Each is a **per-scenario switch**: the
+Sentinel-1 work turns them on, and the bundled demos keep the Earth-only J2-J4
+model they were built for, at the same speed. The plan is in
+[specs/2026-11-18-sentinel1-poeorb-plan.md](specs/2026-11-18-sentinel1-poeorb-plan.md).
+
+The 2026-09-29 decision ("the Earth and the satellites only") still covers
+the display: the Moon is not drawn, and the items listed under "Still
+removed" below stay out. The last commit that had all of them is `c079ded`.
 
 ## In scope
 
-- Earth gravity: point mass, the zonal harmonics J2, J3 and J4, and the
-  sectoral C22/S22 term (the elliptical equator; added 2026-09-30, Earth only).
-- Atmospheric drag (the atmosphere co-rotates with the Earth).
-- Thrust: impulsive and finite burns.
-- **The Sun's position**, used only for things that do not change an orbit:
-  - lighting of the Earth: day/night terminator, twilight band, ocean glint
-    and the reddened sunset limb;
-  - the Sun drawn in the 3-D sky, and the sub-solar point with day/night
-    shading on the ground-track map;
-  - Earth's shadow: satellites dimming in eclipse, eclipse entry/exit events,
-    the sunlight/eclipse timeline and "time in shadow" in the Orbit tab;
-  - beta angle and local time of the ascending node (LTAN).
-- The sun-synchronous inclination (preset `"i": "sso"` and the Orbit tab
-  value). It is a J2 property of the Earth's field that matches a fixed rate
-  of 0.9856 deg/day; it does not use the Sun's position.
-- The escape threshold of 924,000 km (Earth's sphere of influence) stays as
-  a distance limit for an Earth-centered model; nothing is computed about the
-  Sun there.
-- The star field and Milky Way remain as a decorative backdrop (no physics).
+- **Earth gravity:** point mass plus either
+  - the separate terms J2, J3, J4 and C22/S22 (the elliptical equator), or
+  - **EGM2008 to degree and order N** (2..70, `ForceModel.gravity_degree`;
+    fully normalized, tide-free, from ICGEM). It stands in for the separate
+    terms in the motion, while the J switches still drive the analytic
+    helpers. The coefficients are in `satflight/data/egm2008_70.gfc`
+    (`tools/make_gravity.py` makes them).
+- **Atmospheric drag:** the atmosphere co-rotates with the Earth.
+- **Third-body gravity** of the Sun and the Moon (`sun`, `moon`), from the
+  low-precision almanac series in `ephemeris.py`.
+- **Solar radiation pressure** (`srp`): a cannonball model with `Cr` per
+  satellite (default 1.3, same area as drag), dimmed in the Earth's penumbra
+  and umbra.
+- **Thrust:** impulsive and finite burns.
+- **The Sun's position** for lighting, eclipses, beta angle and LTAN.
+- **The sun-synchronous inclination** (`"i": "sso"`). It is a J2 property of
+  the Earth's field and does not use the Sun's position.
+- **The escape threshold** of 924,000 km, a distance limit for an
+  Earth-centered model.
+- **The star field and Milky Way**, a decorative backdrop (no physics).
 
-## Removed (out of the present scope)
+Not modelled, and named in the Sentinel-1 report as what is left:
+- polar motion (about 10 m);
+- solid-Earth and ocean tides;
+- relativity;
+- Earth albedo and infrared pressure;
+- a space-weather-driven atmosphere (the table's density scale is fitted
+  instead).
 
-### Physics
-
-| removed | what it did | where it lived |
-|---|---|---|
-| Sun third-body gravity | Sun's tidal pull on every satellite | `forces.accel_third_body`, `ForceModel.sun`, constant `MU_SUN` |
-| Moon third-body gravity | Moon's tidal pull on every satellite | `forces.accel_third_body`, `ForceModel.moon`, constant `MU_MOON` |
-| Solar radiation pressure | sunlight pushing on the satellite (cannonball model, shadowed in eclipse) | `forces.accel_srp`, `ForceModel.srp`, constant `P_SRP` |
-| Reflectivity coefficient `Cr` | satellite property used only by SRP | `Satellite.cr`, `SatSpec.cr`, `ConstellationSpec.cr`, presets |
-| Moon ephemeris | geocentric Moon position (truncated Brown series) | `ephemeris.moon_position`, constant `R_MOON` |
-
-`ForceModel.acceleration` and `ForceModel.breakdown` no longer take the Julian
-date or `Cr*A/m`: with only the Earth acting, the forces do not depend on time.
+## Still removed (since 2026-09-29)
 
 ### Display
 
 - The Moon in the 3-D view (phased disc, depth-sorted against the Earth).
 - The sub-lunar point on the ground-track map.
-- The *Sun third-body*, *Moon third-body* and *Solar radiation pressure*
-  switches in the Physics dialog.
-- The `a_sun`, `a_moon` and `a_srp` rows of the Telemetry tab's acceleration
-  budget.
 - The *Reflectivity Cr* field in the Add satellite and Edit satellite
-  dialogs; the *SRP acceleration* row and `Cr` in the Orbit tab.
+  dialogs, and the *SRP acceleration* row and `Cr` in the Orbit tab. `Cr` is
+  set in scenario files (`"cr"`). The Physics dialog (P) has the force
+  switches, and the Telemetry tab lists each force's acceleration.
 
 ### Scenarios and presets
 
 - `scenarios/third_body.json` ("Third-body perturbations": a lunar transfer
   orbit, a GEO satellite and an HEO under Sun, Moon and SRP) and its
-  generator in `tools/make_scenarios.py`.
-- The *Lunar transfer (TLI)* satellite preset (a 200 x 384,000 km transfer
-  orbit whose purpose is to reach the Moon).
-- `gps_constellation.json` and `molniya_tundra.json` had Sun and Moon gravity
-  switched on; they now run with the Earth only.
-
-### Tests
-
-- `test_moon_phases` (Moon ephemeris against known new and full moons).
-- The third-body scenario's entry in the bundled-scenario run.
-- Added `test_sun_and_moon_forces_are_out_of_scope`.
+  generator.
+- The *Lunar transfer (TLI)* satellite preset.
+- `gps_constellation.json` and `molniya_tundra.json` still run Earth-only.
 
 ## Older scenario files
 
-A scenario file that still switches on `sun`, `moon` or `srp`, or gives a
-satellite a `cr`, loads normally: those settings are ignored and the event
-log shows *"Ignored (out of scope): ..."*. Saving it again writes it without them.
+Files written between 2026-09-29 and 2026-11-18 that still switch on `sun`,
+`moon` or `srp`, or give a satellite a `cr`, now get those forces: they are
+no longer ignored. The MATLAB export refuses scenarios that use EGM2008, the
+Sun, the Moon or sunlight pressure until `matlab_runtime.m` models them
+(step 6 of the Sentinel-1 plan).

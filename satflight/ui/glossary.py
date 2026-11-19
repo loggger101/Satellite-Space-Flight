@@ -180,6 +180,12 @@ ROWS = {
              "toward 75 E or 105 W.",
     "a_drag": "Deceleration from air drag. '(off)' means the force is shown but not applied "
               "(turn it on in Physics).",
+    "a_EGM": "The measured EGM2008 gravity field beyond its J2 part: J3, J4, C22 and the "
+             "many smaller lumps (mountains, ocean trenches, dense rock). With the field on, "
+             "it replaces the separate J2-J4 and C22 terms.",
+    "a_Sun": "The Sun's tidal pull: its pull on the satellite minus its pull on the Earth.",
+    "a_Moon": "The Moon's tidal pull, about twice the Sun's.",
+    "a_sunlight": "Sunlight pressure (Cr x area / mass), zero in the Earth's shadow.",
     # --- launch
     "Phase": "What the rocket is doing now: on the pad, vertical rise, pitch kick, gravity "
              "turn or closed-loop guidance.",
@@ -266,6 +272,8 @@ def row(label: str) -> str:
             return ROWS[key[: -len(sym)]]
     if key.startswith("Energy drift"):
         return ROWS["Energy drift"]
+    if key.startswith("a_EGM"):                     # "a_EGM70 - J2", any degree
+        return ROWS["a_EGM"]
     first = key.split(" ")[0]
     return ROWS.get(first, "")
 

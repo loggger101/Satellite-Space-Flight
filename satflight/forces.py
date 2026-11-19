@@ -3,12 +3,15 @@
 All accelerations are in km/s^2 and vectorized over ``(N, 3)`` arrays.
 
 * central body   -mu r / r^3
-* zonal harmonics J2, J3, J4 (Earth oblateness and pear shape)
+* zonal harmonics J2, J3, J4 (Earth oblateness and pear shape) and the
+  sectoral C22/S22 term - or, instead of those, the full EGM2008 field to a
+  chosen degree and order (``gravity_degree``, see ``gravity``)
 * atmospheric drag with an atmosphere co-rotating with the Earth
+* third-body gravity of the Sun and the Moon
+* solar radiation pressure (cannonball, Cr*A/m) dimmed in the Earth's shadow
 
-Only the Earth acts on the satellites. Third-body Sun and Moon gravity and
-solar radiation pressure are out of the present scope (docs/SCOPE.md);
-scenario files that still ask for them load with those terms ignored.
+Every term is a per-scenario switch: the demos fly J2-J4 only, Sentinel-1
+the full set (docs/SCOPE.md).
 
 The equations are the standard ones found in Vallado ch. 8 and Montenbruck
 & Gill ch. 3 - and in REBOUNDx's ``gravitational_harmonics`` / ``gas_drag``
@@ -21,8 +24,23 @@ from dataclasses import asdict, dataclass, fields
 
 import numpy as np
 
-from . import atmosphere
-from .constants import C22, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, S22
+from . import atmosphere, gravity
+from .constants import (
+    AU,
+    C22,
+    J2,
+    J3,
+    J4,
+    MU_EARTH,
+    MU_MOON,
+    MU_SUN,
+    OMEGA_EARTH,
+    P_SRP,
+    R_EARTH,
+    S22,
+)
+from .eclipse import shadow_fraction
+from .ephemeris import moon_position, sun_position
 from .frames import OMEGA_VEC, geodetic_height
 from .strict import check_keys
 
@@ -129,11 +147,38 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0):
     return k[..., None] * v_rel
 
 
+def accel_third_body(r, r_body, mu_body):
+    """Tidal pull of a distant body at geocentric ``r_body`` (km, (3,)): its pull
+    on the satellite minus its pull on the Earth (the frame's origin)."""
+    d = r_body - r
+    dm = np.linalg.norm(d, axis=-1, keepdims=True)
+    bm = np.linalg.norm(r_body)
+    return mu_body * (d / dm ** 3 - r_body / bm ** 3)
+
+
+def accel_srp(r, r_sun, cr_a_over_m, shadow: bool = True):
+    """Cannonball solar radiation pressure, away from the Sun, scaled by the
+    sunlit fraction (Earth's penumbra and umbra). ``cr_a_over_m`` is Cr*A/m in
+    m^2/kg, shape (N,)."""
+    d = r - r_sun                      # Sun -> satellite
+    dm = np.linalg.norm(d, axis=-1, keepdims=True)
+    lit = shadow_fraction(r, r_sun) if shadow else 1.0
+    # P [N/m^2] * CrA/m [m^2/kg] = m/s^2; * 1e-3 -> km/s^2
+    mag = P_SRP * np.asarray(cr_a_over_m, float) * (AU / dm[..., 0]) ** 2 * 1e-3 * lit
+    return mag[..., None] * d / dm
+
+
 # --- The configurable model ------------------------------------------------------------
 
 @dataclass
 class ForceModel:
-    """Which perturbations act on the ensemble; serialized into scenario files."""
+    """Which perturbations act on the ensemble; serialized into scenario files.
+
+    ``gravity_degree`` N (2..70) switches the Earth's field to EGM2008 to degree
+    and order N, which then stands in for the J2/J3/J4/C22 terms in the
+    acceleration. The ``j*`` switches keep their meaning for the analytic
+    helpers (the sun-synchronous inclination, launch guidance, mean elements),
+    which use J2-J4 whatever the integrated field is. 0 = the separate terms."""
 
     j2: bool = True
     j3: bool = False
@@ -141,10 +186,20 @@ class ForceModel:
     c22: bool = False
     drag: bool = False
     density_scale: float = 1.0
+    gravity_degree: int = 0
+    sun: bool = False
+    moon: bool = False
+    srp: bool = False
 
-    TERMS = ("j2", "j3", "j4", "c22", "drag")
-    OUT_OF_SCOPE = {"sun": "Sun third-body gravity", "moon": "Moon third-body gravity",
-                    "srp": "solar radiation pressure"}
+    TERMS = ("j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp")
+    NEEDS_TIME = ("sun", "moon", "srp")          # where the Sun or Moon is
+
+    def __post_init__(self):
+        g = self.gravity_degree
+        if isinstance(g, bool) or not isinstance(g, int) or not (
+                g == 0 or 2 <= g <= gravity.MAX_DEGREE):
+            raise ValueError(f"forces gravity_degree {g!r}: expected 0 (J2/J3/J4/C22 terms) "
+                             f"or a whole number 2..{gravity.MAX_DEGREE} (EGM2008)")
 
     def to_dict(self):
         """Plain dict for JSON."""
@@ -152,64 +207,114 @@ class ForceModel:
 
     @classmethod
     def from_dict(cls, d):
-        """Build from a scenario dict. Out-of-scope terms are left out here (see
-        :meth:`ignored_terms`); any other unknown key raises ValueError."""
-        names = {f.name for f in fields(cls)}
-        check_keys(d or {}, names | set(cls.OUT_OF_SCOPE), "forces")
-        return cls(**{k: v for k, v in (d or {}).items() if k in names})
+        """Build from a scenario dict; an unknown key raises ValueError."""
+        check_keys(d or {}, {f.name for f in fields(cls)}, "forces")
+        return cls(**(d or {}))
 
-    @classmethod
-    def ignored_terms(cls, d) -> list[str]:
-        """Out-of-scope forces that a scenario dict switches on."""
-        return [label for k, label in cls.OUT_OF_SCOPE.items() if (d or {}).get(k)]
+    @property
+    def field(self) -> bool:
+        """True when the EGM2008 field replaces the J2/J3/J4/C22 terms."""
+        return self.gravity_degree > 0
+
+    @property
+    def earth_fixed(self) -> bool:
+        """True when a term turns with the Earth (needs the rotation angle)."""
+        return self.field or self.c22
+
+    @property
+    def needs_time(self) -> bool:
+        """True when a term needs the date (the Sun's or Moon's position)."""
+        return self.sun or self.moon or self.srp
+
+    def active(self) -> list[str]:
+        """The terms the acceleration actually includes, as labels."""
+        out = [f"EGM{self.gravity_degree}"] if self.field else [
+            t.upper() for t in ("j2", "j3", "j4", "c22") if getattr(self, t)]
+        return out + [t.upper() for t in ("drag", "sun", "moon", "srp") if getattr(self, t)]
 
     def label(self) -> str:
-        """Short summary such as ``2B+J2+DRAG``."""
-        on = [t.upper() for t in self.TERMS if getattr(self, t)]
+        """Short summary such as ``2B+J2+DRAG`` or ``2B+EGM70+DRAG+SUN+MOON+SRP``."""
+        on = self.active()
         return "two-body" if not on else "2B+" + "+".join(on)
 
-    def acceleration(self, r, v, cd_a_over_m, gmst: float = 0.0):
-        """Total acceleration (km/s^2) of the enabled terms for ``(N, 3)`` states;
-        ``gmst`` (rad) places the Earth-fixed C22/S22 term."""
+    def acceleration(self, r, v, cd_a_over_m, gmst=0.0, jd=None, cr_a_over_m=None):
+        """Total acceleration (km/s^2) of the enabled terms for ``(N, 3)`` states.
+        ``gmst`` (rad) turns the Earth-fixed terms (C22, the EGM2008 field);
+        ``jd`` (Julian date, UTC) places the Sun and Moon; ``cr_a_over_m``
+        (Cr*A/m, m^2/kg, (N,)) scales sunlight pressure."""
         a = accel_point_mass(r)
-        if self.j2:
-            a += accel_j2(r)
-        if self.j3:
-            a += accel_j3(r)
-        if self.j4:
-            a += accel_j4(r)
-        if self.c22:
-            a += accel_c22(r, gmst)
+        if self.field:
+            a += gravity.acceleration(r, gmst, self.gravity_degree)
+        else:
+            if self.j2:
+                a += accel_j2(r)
+            if self.j3:
+                a += accel_j3(r)
+            if self.j4:
+                a += accel_j4(r)
+            if self.c22:
+                a += accel_c22(r, gmst)
         if self.drag:
             a += accel_drag(r, v, cd_a_over_m, self.density_scale)
+        if self.needs_time:
+            if jd is None:
+                raise ValueError("the Sun, Moon and sunlight-pressure terms need the date (jd)")
+            if self.sun or self.srp:
+                rs = sun_position(jd)
+                if self.sun:
+                    a += accel_third_body(r, rs, MU_SUN)
+                if self.srp:
+                    if cr_a_over_m is None:
+                        raise ValueError("sunlight pressure needs Cr*A/m for each satellite")
+                    a += accel_srp(r, rs, cr_a_over_m)
+            if self.moon:
+                a += accel_third_body(r, moon_position(jd), MU_MOON)
         return a
 
-    def breakdown(self, r, v, cd_a_over_m, gmst: float = 0.0):
-        """Magnitude (km/s^2) of every term for display, enabled or not."""
+    def breakdown(self, r, v, cd_a_over_m, gmst=0.0, jd=None, cr_a_over_m=None):
+        """Magnitude (km/s^2) of every term for display, enabled or not:
+        {label: (magnitude, included)}. Terms the EGM2008 field stands in for
+        show as not included while it is on."""
         r = np.atleast_2d(r)
         v = np.atleast_2d(v)
+        sep = not self.field
         terms = {
-            "gravity": accel_point_mass(r),
-            "J2": accel_j2(r),
-            "J3": accel_j3(r),
-            "J4": accel_j4(r),
-            "C22": accel_c22(r, gmst),
-            "drag": accel_drag(r, v, np.atleast_1d(cd_a_over_m), self.density_scale),
+            "gravity": (accel_point_mass(r), True),
+            "J2": (accel_j2(r), sep and self.j2),
+            "J3": (accel_j3(r), sep and self.j3),
+            "J4": (accel_j4(r), sep and self.j4),
+            "C22": (accel_c22(r, gmst), sep and self.c22),
+            "drag": (accel_drag(r, v, np.atleast_1d(cd_a_over_m), self.density_scale),
+                     self.drag),
         }
-        enabled = {"gravity": True, "J2": self.j2, "J3": self.j3, "J4": self.j4, "C22": self.c22,
-                   "drag": self.drag}
-        return {k: (float(np.linalg.norm(val[0])), enabled[k]) for k, val in terms.items()}
+        if self.field:
+            # the field beyond the J2 it shares with the separate terms, to compare
+            terms[f"EGM{self.gravity_degree} - J2"] = (
+                gravity.acceleration(r, gmst, self.gravity_degree) - accel_j2(r), True)
+        if jd is not None:
+            rs = sun_position(jd)
+            cram = np.atleast_1d(cr_a_over_m if cr_a_over_m is not None else 0.0)
+            terms["Sun"] = (accel_third_body(r, rs, MU_SUN), self.sun)
+            terms["Moon"] = (accel_third_body(r, moon_position(jd), MU_MOON), self.moon)
+            terms["sunlight"] = (accel_srp(r, rs, cram), self.srp)
+        return {k: (float(np.linalg.norm(val[0])), bool(on)) for k, (val, on) in terms.items()}
 
 
 def conservative_energy(r, v, model: ForceModel, gmst=0.0):
     """The quantity the enabled gravity terms conserve. With zonals only (an
-    axisymmetric field) that is the specific energy. The C22/S22 term turns
-    with the Earth, so energy is no longer conserved; the Jacobi integral
-    E - omega h_z (energy seen from the rotating Earth) is, and is returned
-    instead. ``gmst`` (rad, scalar or one per row) places the C22 term."""
+    axisymmetric field) that is the specific energy. The C22/S22 term and the
+    EGM2008 field turn with the Earth, so energy is no longer conserved; the
+    Jacobi integral E - omega h_z (energy seen from the rotating Earth) is, and
+    is returned instead. ``gmst`` (rad, scalar or one per row) places them.
+    Drag, the Sun, the Moon and sunlight pressure change it; they are left out."""
     vm2 = np.sum(v * v, axis=-1)
-    e = 0.5 * vm2 - zonal_potential(r, model.j2, model.j3, model.j4)
-    if model.c22:
-        e = e - c22_potential(r, gmst)
+    if model.field:
+        e = 0.5 * vm2 - MU_EARTH / np.linalg.norm(r, axis=-1) - gravity.potential(
+            r, gmst, model.gravity_degree)
+    else:
+        e = 0.5 * vm2 - zonal_potential(r, model.j2, model.j3, model.j4)
+        if model.c22:
+            e = e - c22_potential(r, gmst)
+    if model.earth_fixed:
         e = e - OMEGA_EARTH * (r[..., 0] * v[..., 1] - r[..., 1] * v[..., 0])
     return e

@@ -95,6 +95,48 @@ def default():
                   GroundStation("Kiruna", 67.86, 20.96, 0.4, 5.0)])
 
 
+# The replay's twins carry the drag fitted to 2025-07-03 (tools/fit_arc.py S1x
+# 2025-07-03 --degree 70 --step 120 --no-cr): Cd*A/m 0.00867 (S1A) and 0.00862
+# (S1C) m^2/kg with Cr held at 1.3, fits of 1.64 m RMS that stray 6 m (RMS
+# along-track) over the next day. Step 5 replaces these with the year's mean.
+REPLAY_EPOCH = datetime(2025, 7, 3, tzinfo=UTC)
+REPLAY_UNTIL = "2025-07-09"
+REPLAY_CD_AM = {"S1A": 0.00867, "S1C": 0.00862}
+
+
+def sentinel1_replay():
+    """S1A and S1C following ESA's precise orbits, each with a twin flown by the
+    full force model from the same recorded state (needs the downloaded data)."""
+    sats = []
+    for mission, mass, color, twin_color in (("S1A", 2164.0, [255, 196, 64], [120, 200, 255]),
+                                             ("S1C", 2200.0, [255, 120, 90], [140, 255, 170])):
+        name = f"Sentinel-1{mission[-1]}"
+        cd = round(REPLAY_CD_AM[mission] * mass / 10.0, 4)
+        sats += [SatSpec(f"{name} (ESA)", {"type": "replay", "mission": mission,
+                                           "until": REPLAY_UNTIL},
+                         color=color, mass=mass, area=10.0, cd=cd),
+                 SatSpec(f"{name} twin", {"type": "precise", "mission": mission},
+                         color=twin_color, mass=mass, area=10.0, cd=cd)]
+    return Scenario(
+        name="Sentinel-1 precise-orbit replay",
+        description="Sentinel-1A and 1C where ESA's precise orbit files put them, 3 to 9 July "
+                    "2025, each beside a twin: a simulated copy started on the same recorded "
+                    "state and flown by the full force model (EGM2008 70x70, drag with the "
+                    "fitted Cd, the Sun, the Moon and sunlight pressure). Select a twin to "
+                    "see its radial, along-track and cross-track gap to the truth grow; the "
+                    "twins fly no burns, so they part from the truth at each orbit trim "
+                    "(S1A on 5 July). Needs the data from tools/fetch_poeorb.py and "
+                    "tools/fetch_eop.py.",
+        epoch=REPLAY_EPOCH, warp=60,
+        forces=ForceModel(j2=True, j3=True, j4=True, drag=True, gravity_degree=70, sun=True,
+                          moon=True, srp=True),
+        satellites=sats,
+        stations=[GroundStation("Svalbard", 78.23, 15.39, 0.5, 5.0),
+                  GroundStation("Matera", 40.65, 16.70, 0.5, 5.0),
+                  GroundStation("Maspalomas", 27.76, -15.63, 0.2, 5.0),
+                  GroundStation("Kiruna", 67.86, 20.96, 0.4, 5.0)])
+
+
 def orbit_tour():
     names =["ISS (LEO 420 km, 51.6 deg)", "Hubble (540 km, 28.5 deg)",
              "Sun-synchronous 700 km", "GPS MEO (20200 km, 55 deg)", "Geostationary (GEO)",
@@ -331,7 +373,8 @@ def geo_drift():
                     for lon in lons])
 
 
-ALL = {"default": default, "orbit_tour": orbit_tour, "hohmann_to_geo": hohmann,
+ALL = {"default": default, "data/sentinel1_replay": sentinel1_replay,
+       "orbit_tour": orbit_tour, "hohmann_to_geo": hohmann,
        "gto_to_geo": gto_to_geo, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,

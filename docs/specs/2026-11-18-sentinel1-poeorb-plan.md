@@ -160,6 +160,33 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
    - An ephemeris-replay orbit type and the truth-plus-twin view with the
      live RSW gap.
    - A Sentinel-1 replay scenario in `MISSION` on the start menu.
+   **Done 2026-11-19 (branch `replay-in-app`):**
+   - `satflight/replay.py`: orbit type `replay` (mission, `until` date) follows
+     the recording, cubic Hermite between the 10 s samples (under 1 mm, 0.1
+     mm/s), kept out of the integration; type `precise` starts a twin on the
+     recorded state, flown by the force model. Both take out polar motion. A
+     start at midnight takes the 2 s before the day's first sample from the day
+     before. Missing files name the first missing day; the truth stops with
+     status "end of data" when its recording ends.
+   - The truth gets eclipses and ground contacts but no close approaches (its
+     twin is metres away on purpose); it cannot burn; snapshots keep it a
+     replay; the MATLAB export refuses it until step 6.
+   - `Simulation.gap_to_truth` gives a twin's radial / along-track /
+     cross-track gap; the Telemetry tab shows it (PRECISE ORBIT) and the list
+     shows each twin's distance.
+   - `scenarios/data/sentinel1_replay.json` (generated; in its own folder so
+     the checks that load every bundled scenario do not need the data): 1A and
+     1C, 3-9 July 2025, EGM2008 70x70 + drag + Sun + Moon + SRP, twins with the
+     Cd fitted to 3 July (degree 70, Cr held at 1.3: 1.64 m RMS, 6 m RMS
+     along-track over the next day). Second card under "Sentinel-1 mission".
+   - Twins against the truth: 1A 0.9 / 4.7 / 28 / 77 m after 1 / 6 / 24 / 48
+     h, 1C 2.3 / 11 / 56 / 131 m, almost all along-track (radial and
+     cross-track under 7 m for two days). Then S1A's 5 July trim, which the
+     twin does not fly, opens 0.85 km by +72 h. A simulated day of all four at
+     70x70 takes about 17 s.
+   - The fit at degree 70 with Cr held predicts a day ten times better than
+     degree 30 with Cr free (6 m against 72 m RMS along-track): free Cr was
+     soaking up model error, not measuring sunlight pressure.
 5. **Study and report.**
    - Accuracy arcs, the long-term series (LTAN, i, a, e and argp, the
      12-day repeat, 1A-1C phasing, burns) and the Markdown report.

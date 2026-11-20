@@ -85,8 +85,11 @@ ORBIT_KEYS = {
     "surface": ("lat", "lon", "alt", "speed", "azimuth", "fpa"),
     "geo": ("lon",),
     "tle": ("line1", "line2"),
+    "replay": ("mission", "until"),     # follow a Sentinel-1 recording (satflight.replay)
+    "precise": ("mission",),            # start from it, then fly the force model
 }
-ORBIT_REQUIRED = {"state": ("r", "v"), "tle": ("line1", "line2")}
+ORBIT_REQUIRED = {"state": ("r", "v"), "tle": ("line1", "line2"),
+                  "replay": ("mission", "until"), "precise": ("mission",)}
 # how an "elements" orbit gives its size: exactly one of these sets of keys
 SIZES = (("a",), ("altitude",), ("perigee_alt", "apogee_alt"))
 
@@ -136,6 +139,10 @@ MAX_GROUP = 5000
 def _check_numbers(orbit, where: str):
     """Every number of an orbit spec is finite and physically possible."""
     kind = orbit.get("type", "elements")
+    if kind in ("replay", "precise"):
+        from .replay import check
+        check(orbit, where)
+        return
     for k in ORBIT_KEYS[kind]:
         if k == "osculating":
             if k in orbit and not isinstance(orbit[k], bool):
@@ -352,6 +359,7 @@ class Scenario:
             where = f"satellite {s.get('name', k + 1)!r}" if isinstance(s, dict) else "satellite"
             sats.append(build(SatSpec, s, where))
             check_orbit(s["orbit"], where + " orbit")
+            check_single_replay(sats[-1].orbit, sats[-1].count, where)
         cons = [build(ConstellationSpec, c, f"constellation {k + 1}")
                 for k, c in enumerate(d.get("constellations", []))]
         for c in cons:
@@ -506,12 +514,35 @@ def _orbit_state(orbit: dict, clock: Clock, t: float, j2: bool, zonal=None):
         vmag = OMEGA_EARTH * rg
         v = vmag * np.array([-math.sin(ang), math.cos(ang), 0.0])
         return r, v
+    if kind in ("replay", "precise"):
+        from .replay import for_orbit
+        s = for_orbit(orbit, clock.epoch).state(t)
+        return s[:3].copy(), s[3:].copy()
     if kind == "tle":
         tle = parse_tle(orbit["line1"] + "\n" + orbit["line2"])
         if not tle.checksum_ok:
             raise ValueError(f"TLE {tle.satnum}: checksum mismatch (a mistyped digit?)")
         return tle.state_at(clock.datetime(t))
     raise AssertionError(kind)          # check_orbit lets only the types above through
+
+
+def check_single_replay(orbit: dict, count: int, where: str):
+    """A replayed satellite follows one recording: it cannot come in copies."""
+    if orbit.get("type") == "replay" and count != 1:
+        raise ValueError(f"{where}: a replay follows one recording; count must be 1, "
+                         f"not {count}")
+
+
+def orbit_props(orbit: dict, clock: Clock) -> dict:
+    """Satellite properties an orbit spec brings with it: the recording a
+    replayed satellite follows, and the mission a replay or its twin belongs to."""
+    kind = orbit.get("type", "elements")
+    if kind == "replay":
+        from .replay import for_orbit
+        return {"replay": for_orbit(orbit, clock.epoch), "mission": orbit["mission"]}
+    if kind == "precise":
+        return {"mission": orbit["mission"]}
+    return {}
 
 
 def spread_along_orbit(r, v, count: int):
@@ -561,14 +592,16 @@ def expand(scenario: Scenario, clock: Clock, t: float = 0.0):
     out = []
     idx = 0
     for spec in scenario.satellites:
+        check_single_replay(spec.orbit, spec.count, f"satellite {spec.name!r}")
         r, v = orbit_state(spec.orbit, clock, t, j2_acts(scenario.propagator, scenario.forces),
                            zonal_terms(scenario.propagator, scenario.forces))
+        extra = orbit_props(spec.orbit, clock)
         states = spread_along_orbit(r, v, int(spec.count))
         for k, (rr, vv) in enumerate(states):
             name = spec.name if len(states) == 1 else f"{spec.name}-{k + 1}"
             color = tuple(spec.color) if spec.color else palette_color(idx)
             props = dict(mass=spec.mass, area=spec.area, cd=spec.cd, dry_mass=spec.dry_mass,
-                         cr=spec.cr)
+                         cr=spec.cr, **extra)
             out.append((name, color, props, rr, vv))
             idx += 1
     for c in scenario.constellations:

@@ -406,7 +406,17 @@ well neighbouring days agree, and converts the states into the simulator's
 frame at each sample's UT1, taking out polar motion with the IERS table.
 Burn windows (`DEGRADED-MANOEUVRE`) are kept and flagged. `satflight.fit`
 fits the simulator's forces to a day of it (start state, drag, sunlight
-pressure and each burn as an impulse): 2.3 m RMS over a burn-free day. The plan for the rest of this work (EGM2008, fitting,
+pressure and each burn as an impulse): 1.6 m RMS over a burn-free day at
+70x70.
+
+With the data downloaded, **Precise-orbit replay** on the start menu flies
+1A and 1C along ESA's recorded orbits for 3-9 July 2025, each beside a twin
+started on the same recorded state and flown by the full force model. Select
+a twin to watch its radial, along-track and cross-track gap to the truth
+(about 30-60 m after a day, then kilometres once the real satellite trims its
+orbit and the twin does not). Scenarios can use the same orbit types:
+`{"type": "replay", "mission": "S1A", "until": "2025-07-09"}` follows a
+recording, `{"type": "precise", "mission": "S1A"}` starts a twin on it. The plan for the rest of this work (EGM2008, fitting,
 replay, reports) is in
 [docs/specs/2026-11-18-sentinel1-poeorb-plan.md](docs/specs/2026-11-18-sentinel1-poeorb-plan.md).
 Contains modified Copernicus Sentinel data.

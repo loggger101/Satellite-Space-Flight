@@ -50,13 +50,16 @@ from .frames import eci_to_ecef, geodetic_height, unit
 from .integrators import Propagator
 from .launch import Ascent, AscentEnv, LaunchSpec, coast, fly, plan_launch, plane_normal, validate
 from .maneuvers import G0, Maneuver, finite_direction, impulse_eci, propellant_after, resolve_time
+from .replay import ENDED
 from .scenario import (
     PROPAGATORS,
     GroundStation,
     SatSpec,
     Scenario,
+    check_single_replay,
     expand,
     j2_acts,
+    orbit_props,
     orbit_state,
     palette_color,
     spread_along_orbit,
@@ -223,6 +226,8 @@ class Satellite:
     energy_ref: tuple | None = None   # (t, energy) baseline for the drift readout
     family: str = ""              # launch it came from (payload and spent stages share it)
     launch_report: dict | None = None   # ascent summary once a launched payload separates
+    replay: object | None = None  # replay.Ephemeris it follows instead of being integrated
+    mission: str = ""             # Sentinel-1 unit of a replay or its twin ("S1A", ...)
 
 
 @dataclass
@@ -324,6 +329,7 @@ class Simulation:
         self._last_sample = None           # (t, y, orbiting mask) of the last approach check
         self._grid = None                  # (t, y) the physics reached; t <= self.t
         self._shown = None                 # (t, y) reported from it, to spot outside edits
+        self._replays = False              # any satellite following a recording?
 
         for name, color, props, r, v in expand(scenario, self.clock, 0.0):
             self._append(name, color, props, r, v)
@@ -396,6 +402,7 @@ class Simulation:
         sat = Satellite(self.unique_name(name), tuple(color), **props)
         drag_props(sat.mass, sat.area, sat.cd, sat.name)
         check_dry_mass(sat.dry_mass, sat.mass, sat.name)
+        self._replays = self._replays or sat.replay is not None
         self.sats.append(sat)
         self.y = np.vstack([self.y, np.concatenate([r, v])[None, :]])
         return sat
@@ -422,8 +429,10 @@ class Simulation:
     # --- adding / removing ---------------------------------------------------------------
     def add_satellites(self, orbit: dict, name: str, color=None, count: int = 1, **props):
         """Add satellites defined by an orbit spec evaluated at the current time."""
+        check_single_replay(orbit, count, f"satellite {name!r}")
         r, v = orbit_state(orbit, self.clock, self.t, j2_acts(self.propagator, self.forces),
                            zonal_terms(self.propagator, self.forces))
+        props = {**props, **orbit_props(orbit, self.clock)}
         rows = []
         for k, (rr, vv) in enumerate(spread_along_orbit(r, v, count)):
             nm = name if count == 1 else f"{name}-{k + 1}"
@@ -593,7 +602,41 @@ class Simulation:
         act = self.active
         for a in self.ascents:
             act[self.sats.index(a.sat)] = False
+        if self._replays:
+            act &= np.array([s.replay is None for s in self.sats], dtype=bool)
         return np.flatnonzero(act)
+
+    def _follow_recordings(self, t: float):
+        """Put each replayed satellite where its recording has it at ``t``; one
+        whose recording has ended stops there (and the log says so)."""
+        if not self._replays:
+            return
+        for i, s in enumerate(self.sats):
+            if s.replay is None or s.status != ACTIVE:
+                continue
+            if t > s.replay.end + 1e-9:
+                self.y[i] = s.replay.state(s.replay.end)
+                s.status = ENDED
+                self.log(f"{s.name}: end of the recorded orbit ({s.replay.mission} data "
+                         f"until {s.replay.until} 24:00 UTC)", "warn", s.replay.end)
+            else:
+                self.y[i] = s.replay.state(t)
+
+    def gap_to_truth(self, j: int):
+        """Satellite ``j``'s offset (km) from the replayed satellite of its
+        mission, as radial / along-track / cross-track in the truth's frame;
+        None unless ``j`` is a flying twin and its truth is still recorded."""
+        twin = self.sats[j]
+        if twin.replay is not None or not twin.mission or twin.status != ACTIVE:
+            return None
+        for i, s in enumerate(self.sats):
+            if s.replay is not None and s.mission == twin.mission and s.status == ACTIVE:
+                r, v = self.y[i, :3], self.y[i, 3:]
+                rh = unit(r)
+                wh = unit(np.cross(r, v))
+                d = self.y[j, :3] - r
+                return np.array([d @ rh, d @ np.cross(wh, rh), d @ wh])
+        return None
 
     def _advance_ascents(self, t: float):
         """Fly every pad/ascending vehicle to ``t``; spent stages join the ensemble."""
@@ -657,6 +700,9 @@ class Simulation:
         if self.ascent_of(i) is not None:
             raise ValueError(f"{m.sat} is still on its launch vehicle; "
                              "maneuver it after separation")
+        if self.sats[i].replay is not None:
+            raise ValueError(f"{m.sat} follows its recorded orbit and cannot burn; "
+                             "maneuver its twin instead")
         if m.timing != "absolute" or m.t is None:
             m.t = self.resolve_time(m)
         m.timing = "absolute"
@@ -867,6 +913,7 @@ class Simulation:
             for a in self.ascents:
                 self.y[self.sats.index(a.sat)] = a.peek(t)
             self.t = t
+            self._follow_recordings(t)
         self._shown = (self.t, self.y.copy())
 
     def _peek(self, idx: np.ndarray, t1: float) -> np.ndarray:
@@ -1097,6 +1144,7 @@ class Simulation:
         the active set (the integrator must restart with the new set)."""
         if idx is None:
             idx = self._free_idx()
+        self._follow_recordings(t)
         for a in self.ascents:
             if a.phase == "pad":
                 self.y[self.sats.index(a.sat)] = a.pad_state(t)
@@ -1139,6 +1187,7 @@ class Simulation:
                 self.maneuvers = [m for m in self.maneuvers if m.sat != sat.name]
                 self.burns = [b for b in self.burns if b.man.sat != sat.name]
                 changed = True
+        if idx.size or self._replays:
             self._events(t, idx)
         if force_record or t - self._last_record >= self.record_dt - 1e-9 or changed:
             self.history.record(t, self.y)
@@ -1205,8 +1254,13 @@ class Simulation:
         return out
 
     def _events(self, t: float, idx: np.ndarray):
-        """Log eclipse, station AOS/LOS and close-approach events."""
+        """Log eclipse, station AOS/LOS and close-approach events. A replayed
+        satellite gets the first two (it is the real one), not approaches: its
+        twin flies metres from it on purpose."""
         free = {int(i) for i in idx}
+        if self._replays:
+            free |= {k for k, s in enumerate(self.sats)
+                     if s.replay is not None and s.status == ACTIVE}
         watch = free if self.n <= EVENT_DETAIL_LIMIT else self.watch & free
         if watch:
             w = np.array(sorted(watch))
@@ -1406,9 +1460,14 @@ class Simulation:
                 continue
             b = burning.get(s.name)
             mass = s.mass if b is None else b.m0 - b.mdot * (self.t - b.t0)
-            sc.satellites.append(SatSpec(
-                s.name, {"type": "state", "r": self.y[i, :3].tolist(), "v": self.y[i, 3:].tolist()},
-                list(s.color), mass, s.area, s.cd, dry_mass=s.dry_mass))
+            if s.replay is not None:         # it goes on following its recording
+                orbit = {"type": "replay", "mission": s.replay.mission,
+                         "until": s.replay.until.isoformat()}
+            else:
+                orbit = {"type": "state", "r": self.y[i, :3].tolist(),
+                         "v": self.y[i, 3:].tolist()}
+            sc.satellites.append(SatSpec(s.name, orbit, list(s.color), mass, s.area, s.cd,
+                                         dry_mass=s.dry_mass, cr=s.cr))
         sc.stations = list(self.stations)
         sc.forces = ForceModel.from_dict(self.forces.to_dict())
         sc.propagator = self.propagator

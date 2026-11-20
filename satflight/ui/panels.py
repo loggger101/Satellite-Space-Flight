@@ -15,6 +15,7 @@ from ..eclipse import shadow_state
 from ..elements import rv2coe
 from ..ephemeris import sun_position
 from ..frames import OMEGA_VEC, ecef_to_geodetic, eci_to_ecef, geodetic_height
+from ..replay import ENDED
 from ..simulation import ACTIVE, DECAYED, ESCAPED, IMPACTED, REENTRY_ALT, SCRUBBED
 from ..timeutil import format_duration, format_period
 from . import glossary, theme, tips
@@ -40,6 +41,8 @@ STATUS_TIPS = {
     IMPACTED: "Impacted: its path met the ground.",
     ESCAPED: "Escaped: it left the Earth's sphere of influence.",
     SCRUBBED: "Scrubbed: the launch never left the pad.",
+    ENDED: "End of data: the precise-orbit recording it followed has ended (fetch more "
+           "days and change the scenario's 'until' to go on).",
 }
 
 
@@ -420,6 +423,10 @@ def _list_value(sim, k):
         return f"{alt:,.0f} km ^", theme.WARN, "a rocket climbing (^); its altitude"
     if s.status != ACTIVE:
         return s.status, theme.BAD, f"no longer flying ({s.status})"
+    gap = sim.gap_to_truth(k) if s.mission else None
+    if gap is not None:
+        return (f"{np.linalg.norm(gap) * 1e3:,.0f} m off", theme.ACCENT,
+                "a twin: how far the simulation has carried it from the precise-orbit truth")
     alt = float(geodetic_height(sim.y[k, :3]))
     txt = f"{alt:,.0f} km" if alt < 1e6 else f"{alt / 1e6:.2f} Gm"
     if s.shadow > 0.5:
@@ -521,6 +528,9 @@ class InfoPanel:
         el = rv2coe(r, v)
         launch = launch_rows(sim, i)
         sections = [("LAUNCH", launch)] if launch else []
+        precise = _precise_rows(sim, i)
+        if precise:
+            sections.append(("PRECISE ORBIT", precise))
         sections += [("STATE", _state_rows(sim, r, v)),
                      (f"ORBIT  ({classify(el)})", _orbit_rows(el)),
                      ("ENVIRONMENT", _environment_rows(sim, i, r, v)),
@@ -616,6 +626,29 @@ class InfoPanel:
                                     f"{sim.sats[a].name} and {sim.sats[b].name}, {d:,.1f} km "
                                     f"apart. It turns red below the close-approach alert "
                                     f"distance ({sim.conjunction_km:g} km, set in Physics).")
+
+
+def _precise_rows(sim, i):
+    """Telemetry PRECISE ORBIT rows: for a replayed satellite, its recording and
+    how far each twin has strayed; for a twin, its gap to the truth by axis."""
+    s = sim.sats[i]
+    if s.replay is not None:
+        rows = [("Source", f"ESA precise orbit, {s.replay.mission}"),
+                ("Recorded until", f"{s.replay.until} 24:00 UTC")]
+        for j, t in enumerate(sim.sats):
+            gap = sim.gap_to_truth(j) if t.mission == s.mission else None
+            if gap is not None:
+                rows.append(("Twin's gap", f"{np.linalg.norm(gap) * 1e3:,.1f} m ({t.name})"))
+        return rows
+    if not s.mission:
+        return []
+    gap = sim.gap_to_truth(i)
+    if gap is None:
+        return [("Gap to truth", f"no {s.mission} recording now")]
+    return [("Radial gap", f"{gap[0] * 1e3:+,.2f} m"),
+            ("Along-track gap", f"{gap[1] * 1e3:+,.2f} m"),
+            ("Cross-track gap", f"{gap[2] * 1e3:+,.2f} m"),
+            ("Total gap", f"{np.linalg.norm(gap) * 1e3:,.2f} m")]
 
 
 def _state_rows(sim, r, v):

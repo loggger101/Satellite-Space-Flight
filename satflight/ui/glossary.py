@@ -26,6 +26,9 @@ SECTIONS = {
                                "of each orbit is spent in the Earth's shadow.",
     "ASCENT": "Live readings from the rocket while it climbs.",
     "STAGES": "Propellant left in each stage. The highlighted one is burning or next to burn.",
+    "PRECISE ORBIT": "ESA's precise orbit (POEORB, accurate to a few cm), which a replayed "
+                     "satellite follows, and how far a twin flown by the force model has "
+                     "strayed from it.",
 }
 
 ROWS = {
@@ -134,6 +137,22 @@ ROWS = {
     "Energy drift": "Relative change of the conserved orbital energy since the reference "
                     "time. It shows the integrator's error when no drag or burns act (it "
                     "should stay tiny).",
+    # --- precise orbit
+    "Source": "Where the replayed satellite's positions come from: ESA's precise orbit "
+              "files, read from your data folder (tools/fetch_poeorb.py).",
+    "Recorded until": "The end of the recording this scenario follows. Past it the satellite "
+                      "stops, marked 'end of data'.",
+    "Twin's gap": "Distance between a twin (started on the recorded state and flown by the "
+                  "force model) and this recording, now.",
+    "Gap to truth": "This twin's recorded truth is not being replayed now (its recording "
+                    "has ended, or none is in the run).",
+    "Radial gap": "How far the twin is above (+) or below (-) the recorded truth, along the "
+                  "line from the Earth's center.",
+    "Along-track gap": "How far the twin is ahead (+) of or behind (-) the recorded truth "
+                       "along its path. Drag errors grow here first.",
+    "Cross-track gap": "How far the twin is off the recorded truth's orbital plane, toward "
+                       "the side its angular momentum points to (+).",
+    "Total gap": "Straight-line distance from the twin to the recorded truth.",
     # --- spacecraft
     "Mass": "Current mass of the spacecraft (it falls as burns use propellant).",
     "Area / Cd": "Cross-section facing the airflow, and the drag coefficient.",

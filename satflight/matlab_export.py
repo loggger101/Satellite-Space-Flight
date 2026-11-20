@@ -46,7 +46,7 @@ from .constants import R_EARTH
 from .elements import rv2coe
 from .launch import PHASE_LABELS
 from .scenario import Scenario
-from .simulation import Simulation
+from .simulation import ACTIVE, Simulation
 from .strict import one_of
 from .timeutil import UTC, ensure_utc, format_duration
 
@@ -212,6 +212,12 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
         raise ValueError(f"the MATLAB runtime does not model {', '.join(missing)} yet; "
                          "switch them off in Physics (P) to export, or wait for the "
                          "MATLAB port (docs/specs/2026-11-18-sentinel1-poeorb-plan.md, step 6)")
+    replayed = [s.name for s in sim.sats if s.replay is not None and s.status == ACTIVE]
+    if replayed:
+        raise ValueError(f"{', '.join(replayed)} follow{'s' if len(replayed) == 1 else ''} "
+                         "a recorded orbit, which the MATLAB runtime cannot replay yet "
+                         "(step 6 of docs/specs/2026-11-18-sentinel1-poeorb-plan.md); "
+                         "remove them to export the rest")
 
     if start == "now":
         scenario = sim.snapshot_scenario(sim.scenario.name)

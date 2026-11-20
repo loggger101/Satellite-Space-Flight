@@ -57,6 +57,7 @@ def test_the_staleness_check_ignores_only_float_noise():
 
 def test_every_bundled_scenario_comes_from_the_generator():
     files = {p.stem for p in (ROOT / "scenarios").glob("*.json")}
+    files |= {f"data/{p.stem}" for p in (ROOT / "scenarios" / "data").glob("*.json")}
     assert files == set(make_scenarios.ALL)
 
 

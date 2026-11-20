@@ -1,0 +1,132 @@
+{
+  "name": "Sentinel-1 precise-orbit replay",
+  "description": "Sentinel-1A and 1C where ESA's precise orbit files put them, 3 to 9 July 2025, each beside a twin: a simulated copy started on the same recorded state and flown by the full force model (EGM2008 70x70, drag with the fitted Cd, the Sun, the Moon and sunlight pressure). Select a twin to see its radial, along-track and cross-track gap to the truth grow; the twins fly no burns, so they part from the truth at each orbit trim (S1A on 5 July). Needs the data from tools/fetch_poeorb.py and tools/fetch_eop.py.",
+  "epoch": "2025-07-03T00:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": true,
+    "j4": true,
+    "c22": false,
+    "drag": true,
+    "density_scale": 1.0,
+    "gravity_degree": 70,
+    "sun": true,
+    "moon": true,
+    "srp": true
+  },
+  "record_dt": 20.0,
+  "warp": 60,
+  "satellites": [
+    {
+      "name": "Sentinel-1A (ESA)",
+      "orbit": {
+        "type": "replay",
+        "mission": "S1A",
+        "until": "2025-07-09"
+      },
+      "color": [
+        255,
+        196,
+        64
+      ],
+      "mass": 2164.0,
+      "area": 10.0,
+      "cd": 1.8762,
+      "count": 1
+    },
+    {
+      "name": "Sentinel-1A twin",
+      "orbit": {
+        "type": "precise",
+        "mission": "S1A"
+      },
+      "color": [
+        120,
+        200,
+        255
+      ],
+      "mass": 2164.0,
+      "area": 10.0,
+      "cd": 1.8762,
+      "count": 1
+    },
+    {
+      "name": "Sentinel-1C (ESA)",
+      "orbit": {
+        "type": "replay",
+        "mission": "S1C",
+        "until": "2025-07-09"
+      },
+      "color": [
+        255,
+        120,
+        90
+      ],
+      "mass": 2200.0,
+      "area": 10.0,
+      "cd": 1.8964,
+      "count": 1
+    },
+    {
+      "name": "Sentinel-1C twin",
+      "orbit": {
+        "type": "precise",
+        "mission": "S1C"
+      },
+      "color": [
+        140,
+        255,
+        170
+      ],
+      "mass": 2200.0,
+      "area": 10.0,
+      "cd": 1.8964,
+      "count": 1
+    }
+  ],
+  "constellations": [],
+  "stations": [
+    {
+      "name": "Svalbard",
+      "lat": 78.23,
+      "lon": 15.39,
+      "alt": 0.5,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Matera",
+      "lat": 40.65,
+      "lon": 16.7,
+      "alt": 0.5,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Maspalomas",
+      "lat": 27.76,
+      "lon": -15.63,
+      "alt": 0.2,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Kiruna",
+      "lat": 67.86,
+      "lon": 20.96,
+      "alt": 0.4,
+      "min_el": 5.0,
+      "color": null
+    }
+  ],
+  "maneuvers": [],
+  "launches": []
+}

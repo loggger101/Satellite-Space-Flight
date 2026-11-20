@@ -36,7 +36,8 @@ removed" below stay out. The last commit that had all of them is `c079ded`.
 - **The star field and Milky Way**, a decorative backdrop (no physics).
 
 Not modelled, and named in the Sentinel-1 report as what is left:
-- polar motion (about 10 m);
+- polar motion in the simulator's own Earth (the truth is corrected for it;
+  the field's 0.5 arcsec tilt is centimetres);
 - solid-Earth and ocean tides;
 - relativity;
 - Earth albedo and infrared pressure;

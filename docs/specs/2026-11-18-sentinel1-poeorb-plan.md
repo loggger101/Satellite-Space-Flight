@@ -83,8 +83,17 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
   0.4 km off on the ground track.
 - **Comparisons** are made in ECEF/RSW, the frame the data is in, so the
   GMST-versus-GAST convention cancels.
-- **Polar motion** (about 10 m) is neglected, and this is said in the report.
-  It is the next refinement if the residual after the fit gets near that level.
+- **Polar motion** is taken out of the truth (added 2026-11-19, step 3): the
+  ITRF's z axis sits 0.3-0.5 arcsec off the spin axis, about 15 m at
+  Sentinel-1's height. Left in, the simulator's frame wobbles by that once a
+  day and a day's fit has ~8 m of cross-track error it cannot follow (with a
+  negative Cd and a sideways burn soaking up the rest). `satflight/eop.py`
+  reads the IERS `finals2000A.all` table (measured rows only;
+  `tools/fetch_eop.py`, into `$SATFLIGHT_DATA/eop/`) and `poeorb.to_eci`
+  applies W = R2(x_p) R1(y_p) before turning the Earth. The table's UT1-UTC
+  agrees with the files' own to 0.2 ms. The simulator's gravity field itself
+  still turns about the spin axis: that tilt changes the acceleration by under
+  1e-7 m/s^2, centimetres a revolution.
 - **Sun and Moon positions** use the low-precision series, taken as of-date.
   That is ample for perturbations.
 
@@ -124,6 +133,29 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
    - Batch least squares for the state, Cd and Cr (finite-difference partials
      flown as extra satellites in one vectorized run).
    - Burn detection and impulse fitting.
+   **Done 2026-11-19 (branch `fit-and-burns`):**
+   - `satflight/fit.py`: Gauss-Newton on the start state, Cd*A/m, Cr*A/m and
+     an impulse at the middle of each flagged burn window; the perturbed
+     copies fly as rows of one batch. Any of them can be held; holding all but
+     later burns is how a prediction meets the operators' next manoeuvres.
+     `tools/fit_arc.py` runs it on a day (`--check H` flies H hours on).
+   - Synthetic truth flown with the simulator's own forces gives back its
+     state to under 1 m, its drag to 3 % and a 4 mm/s burn to 2 %.
+   - Real S1A days, degree 30, 120 s samples, with polar motion:
+     | arc | fit RMS | R / S / W | note |
+     |---|---|---|---|
+     | 2025-07-03, 12 h | 2.08 m | 0.89 / 1.71 / 0.76 m | without the pole: 5.83 m, W 5.25 m |
+     | 2025-07-03, 24 h | 2.31 m | 0.74 / 1.53 / 1.56 m | Cd 3.15, Cr 5.7 at 10 m^2 |
+     | 2025-07-05, 24 h, one burn | 3.76 m | 1.36 / 3.27 / 1.23 m | without the pole: 9.25 m and no convergence |
+   - Flying the 2025-07-03 fit a further day against the truth: along-track
+     RMS 72 m (worst 132 m), radial 1.7 m, cross-track 3.2 m. The fitted Cd
+     and Cr (3.15 and 5.7, Cr above anything physical) are absorbing the
+     day's density change, which the static table cannot follow near solar
+     maximum. The along-track prediction is the error to measure in step 5's
+     weekly arcs, with the table's density scale fitted.
+   - The 2025-07-05 burn (a 10-minute window) fits as 2.0 / 4.1 / 3.0 mm/s
+     R/S/W; its 3.3 m along-track residual is likely the impulse standing in
+     for a finite burn. Finite burns stay open (section 5).
 4. **Replay in the app.**
    - An ephemeris-replay orbit type and the truth-plus-twin view with the
      live RSW gap.
@@ -141,5 +173,7 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
 - Sentinel-1's drag and SRP reference areas. They only scale the fitted Cd
   and Cr, so the fits absorb them; nominal starting values are about 10 m^2
   for drag and 25 m^2 for SRP.
-- Whether the residual after fitting calls for polar motion or a better
-  atmosphere. The report shows the error budget first.
+- A better atmosphere: polar motion is now in (section 3); the remaining
+  one-day along-track prediction error (~100 m) is drag. The report shows the
+  error budget first.
+- Finite burns, if the impulse's residual around a burn matters in step 5.

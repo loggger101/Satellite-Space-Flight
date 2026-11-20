@@ -11,7 +11,7 @@ and the Sentinel-1 work flies everything (see [SCOPE.md](SCOPE.md)).
 | frame | definition | notes |
 |---|---|---|
 | ECI | geocentric pseudo-inertial frame *of date* (TEME-like) | not J2000/GCRF: precession has turned it ~0.37 deg since 2000 (about 45 km in LEO, 270 km at GEO against a J2000 tool); typed RAANs are of-date |
-| ECEF | ECI rotated by GMST about +Z | polar motion neglected |
+| ECEF | ECI rotated by GMST about +Z | turns about the spin axis; precise-orbit truth (ITRF) is brought onto it with IERS polar motion (`satflight/eop.py`) |
 | geodetic | WGS-84 ellipsoid | Heikkinen's exact closed form (millimetre-exact, no iteration) |
 | ENU | local east-north-up | station azimuth / elevation / range |
 | RSW | radial, along-track, orbit normal | |
@@ -468,7 +468,8 @@ down, without flying the run forward (satflight/lifetime.py):
 ## Known simplifications
 
 - Without `gravity_degree`, of the non-zonal harmonics only C22/S22.
-- The inertial frame is of date (see Frames). There is no polar motion.
+- The inertial frame is of date (see Frames). The simulator's own Earth has no
+  polar motion; Sentinel-1 truth states are corrected for it on the way in.
   UT1-UTC is zero unless a Clock is given `dut1` (precise orbit files carry it).
 - The analytic propagators apply only two-body motion (kepler) or two-body
   plus J2 (j2mean); a run that has other terms switched on logs a warning

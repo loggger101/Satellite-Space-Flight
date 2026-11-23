@@ -58,6 +58,19 @@ s.status = repmat("active", n, 1);
 s.dvUsed = zeros(n, 1);
 s.family = strings(n, 1);
 s.shadow = ones(n, 1);
+% a replayed object follows its precise orbit recording instead of being flown (read from
+% the POEORB files here); mission: the Sentinel-1 unit of a replay or its twin
+s.replay = cell(n, 1);
+s.mission = strings(n, 1);
+if isfield(sim, "mission")
+    s.mission = reshape(string(sim.mission), [], 1);
+    until = reshape(string(sim.replayUntil), [], 1);
+    for i = reshape(find(until ~= ""), 1, [])
+        s.replay{i} = replayLoad(s.mission(i), sim.epoch, until(i), sim.dataFolder, C);
+    end
+end
+s.followed = ~cellfun(@isempty, s.replay);
+s.replays = any(s.followed);
 s = stationSetup(s, sim.stations);
 s.man = sim.maneuvers;
 s.pending = true(1, numel(s.man));
@@ -95,6 +108,7 @@ end
 for L = reshape(sim.launches, 1, [])
     s = launchVehicle(s, L, opts.PlanLaunches);
 end
+[s, s.Y] = followRecordings(s, s.Y, 0);
 idx = freeIdx(s);
 s = stepLeft(s, 0, idx, s.Y);
 s = stepEvents(s, 0, idx, s.Y);
@@ -114,7 +128,8 @@ s = recordAt(s, 1, s.Y);
 s.lastSample = [];
 for k = 2:numel(tout)
     s = advanceTo(s, tout(k));
-    s = recordAt(s, k, presentState(s, tout(k)));
+    [s, Ynow] = presentState(s, tout(k));
+    s = recordAt(s, k, Ynow);
 end
 missed = find(all(s.statusOut == "", 1));
 if ~isempty(missed)
@@ -142,8 +157,9 @@ objects = table(s.names, s.family, s.area, s.cd, s.mass, s.dry, s.cr, VariableNa
 end
 
 function idx = freeIdx(s)
-% the active objects the ensemble propagates: not on a pad or in powered flight
-act = s.status == "active";
+% the active objects the ensemble propagates: not on a pad or in powered flight, nor
+% following a recording
+act = s.status == "active" & ~s.followed;
 for q = 1:numel(s.ascents)
     act(s.ascents{q}.sat) = false;
 end
@@ -191,23 +207,31 @@ while true
         s.t = tb;
     elseif ~any(cellfun(@(A) A.phase ~= "pad", s.ascents))
         s.t = tEnd;                 % nothing is integrated: there are no steps to keep
+        s = steppedIdle(s, idx);
     end
     if ~land
         break
     end
     s = advanceAscents(s, s.t);
+    if isempty(idx)
+        s = steppedIdle(s, idx);
+    end
     s = finishBurns(s);
     s = executeDue(s);
 end
 end
 
-function Y = presentState(s, t)
+function [s, Y] = presentState(s, t)
 % the states shown at t, which may lie up to a step past the physics (the simulator's
-% _present): the objects in orbit integrated there on the side, the physics untouched
+% _present): the objects in orbit integrated there on the side, the physics untouched,
+% and the replayed ones where their recordings have them (one may end there)
 Y = s.Y;
 idx = freeIdx(s);
 if t > s.t && ~isempty(idx)
     Y(idx, :) = peek(s, idx, t);
+end
+if t > s.t
+    [s, Y] = followRecordings(s, Y, t);
 end
 end
 
@@ -356,6 +380,9 @@ s.status(row, 1) = "active";
 s.dvUsed(row, 1) = 0;
 s.family(row, 1) = family;
 s.shadow(row, 1) = 1;
+s.replay{row, 1} = [];
+s.mission(row, 1) = "";
+s.followed(row, 1) = false;
 s.visible(:, row) = false;
 s.Yout(row, :, :) = NaN;
 s.statusOut(row, :) = "";
@@ -935,9 +962,19 @@ function [s, left] = stepped(s, t, idx, Yidx)
 % a state that is not finite is an error, then objects that have left go, then events
 s.t = t;
 s.Y(idx, :) = Yidx;
+[s, s.Y] = followRecordings(s, s.Y, t);
 checkFinite(s, t, idx);
 [s, left] = stepLeft(s, t, idx, s.Y);
 s = stepEvents(s, t, idx, s.Y);
+end
+
+function s = steppedIdle(s, idx)
+% the end of a stretch with nothing integrated (the simulator's _post_step with no
+% objects in orbit): replayed objects still move along their recordings and are looked at
+if s.replays
+    [s, s.Y] = followRecordings(s, s.Y, s.t);
+    s = stepEvents(s, s.t, idx, s.Y);
+end
 end
 
 function [y, h] = dopri5(f, t, y, t1, h, it, n, C)
@@ -1697,14 +1734,448 @@ lon = atan2(r(:, 2), r(:, 1));
 [lat, h] = heikkinen(hypot(r(:, 1), r(:, 2)), r(:, 3), C);
 end
 
+% --- precise orbits (replay.py, poeorb.py, eop.py) --------------------------------------------
+
+function [s, Y] = followRecordings(s, Y, t)
+% the simulator's _follow_recordings: each replayed object of states Y where its recording
+% has it at t; one whose recording has ended stops at its end (its physics state too, so
+% the steps after keep it there) and the log says so
+for i = reshape(find(s.followed & s.status == "active"), 1, [])
+    E = s.replay{i};
+    if t > E.t(end) + 1e-9
+        Y(i, :) = replayState(E, E.t(end));
+        s.Y(i, :) = Y(i, :);
+        s.status(i) = "end of data";
+        s = logEvent(s, E.t(end), sprintf("%s: end of the recorded orbit (%s data until %s " + ...
+            "24:00 UTC)", s.names(i), E.mission, E.until), "warn");
+    else
+        Y(i, :) = replayState(E, t);
+    end
+end
+end
+
+function y = replayState(E, t)
+% the recorded state at t (s since the epoch): cubic Hermite on position and velocity
+% between the 10 s samples around it (replay.Ephemeris.state)
+if ~(E.t(1) - 1e-9 <= t && t <= E.t(end) + 1e-9)
+    error("satflight:replay", "%s: t = %.1f s is outside the recording (%.0f..%.0f s)", ...
+        E.mission, t, E.t(1), E.t(end));
+end
+k = min(max(sum(E.t <= t), 1), numel(E.t) - 1);
+t0 = E.t(k);
+h = E.t(k + 1) - t0;
+u = (t - t0) / h;
+r0 = E.r(k, :);
+r1 = E.r(k + 1, :);
+m0 = E.v(k, :) * h;
+m1 = E.v(k + 1, :) * h;
+u2 = u * u;
+u3 = u * u * u;
+r = (2 * u3 - 3 * u2 + 1) * r0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * r1 ...
+    + (u3 - u2) * m1;
+v = ((6 * u2 - 6 * u) * r0 + (3 * u2 - 4 * u + 1) * m0 + (-6 * u2 + 6 * u) * r1 ...
+    + (3 * u2 - 2 * u) * m1) / h;
+y = [r, v];
+end
+
+function E = replayLoad(mission, epoch, until, folder, C)
+% the recording a replayed object follows (replay.for_orbit): the mission's precise orbit
+% from the epoch to the end of day until (UTC), in the run's ECI frame (polar motion taken
+% out with the IERS table, the Earth turned back by GMST at UT1), timed in s from the epoch
+root = dataRoot(folder);
+first = dateshift(epoch, "start", "day");
+last = datetime(until, InputFormat="yyyy-MM-dd", TimeZone="UTC");
+if last < first
+    error("satflight:replay", "replay until %s ends before the scenario starts (%s)", ...
+        until, string(first, "yyyy-MM-dd"));
+end
+e0 = posixtime(epoch);
+A = poeorbArc(mission, first, last, root, C);
+if A.unix(1) > e0
+    % a day's own samples start at 00:00:02: the moments before come from the day before
+    A = poeorbArc(mission, first - days(1), last, root, C);
+end
+P = eopTable(fullfile(root, "eop", "finals2000A.all"));
+[r, v] = poeorbEci(A, P, C);
+E = struct("mission", mission, "until", until, "t", A.unix - e0, "r", r, "v", v);
+end
+
+function root = dataRoot(folder)
+% where the downloaded data lives (poeorb.data_root): the folder given, else
+% $SATFLIGHT_DATA, else satflight-data in the home folder
+root = string(folder);
+if strtrim(root) == ""
+    root = strtrim(string(getenv("SATFLIGHT_DATA")));
+end
+if root == ""
+    if ispc
+        home = getenv("USERPROFILE");
+    else
+        home = getenv("HOME");
+    end
+    root = fullfile(string(home), "satflight-data");
+end
+end
+
+function [r, v] = poeorbEci(A, P, C)
+% Earth-fixed states into the run's ECI frame (poeorb.to_eci): the ITRF onto the spin
+% axis by polar motion (W = R2(xp) R1(yp)), then the Earth turned back by GMST at UT1
+jd = 2440587.5 + A.unix / 86400;
+[xp, yp] = eopPole(P, jd);
+cx = cos(xp); sx = sin(xp); cy = cos(yp); sy = sin(yp);
+% W = R2(xp) * R1(yp), row by row
+W = {cx, sx .* sy, -sx .* cy; zeros(size(xp)), cy, sy; sx, -cx .* sy, cx .* cy};
+r = zeros(size(A.r));
+v = zeros(size(A.v));
+for a = 1:3
+    r(:, a) = W{a, 1} .* A.r(:, 1) + W{a, 2} .* A.r(:, 2) + W{a, 3} .* A.r(:, 3);
+    v(:, a) = W{a, 1} .* A.v(:, 1) + W{a, 2} .* A.v(:, 2) + W{a, 3} .* A.v(:, 3);
+end
+theta = gmst(jd + A.dut1 / 86400);
+c = cos(theta);
+s = sin(theta);
+r = [c .* r(:, 1) - s .* r(:, 2), s .* r(:, 1) + c .* r(:, 2), r(:, 3)];
+v = [c .* v(:, 1) - s .* v(:, 2), s .* v(:, 1) + c .* v(:, 2), v(:, 3)];
+v = v + [-C.OMEGA * r(:, 2), C.OMEGA * r(:, 1), zeros(size(theta))];
+end
+
+function A = poeorbArc(mission, first, last, root, C)
+% days first..last of the mission's POEORB files as one arc (poeorb.load_arc): each day
+% from its own file, 00:00 to 24:00 UTC, every 10 s; a day with no file, or neighbouring
+% days that disagree by more than 10 m where they overlap, is an error (nothing bridged)
+have = poeorbFiles(mission, root);
+dayList = first:caldays(1):last;
+want = string(dayList, "yyyy-MM-dd");
+missing = want(~ismember(want, have.day));
+if ~isempty(missing)
+    error("satflight:noData", "%s: no downloaded file for %d day(s), first %s (run " + ...
+        "tools/fetch_poeorb.py)", mission, numel(missing), missing(1));
+end
+A = struct("unix", zeros(0, 1), "dut1", zeros(0, 1), "r", zeros(0, 3), "v", zeros(0, 3));
+prev = [];
+for k = 1:numel(dayList)
+    f = poeorbRead(have.path(have.day == want(k)), C);
+    if ~isempty(prev)
+        [~, ip, ic] = intersect(prev.unix, f.unix);
+        keep = ~(prev.degraded(ip) | f.degraded(ic));
+        if any(keep)
+            gap = max(vecnorm(prev.r(ip(keep), :) - f.r(ic(keep), :), 2, 2)) * 1e3;
+            if gap > C.SEAM_TOL_M
+                error("satflight:poeorb", "%s: differs from the day before by %.3f m where " + ...
+                    "they overlap (limit %g m)", f.name, gap, C.SEAM_TOL_M);
+            end
+        end
+    end
+    d0 = posixtime(dayList(k));
+    in = f.unix >= d0 & f.unix < d0 + 86400;
+    A.unix = [A.unix; f.unix(in)];
+    A.dut1 = [A.dut1; f.dut1(in)];
+    A.r = [A.r; f.r(in, :)];
+    A.v = [A.v; f.v(in, :)];
+    prev = f;
+end
+expect = numel(dayList) * 86400 / 10;
+if numel(A.unix) ~= expect || any(diff(A.unix) ~= 10)
+    error("satflight:poeorb", "%s %s..%s: %d state vectors, expected %d every 10 s", ...
+        mission, want(1), want(end), numel(A.unix), expect);
+end
+end
+
+function have = poeorbFiles(mission, root)
+% the mission's downloaded files, the newest of each nominal day (poeorb.local_files)
+files = dir(fullfile(root, "poeorb", mission, "*.EOF.zip"));
+names = string({files.name});
+have = struct("day", strings(0, 1), "path", strings(0, 1), "created", strings(0, 1));
+for k = 1:numel(names)
+    tok = regexp(names(k), "^(S1[A-D])_OPER_AUX_POEORB_OPOD_(\d{8}T\d{6})_V(\d{8}T\d{6})_" + ...
+        "(\d{8}T\d{6})\.EOF\.zip$", "tokens", "once");
+    if isempty(tok)
+        error("satflight:poeorb", "%s is not a POEORB file name", names(k));
+    end
+    start = datetime(tok(3), InputFormat="yyyyMMdd'T'HHmmss", TimeZone="UTC");
+    stop = datetime(tok(4), InputFormat="yyyyMMdd'T'HHmmss", TimeZone="UTC");
+    if stop - start < hours(20) || stop - start > hours(30)
+        error("satflight:poeorb", "%s: covers %s, not about 26 h", names(k), string(stop - start));
+    end
+    day = string(dateshift(start + (stop - start) / 2, "start", "day"), "yyyy-MM-dd");
+    j = find(have.day == day, 1);
+    if isempty(j)
+        j = numel(have.day) + 1;
+    elseif tok(2) <= have.created(j)
+        continue
+    end
+    have.day(j, 1) = day;
+    have.path(j, 1) = fullfile(files(k).folder, names(k));
+    have.created(j, 1) = tok(2);
+end
+end
+
+function f = poeorbRead(path, C)
+% one POEORB file, checked as the simulator checks it (poeorb.read_file): its header, a
+% state vector every 10 s over its validity window with the fields and units expected,
+% known quality flags, TAI-UTC constant, UT1-UTC within 0.9 s, orbit numbers that do not go
+% back, Sentinel-1's distance and speed, and velocities that are the positions' rate of
+% change away from burns. Earth-fixed km and km/s; times as seconds since 1970 (UTC)
+[~, stem] = fileparts(path);
+name = stem + ".zip";
+stem = extractBefore(stem, ".");
+tmp = tempname;
+mkdir(tmp);
+cleanup = onCleanup(@() rmdir(tmp, "s"));
+inner = string(unzip(path, tmp));
+if numel(inner) ~= 1
+    error("satflight:poeorb", "%s: holds %d files, expected one .EOF", name, numel(inner));
+end
+txt = fileread(inner);
+head = struct("File_Name", stem, "File_Type", "AUX_POEORB", ...
+    "Mission", "Sentinel-1" + extractAfter(extractBefore(stem, 4), 2), ...
+    "Ref_Frame", "EARTH_FIXED", "Time_Reference", "UTC");
+tok = regexp(stem, "_V(\d{8}T\d{6})_(\d{8}T\d{6})$", "tokens", "once");
+start = datetime(tok(1), InputFormat="yyyyMMdd'T'HHmmss", TimeZone="UTC");
+stop = datetime(tok(2), InputFormat="yyyyMMdd'T'HHmmss", TimeZone="UTC");
+head.Validity_Start = "UTC=" + string(start, "yyyy-MM-dd'T'HH:mm:ss");
+head.Validity_Stop = "UTC=" + string(stop, "yyyy-MM-dd'T'HH:mm:ss");
+if isempty(regexp(txt, "^(<\?xml[^>]*\?>)?\s*<Earth_Explorer_File>", "once"))
+    error("satflight:poeorb", "%s: not an Earth Explorer file", name);
+end
+for field = string(fieldnames(head))'
+    got = regexp(txt, "<" + field + ">([^<]*)</" + field + ">", "tokens", "once");
+    if isempty(got) || strtrim(got) ~= head.(field)
+        error("satflight:poeorb", "%s: %s is %s, expected %s", name, field, ...
+            strjoin(string(got), ""), head.(field));
+    end
+end
+count = regexp(txt, "<List_of_OSVs count=""(\d+)"">", "tokens", "once");
+opened = regexp(txt, "<OSV>");
+[osv, at] = regexp(txt, "<OSV>\s*<TAI>TAI=([^<]*)</TAI>\s*<UTC>UTC=([^<]*)</UTC>\s*" + ...
+    "<UT1>UT1=([^<]*)</UT1>\s*<Absolute_Orbit>([^<]*)</Absolute_Orbit>\s*" + ...
+    "<X unit=""m"">([^<]*)</X>\s*<Y unit=""m"">([^<]*)</Y>\s*<Z unit=""m"">([^<]*)</Z>\s*" + ...
+    "<VX unit=""m/s"">([^<]*)</VX>\s*<VY unit=""m/s"">([^<]*)</VY>\s*" + ...
+    "<VZ unit=""m/s"">([^<]*)</VZ>\s*<Quality>([^<]*)</Quality>\s*</OSV>", "tokens", "start");
+if numel(at) ~= numel(opened)
+    k = find(~ismember(opened, at), 1);
+    error("satflight:poeorb", "%s, OSV %d: not the fields and units expected (TAI, UTC, " + ...
+        "UT1, orbit, X Y Z in m, VX VY VZ in m/s, quality)", name, k - 1);
+end
+n = numel(opened);
+if isempty(count) || str2double(count) ~= n
+    error("satflight:poeorb", "%s: %d state vectors, but count says %s", name, n, ...
+        strjoin(string(count), ""));
+end
+if n < 3
+    error("satflight:poeorb", "%s: only %d state vectors", name, n);
+end
+F = string(vertcat(osv{:}));
+quality = F(:, 11);
+bad = find(~ismember(quality, C.QUALITIES), 1);
+if ~isempty(bad)
+    error("satflight:poeorb", "%s, OSV %d: unknown quality %s (known: %s)", name, bad - 1, ...
+        quality(bad), strjoin(C.QUALITIES, ", "));
+end
+[utc, utcUs] = eeTimes(F(:, 2), name);
+[tai, taiUs] = eeTimes(F(:, 1), name);
+[ut1, ut1Us] = eeTimes(F(:, 3), name);
+num = str2double(F(:, 5:10));
+orbit = str2double(F(:, 4));
+if any(isnan(num), "all") || any(isnan(orbit))
+    error("satflight:poeorb", "%s: unreadable number", name);
+end
+stepOff = find(diff(utc) * 1e6 + diff(utcUs) ~= 10e6, 1);
+if ~isempty(stepOff)
+    error("satflight:poeorb", "%s, OSV %d: not 10 s after the one before", name, stepOff);
+end
+if utc(1) ~= posixtime(start) || utcUs(1) ~= 0 || utc(end) ~= posixtime(stop) || utcUs(end) ~= 0
+    error("satflight:poeorb", "%s: the state vectors do not run over the validity window", name);
+end
+leap = (tai - utc) * 1e6 + (taiUs - utcUs);
+if any(leap ~= leap(1))
+    error("satflight:poeorb", "%s, OSV %d: TAI-UTC changes", name, find(leap ~= leap(1), 1) - 1);
+end
+dut1 = ((ut1 - utc) * 1e6 + (ut1Us - utcUs)) / 1e6;
+if any(abs(dut1) >= 0.9)
+    k = find(abs(dut1) >= 0.9, 1);
+    error("satflight:poeorb", "%s, OSV %d: UT1-UTC = %g s, beyond 0.9 s", name, k - 1, dut1(k));
+end
+if any(diff(orbit) < 0)
+    error("satflight:poeorb", "%s, OSV %d: the orbit number goes back", name, ...
+        find(diff(orbit) < 0, 1));
+end
+r = num(:, 1:3) / 1000;
+v = num(:, 4:6) / 1000;
+for check = {{"|r|", r, C.POEORB_R, "km"}, {"|v|", v, C.POEORB_V, "km/s"}}
+    [what, x, lim, unit] = check{1}{:};
+    mag = vecnorm(x, 2, 2);
+    k = find(~(mag >= lim(1) & mag <= lim(2)), 1);
+    if ~isempty(k)
+        error("satflight:poeorb", "%s, OSV %d: %s = %.3f %s, outside %g..%g", name, k - 1, ...
+            what, mag(k), unit, lim(1), lim(2));
+    end
+end
+% velocities against the positions' central differences, not across a burn
+burn = quality == "DEGRADED-MANOEUVRE";
+quiet = ~(burn(1:end - 2) | burn(2:end - 1) | burn(3:end));
+err = vecnorm((r(3:end, :) - r(1:end - 2, :)) / 20 - v(2:end - 1, :), 2, 2);
+err(~quiet) = 0;
+[worst, k] = max(err);
+if worst > C.POEORB_V_TOL
+    error("satflight:poeorb", "%s, OSV %d: velocity disagrees with the positions by %.2f m/s", ...
+        name, k, worst * 1e3);
+end
+f = struct("name", name, "unix", utc, "dut1", dut1, "r", r, "v", v, ...
+    "degraded", quality ~= "NOMINAL");
+end
+
+function [sec, us] = eeTimes(text, name)
+% "2025-06-30T22:59:42.000000" times: whole seconds since 1970 (UTC) and microseconds
+v = sscanf(strjoin(text, " "), "%4d-%2d-%2dT%2d:%2d:%2d.%6d");
+if numel(v) ~= 7 * numel(text)
+    error("satflight:poeorb", "%s: unreadable time", name);
+end
+v = reshape(v, 7, []).';
+days = datenum(v(:, 1), v(:, 2), v(:, 3)) - 719529;   %#ok<DATNM> % whole days since 1970
+sec = days * 86400 + v(:, 4) * 3600 + v(:, 5) * 60 + v(:, 6);
+us = v(:, 7);
+end
+
+function P = eopTable(path)
+% the IERS finals2000A table (eop.read), strictly: every row up to the blank future must
+% parse and the days follow one another. Pole x, y in rad; measured rows flagged
+if ~isfile(path)
+    error("satflight:noData", "no Earth-orientation table at %s: run python tools/fetch_eop.py", ...
+        path);
+end
+lines = splitlines(string(fileread(path)));
+if lines(end) == ""
+    lines(end) = [];
+end
+blank = strlength(lines) <= 16 | extractBetween(pad(lines, 17), 17, 17) == " ";
+firstBlank = find(blank, 1);
+if ~isempty(firstBlank) && any(~blank(firstBlank:end))
+    error("satflight:eop", "line %d: an empty row before line %d's values", firstBlank, ...
+        firstBlank - 1 + find(~blank(firstBlank:end), 1));
+end
+rows = char(pad(lines(~blank), 68));
+flag = rows(:, 17);
+ut1Flag = rows(:, 58);
+P.mjd = str2double(string(rows(:, 8:15)));
+P.xp = str2double(string(rows(:, 19:27))) * (pi / (180.0 * 3600.0));
+P.yp = str2double(string(rows(:, 38:46))) * (pi / (180.0 * 3600.0));
+P.measured = flag == 'I' & ut1Flag == 'I';
+bad = find(~ismember(flag, 'IP') | ~ismember(ut1Flag, 'IP') | isnan(P.mjd) | isnan(P.xp) ...
+    | isnan(P.yp), 1);
+if ~isempty(bad)
+    error("satflight:eop", "line %d: not a finals2000A row", bad);
+end
+if numel(P.mjd) < 2
+    error("satflight:eop", "%s: fewer than two days of values", path);
+end
+gap = find(diff(P.mjd) ~= 1, 1);
+if ~isempty(gap)
+    error("satflight:eop", "line %d: MJD %.0f does not follow %.0f", gap + 1, P.mjd(gap + 1), ...
+        P.mjd(gap));
+end
+end
+
+function [xp, yp] = eopPole(P, jd)
+% polar motion (rad) at Julian dates jd (UTC), linear between the table's days
+% (eop.Table.pole); only measured values, never the predictions
+m = jd - 2400000.5;
+i = floor(m - P.mjd(1)) + 1;      % the day at or before m: the days follow one another
+out = i < 1 | (i >= numel(P.mjd) & m > P.mjd(end));
+if any(out)
+    error("satflight:eop", "MJD %.3f is outside the Earth-orientation table (MJD %.0f..%.0f)", ...
+        m(find(out, 1)), P.mjd(1), P.mjd(end));
+end
+i = min(i, numel(P.mjd) - 1);
+f = m - P.mjd(i);
+ok = P.measured(i) & (P.measured(i + 1) | ~(f > 0));
+if ~all(ok)
+    error("satflight:eop", "MJD %.3f needs predicted Earth-orientation values; only " + ...
+        "measured ones are used (fetch a newer table)", m(find(~ok, 1)));
+end
+xp = P.xp(i) + f .* (P.xp(i + 1) - P.xp(i));
+yp = P.yp(i) + f .* (P.yp(i + 1) - P.yp(i));
+end
+
+function G = satflightTruthGap(T, sim)
+%SATFLIGHTTRUTHGAP Each twin's offset from the replay of its mission (km), at every sample
+%   while both fly: radial, along-track and cross-track in the replay's frame (its position,
+%   the orbit normal, and the direction between), and the distance. The simulator shows the
+%   same beside a selected twin (Simulation.gap_to_truth).
+names = reshape(string(sim.names), [], 1);
+mission = reshape(string(sim.mission), [], 1);
+until = reshape(string(sim.replayUntil), [], 1);
+G = table('Size', [0 8], 'VariableTypes', ["double", "datetime", "string", "string", ...
+    "double", "double", "double", "double"], 'VariableNames', ["t_s", "utc", "name", ...
+    "truth", "radial_km", "along_km", "cross_km", "distance_km"]);
+G.utc.TimeZone = "UTC";
+for k = reshape(find(mission ~= "" & until == ""), 1, [])
+    truth = names(find(mission == mission(k) & until ~= "", 1));
+    if isempty(truth)
+        continue
+    end
+    a = T(T.name == names(k), :);
+    b = T(T.name == truth, :);
+    [~, ia, ib] = intersect(round(a.t_s * 1000), round(b.t_s * 1000));
+    both = a.status(ia) == "active" & b.status(ib) == "active";
+    ia = ia(both);
+    ib = ib(both);
+    r = [b.x_km(ib), b.y_km(ib), b.z_km(ib)];
+    v = [b.vx_kms(ib), b.vy_kms(ib), b.vz_kms(ib)];
+    d = [a.x_km(ia), a.y_km(ia), a.z_km(ia)] - r;
+    rh = r ./ vecnorm(r, 2, 2);
+    wh = cross(r, v, 2);
+    wh = wh ./ vecnorm(wh, 2, 2);
+    sh = cross(wh, rh, 2);
+    gap = [sum(d .* rh, 2), sum(d .* sh, 2), sum(d .* wh, 2)];
+    G = [G; table(a.t_s(ia), a.utc(ia), repmat(names(k), numel(ia), 1), ...
+        repmat(truth, numel(ia), 1), gap(:, 1), gap(:, 2), gap(:, 3), vecnorm(gap, 2, 2), ...
+        VariableNames=G.Properties.VariableNames)]; %#ok<AGROW>
+end
+end
+
+function fig = satflightPlotTruthGap(G)
+%SATFLIGHTPLOTTRUTHGAP Each twin's radial, along-track and cross-track gap to the replay of
+%   its mission over the run (m).
+fig = figure(Name="Gap to the precise orbit");
+themeFigure(fig);
+tl = tiledlayout(fig, 3, 1, TileSpacing="compact");
+labels = ["radial_km", "Radial"; "along_km", "Along-track"; "cross_km", "Cross-track"];
+twins = unique(G.name, "stable");
+for j = 1:3
+    ax = nexttile(tl);
+    styleAxes(ax);
+    hold(ax, "on");
+    for k = 1:numel(twins)
+        mine = G(G.name == twins(k), :);
+        plot(ax, mine.t_s / 3600, mine.(labels(j, 1)) * 1000, Color=lineColor(k), ...
+            DisplayName=twins(k));
+    end
+    grid(ax, "on");
+    ylabel(ax, labels(j, 2) + " (m)");
+    if j == 1
+        title(ax, "Twin minus the precise orbit");
+        legend(ax, Location="best");
+    end
+end
+xlabel(ax, "Time since epoch (h)");
+applyTheme(fig);
+end
+
 % --- events (simulation.py: eclipses, station passes, close approaches) ----------------------
 
 function s = stepEvents(s, t, idx, Y)
 % what the simulator looks for at the end of every step: eclipse entry and exit and
 % station AOS/LOS (for each object while there are at most 40), close approaches
 C = s.C;
-if numel(s.names) <= C.EVENT_DETAIL_LIMIT && ~isempty(idx)
-    w = sort(idx(:));
+w = idx(:);
+if s.replays
+    % a replayed object is the real one: it gets sunlight and stations, not approaches
+    % (its twin flies metres from it on purpose)
+    w = union(w, find(s.followed & s.status == "active"));
+end
+if numel(s.names) <= C.EVENT_DETAIL_LIMIT && ~isempty(w)
+    w = sort(w);
     s = eclipseEvents(s, t, w, Y);
     if ~isempty(s.st.name)
         s = stationEvents(s, t, w, Y);
@@ -3436,6 +3907,12 @@ C.MU_MOON = 4902.800066;      % km^3/s^2
 C.P_SRP = 4.56e-6;            % N/m^2, sunlight pressure at 1 AU
 % satflight/scenario.py
 C.CR_DEFAULT = 1.3;           % sunlight reflectivity of an object given none
+% satflight/poeorb.py: the precise orbit files' checks
+C.POEORB_R = [6900.0 7250.0];         % km: Sentinel-1 flies ~693 km up
+C.POEORB_V = [6.5 8.0];               % km/s, Earth-fixed speed
+C.POEORB_V_TOL = 0.0005;              % km/s: velocity vs the positions' central difference
+C.SEAM_TOL_M = 10.0;                  % m: neighbouring days must agree where they overlap
+C.QUALITIES = ["NOMINAL" "DEGRADED-MANOEUVRE" "DEGRADED-GAP"];
 C.DEG = pi / 180;
 C.G0 = 9.80665e-3;            % km/s^2
 % satflight/simulation.py
@@ -4969,6 +5446,11 @@ if sim.propagator == "cowell"
     applied = [~field & [F.j2, F.j3, F.j4, F.c22], F.drag, F.sun, F.moon, F.srp, field];
 end
 present = unique(T.name, "stable")';
+if isfield(sim, "replayUntil")
+    % a replayed object follows its recording: the forces of the run do not fly it
+    names = reshape(string(sim.names), [], 1);
+    present = present(~ismember(present, names(reshape(string(sim.replayUntil), [], 1) ~= "")));
+end
 D = cell(numel(present), 1);
 for q = 1:numel(present)
     rows = T(T.name == present(q), :);

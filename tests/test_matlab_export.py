@@ -333,17 +333,20 @@ def test_the_introduction_counts_in_words(tmp_path):
     assert "with no satellites in orbit, 1 launch and no scheduled maneuvers." in text
 
 
+TWINLESS = {"satflightTruthGap", "satflightPlotTruthGap"}    # no precise-orbit twin
+
+
 @pytest.mark.parametrize("scenario, gone", [
     ("hohmann_to_geo", {"satflightNoBurns", "satflightPlan", "satflightPlotAscent",
                         "mergeMarks", "satflightPasses", "elevationDeg", "satflightPlotSky",
-                        "satflightCoverage"}),
+                        "satflightCoverage"} | TWINLESS),
     # the maneuvers stay without burns: the orbit evolution reads them; the transfer
     # section goes with the burns
     ("orbit_tour", {"satflightPlan", "satflightPlotAscent", "mergeMarks", "satflightTransfers",
                  "satflightPlotTransfer", "satflightPlotDeltaV", "satflightPlotBurnWindow",
                  "burnMarks", "onlyFirst", "plural", "orbitText", "orbitSummary",
-                 "julianUtc"}),
-    ("launch_day", set())])
+                 "julianUtc"} | TWINLESS),
+    ("launch_day", TWINLESS)])
 def test_a_script_holds_only_the_helpers_it_calls(scenario, gone, tmp_path):
     """Helpers the sections never call are left out (MATLAB marks an unused local
     function); every function is defined once, and the rest are all there."""
@@ -419,7 +422,7 @@ def test_matlab_only_export_leaves_out_the_cross_check(tmp_path):
     differ = [line for line in alone.splitlines() if line not in kept
               and not line.startswith("%[text] Exported from")]
     assert differ == [line for line in alone.splitlines() if line.startswith("%[text] Press")]
-    engine = runtime_lines(False)
+    engine = drop_functions(runtime_lines(False), sorted(TWINLESS))
     assert engine and "\n".join(engine) in alone
     assert len(engine) < len(runtime_lines(True))
 
@@ -529,6 +532,15 @@ def test_runtime_constants_are_the_simulators():
     assert const("P_SRP") == constants.P_SRP
     from satflight.scenario import CR_DEFAULT
     assert const("CR_DEFAULT") == CR_DEFAULT
+    # the precise-orbit reader's checks (a state vector every 10 s is written in)
+    from satflight import poeorb
+    assert const("SEAM_TOL_M") == poeorb.SEAM_TOL_M and poeorb.STEP == 10.0
+    assert const("POEORB_V_TOL") == poeorb.V_TOL
+    for name, want in (("POEORB_R", poeorb.R_BOUNDS), ("POEORB_V", poeorb.V_BOUNDS)):
+        m = re.search(rf"^C\.{name} = \[([^\]]+)\];", src, re.M)
+        assert m and tuple(float(x) for x in m.group(1).split()) == want, name
+    m = re.search(r"^C\.QUALITIES = \[([^\]]+)\];", src, re.M)
+    assert m and tuple(re.findall(r'"([^"]*)"', m.group(1))) == poeorb.QUALITIES
     assert "C.DEG = pi / 180;" in src
     from satflight import launch, simulation
     from satflight.maneuvers import G0

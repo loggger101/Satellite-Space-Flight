@@ -64,7 +64,8 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("everyIntegrator",),                                      # ~90
                 ("sunMoonAndSunlight",),
                 ("launchInSunlight",),
-                ("egm2008Field",))
+                ("egm2008Field",),
+                ("preciseOrbitReplay", "replayWithoutItsFiles"))
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
 BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
                       # one session (launch_day, starlink_shell the slowest), so

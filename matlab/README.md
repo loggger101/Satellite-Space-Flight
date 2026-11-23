@@ -45,6 +45,8 @@ Orbits for `addSatellite`:
 | `orbitGeo(lon)` | geostationary slot |
 | `orbitSurface(...)` | from a point over the ground: `Lat`, `Lon`, `Alt`, `Speed`, `Azimuth`, `Fpa` |
 | `orbitTle(line1, line2)` | a two-line element set |
+| `orbitReplay(mission, until)` | a Sentinel-1 unit (`"S1A"`, ...) following ESA's precise orbit files to the end of day `until` (UTC); it is not flown and cannot burn |
+| `orbitPrecise(mission)` | its twin: started on the precise orbit at the epoch, then flown |
 
 Every function has `help`, e.g. `help satflight.addManeuver`. Options you
 leave out are not written to the file, so the simulator's own default applies.
@@ -191,7 +193,10 @@ sections:
    (`savedFiles` lists the figures). With `resultsFile = "run.mat"`, saves
    `sim`, `T`, `events` and every table the sections before made to that
    MAT-file (`load("run.mat")` brings them back).
-13. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
+13. **Gap to the precise orbit** (with a Sentinel-1 twin and the replay of its
+   unit): `truthGap` has the twin's radial, along-track and cross-track offset
+   from the replay at every sample while both fly, and a figure plots them.
+14. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
    It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.
@@ -212,7 +217,13 @@ spent stages, circularization at apogee); the launch planner (launch windows
 into a RAAN or another satellite's plane, the pitch-kick search); the
 simulator's step boundaries (liftoffs, ascent syncs every second, burns); and
 its events (eclipses with the conical shadow, station AOS/LOS, close
-approaches, re-entry at 80 km, impact, escape). Numerical runs use the
+approaches, re-entry at 80 km, impact, escape); and the replay of Sentinel-1's
+precise orbits, read from ESA's POEORB files when the script runs (`dataFolder`
+in Settings: blank for `$SATFLIGHT_DATA`, else `~/satflight-data`, where
+`tools/fetch_poeorb.py` and `tools/fetch_eop.py` put them) with the reader's
+checks, polar motion taken out with the IERS table, and the same interpolation
+between the 10 s samples; a day missing from the folder stops the run, naming
+it. Numerical runs use the
 simulator's own integrators, ported step for step: its adaptive Dormand-Prince
 5(4) `dopri5` (the same error norm and step control, a 10 s first step, the step
 size carried from one stretch of the run to the next) or the fixed-step `rk4`,

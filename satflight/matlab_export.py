@@ -47,7 +47,7 @@ from .constants import R_EARTH
 from .elements import rv2coe
 from .launch import PHASE_LABELS
 from .scenario import Scenario
-from .simulation import ACTIVE, Simulation
+from .simulation import Simulation
 from .strict import one_of
 from .timeutil import UTC, ensure_utc, format_duration
 
@@ -228,13 +228,6 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
         raise ValueError(f"the MATLAB runtime does not model {', '.join(missing)} yet; "
                          "switch them off in Physics (P) to export, or wait for the "
                          "MATLAB port (docs/specs/2026-11-18-sentinel1-poeorb-plan.md, step 6)")
-    replayed = [s.name for s in sim.sats if s.replay is not None and s.status == ACTIVE]
-    if replayed:
-        raise ValueError(f"{', '.join(replayed)} follow{'s' if len(replayed) == 1 else ''} "
-                         "a recorded orbit, which the MATLAB runtime cannot replay yet "
-                         "(step 6 of docs/specs/2026-11-18-sentinel1-poeorb-plan.md); "
-                         "remove them to export the rest")
-
     if start == "now":
         scenario = sim.snapshot_scenario(sim.scenario.name)
         origin = (f"the moment it was exported, T+{format_duration(sim.t)} into "
@@ -254,8 +247,13 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
     scrubbed = [e.text for e in src.events if e.kind == "alert" and e.text.startswith("Launch of ")]
     if not rows and not src.ascents:
         raise ValueError("nothing to export: no satellite and no launch")
+    # a replay's recording, and the mission of a replay or its twin (a twin taken from
+    # the current moment is a plain state in the scenario, but still its mission's twin)
+    live = {s.name: s.mission for s in sim.sats}
+    recorded = [(s.mission or live.get(s.name, ""),
+                 "" if s.replay is None else s.replay.until.isoformat()) for _, s in rows]
     lines = _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step,
-                    compare)
+                    compare, recorded)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return path
@@ -365,7 +363,7 @@ def _none(x, default: float) -> float:
 
 
 def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step,
-            compare) -> list[str]:
+            compare, recorded) -> list[str]:
     F, it = src.forces, scenario.integrator
     epoch = ensure_utc(scenario.epoch)
     exported = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -392,6 +390,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     if launches:
         out += ["planLaunches = false;   % true: plan the launches on their pads here (window, "
                 "pitch kick), e.g. after editing one"]
+    replays = any(until for _, until in recorded)
+    missions = {m for m, _ in recorded if m}
+    twins = any(m and not until and any(m == m2 and u2 for m2, u2 in recorded)
+                for m, until in recorded)
+    if replays:
+        out += ['dataFolder = "";   % the precise orbits and the IERS table (tools/fetch_poeorb'
+                '.py, tools/fetch_eop.py): "" = $SATFLIGHT_DATA, else ~/satflight-data, as the '
+                "simulator"]
     out += ["animate = true;   % play the run back (Animation section)",
             'animationFile = "";   % e.g. "run.gif" or "run.mp4": also save the map animation',
             'animation3DFile = "";   % e.g. "orbits.mp4": also save the 3-D animation',
@@ -457,6 +463,24 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += ["sim.names = strings(0, 1);", "sim.y0 = zeros(0, 6);", "props = zeros(0, 4);"]
     out += ["sim.mass = props(:, 1);", "sim.area = props(:, 2);", "sim.cd = props(:, 3);",
             "sim.cr = props(:, 4);"]
+    if missions:
+        out += _text(
+            "Sentinel-1 units (`mission`) and the precise orbits: a satellite with a "
+            "`replayUntil` day follows ESA's precise orbit (POEORB) files to the end of that "
+            "day (UTC) instead of being flown, read here from `dataFolder` as the simulator "
+            "reads them, polar motion taken out with the IERS table; it cannot burn and stops "
+            "when its recording ends. One with a mission and no day is flown: the twin, "
+            "measured against the replay of its mission."
+            if replays else
+            "Sentinel-1 units (`mission`): the twins of the precise orbits, flown here.")
+        for name, col in (("mission", [m for m, _ in recorded]),
+                          ("replayUntil", [u for _, u in recorded])):
+            if len(col) == 1:          # (brackets around one value: MATLAB flags them)
+                out += [f"sim.{name} = {_str(col[0])};"]
+            else:
+                out += [f"sim.{name} = ["] + [f"    {_str(x)}" for x in col] + ["];"]
+        if replays:
+            out += ["sim.dataFolder = dataFolder;"]
     if any(s.dry_mass > 0 for _, s in rows):
         out += _text("Dry masses (kg): burns stop when the propellant above them is gone "
                      "(0: no limit).")
@@ -541,6 +565,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             "satflightPlotOrbits(T, shown);"]
     if launches:
         out += ["satflightPlotAscent(launches);"]
+    if twins:
+        out += ["%%"]
+        out += _text("## Gap to the precise orbit\nEach twin's offset from the replay of its "
+                     "mission at every sample while both fly (`truthGap`): radial, along-track "
+                     "and cross-track in the replay's frame (km), as the simulator shows it "
+                     "beside a selected twin, and the distance.")
+        out += ["truthGap = satflightTruthGap(T, sim);", "display(truthGap(end, :))",
+                "satflightPlotTruthGap(truthGap);"]
     out += ["%%"]
     out += _text("## Passes and eclipses\nFrom the event log: "
                  + ("each station pass (`passes`: when it starts and ends, and the highest "
@@ -614,7 +646,9 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         "gravity terms) constant, and with the C22 field, which turns with the Earth, the "
         "Jacobi constant; `drift_rel` is how far it moved, relative to its size, which "
         "should stay near the integrator's tolerance. With drag on, energy falls instead. "
-        "The forces panel shows how much each term matters for this orbit.")
+        "The forces panel shows how much each term matters for this orbit."
+        + (" A replayed satellite is left out: the forces here do not fly it." if replays
+           else ""))
     out += ["[diagnostics, conservation] = satflightDiagnostics(T, sim, burns, objects);",
             "display(conservation)",
             "satflightPlotDiagnostics(diagnostics, burns, shown);"]
@@ -653,7 +687,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
              + ["launches", "launchTable"] * bool(launches)
              + ["passes", "coverage"] * bool(stations) + ["eclipses", "betaAngles"]
              + ["maneuvers", "deltaV"] * burns + ["approaches"] * pairs
-             + ["transfers"] * burns + ["drift", "diagnostics", "conservation"])
+             + ["transfers"] * burns + ["drift", "diagnostics", "conservation"]
+             + ["truthGap"] * twins)
     out += ["%%"]
     out += _text("## Save\nWith `figureFolder` set in Settings, saves every figure there as a "
                  "PNG at 300 dpi and a PDF (vector graphics, but for the 3-D Earth) named "
@@ -714,7 +749,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         [] if pairs else ["satflightApproaches"]) + (
         [] if burns else ["satflightTransfers", "satflightPlotTransfer", "satflightPlotDeltaV",
                           "satflightPlotBurnWindow", "burnMarks", "onlyFirst", "plural",
-                          "orbitText", "orbitSummary", "julianUtc"])
+                          "orbitText", "orbitSummary", "julianUtc"]) + (
+        [] if twins else ["satflightTruthGap", "satflightPlotTruthGap"])
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]

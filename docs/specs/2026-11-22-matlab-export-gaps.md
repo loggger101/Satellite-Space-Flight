@@ -98,8 +98,16 @@ export loses nothing there.
 ## Smaller items
 
 - The app's launch form has no payload Cd or Cr field (only scenario files
-  set them). Python UI, not the exporter.
+  set them). Python UI, not the exporter. Done 2026-11-23: "Payload drag
+  coeff. Cd" and "Payload reflectivity Cr" (default 2.2 and 1.3, as files
+  assume; an out-of-range Cr is refused in the dialog). The Add-satellite
+  dialog has Cd but still no Cr.
 - MATLAB toolkit: no replay / precise orbit builders (item 4). Done.
 - `Simulation._perturbed` (and so `circular_velocity`) ignores the EGM2008
   field: a run with the field and J2 off treats a circularize burn as two-body.
-  The MATLAB port copies it to stay in step; fix both together.
+  The MATLAB port copies it to stay in step; fix both together. Done
+  2026-11-23 in both: every term the acceleration includes counts (the field,
+  and the Sun, Moon and sunlight pressure too). At 700 km, 98 deg, the field
+  with J2 off left a 10.6 km radius swing after a circularize; now 3.3 km, as
+  J2's 3.1 km (`tests/test_planners.py`); `ExportTest/egm2008Field` holds a
+  circularize under the field alone to the simulator within 1 m.

@@ -998,10 +998,10 @@ class Simulation:
         return out
 
     def _perturbed(self) -> bool:
-        """Whether anything but central gravity moves the satellites."""
-        f = self.forces
+        """Whether anything but central gravity moves the satellites: every term
+        the acceleration includes, the EGM2008 field and the third bodies too."""
         return self.propagator == "j2mean" or (
-            self.propagator == "cowell" and (f.j2 or f.j3 or f.j4 or f.c22 or f.drag))
+            self.propagator == "cowell" and bool(self.forces.active()))
 
     def circular_velocity(self, i: int) -> np.ndarray:
         """Velocity that puts satellite ``i`` on a circular orbit through where it is,

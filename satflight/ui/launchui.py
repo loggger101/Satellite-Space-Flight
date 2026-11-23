@@ -19,7 +19,7 @@ import time
 import numpy as np
 import pygame
 
-from ..constants import R_EARTH
+from ..constants import CR_DEFAULT, R_EARTH
 from ..elements import kepler_propagate, rv2coe
 from ..frames import ecef_to_geodetic, eci_to_ecef
 from ..launch import (
@@ -424,7 +424,8 @@ def build_spec(dlg, vehicle: Vehicle) -> LaunchSpec:
         inclination=v.get("inc", 51.6), direction=DIRECTION[v.get("direction", "Northbound")],
         raan=v.get("raan", 0.0), target=v.get("target", ""), azimuth=v.get("azimuth", 90.0),
         vertical_time=v["vertical"], kick=kick, payload_mass=v["payload_mass"],
-        payload_area=v["payload_area"], circularize=bool(v.get("circ", False)),
+        payload_area=v["payload_area"], payload_cd=v["payload_cd"],
+        payload_cr=v["payload_cr"], circularize=bool(v.get("circ", False)),
         track_stages=bool(v["track"]))
 
 
@@ -447,6 +448,12 @@ def launch_dialog(app):
               "preview says whether it still reaches orbit."),
         F("payload_area", "Payload area (m^2)", "float", "10",
           tip="Cross-section of the satellite once in orbit, for air drag."),
+        F("payload_cd", "Payload drag coeff. Cd", "float", "2.2",
+          tip="Drag coefficient of the satellite once in orbit: about 2.2 for a typical "
+              "satellite."),
+        F("payload_cr", "Payload reflectivity Cr", "float", f"{CR_DEFAULT:g}",
+          tip="How the satellite reflects sunlight, for sunlight pressure: 1 absorbs it "
+              "all, 2 mirrors it straight back. The spent stages keep the default."),
         F("site", "Launch site", "choice", site0, [*LAUNCH_SITES, CUSTOM_SITE],
           tip="A spaceport, or 'Custom location' to type coordinates or click the map. The "
               "lowest inclination reachable directly equals the site's latitude."),

@@ -202,9 +202,11 @@ def test_satellite_dialogs_set_the_reflectivity(app):
     fill(dlg, "total", 4)
     fill(dlg, "planes", 2)
     fill(dlg, "cr", 1.7)
+    fill(dlg, "area", 6.5)                        # and the drag, which it lacked too
+    fill(dlg, "cd", 2.4)
     dlg.submit()
     assert not app.dialogs, dlg.error
-    assert [s.cr for s in sim.sats[n0:]] == [1.7] * 4
+    assert [(s.cr, s.area, s.cd) for s in sim.sats[n0:]] == [(1.7, 6.5, 2.4)] * 4
 
 
 def test_a_satellite_added_with_a_bad_reflectivity_is_refused(app):

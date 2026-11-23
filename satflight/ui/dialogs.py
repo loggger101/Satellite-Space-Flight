@@ -285,6 +285,8 @@ def walker_dialog(app):
           tip="RAAN of the first plane; the others follow from it."),
         F("mass", "Mass each (kg)", "float", "260", tip=MASS_TIP),
         F("dry_mass", "Dry mass each (kg)", "float", "0", tip=DRY_TIP),
+        F("area", "Area each (m^2)", "float", "4", tip=AREA_TIP),
+        F("cd", "Drag coefficient Cd", "float", "2.2", tip=CD_TIP),
         F("cr", "Reflectivity Cr each", "float", f"{CR_DEFAULT:g}", tip=CR_TIP),
         F("preview", "", "info", "",
           tip="The constellation in Walker notation i:t/p/f, satellites per plane and "
@@ -296,7 +298,8 @@ def walker_dialog(app):
         c = ConstellationSpec(name=v["name"] or "Walker", altitude=v["altitude"],
                               inclination=v["inclination"], total=v["total"], planes=v["planes"],
                               phasing=v["phasing"], pattern=v["pattern"], raan0=v["raan0"],
-                              mass=v["mass"], dry_mass=v["dry_mass"], cr=v["cr"])
+                              mass=v["mass"], dry_mass=v["dry_mass"], area=v["area"],
+                              cd=v["cd"], cr=v["cr"])
         if c.total % c.planes:
             raise ValueError("total satellites must be a multiple of the number of planes")
         return c

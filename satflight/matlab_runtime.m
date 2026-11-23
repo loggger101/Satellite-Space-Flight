@@ -731,7 +731,8 @@ th = unit3(cross3(cross3(r, s.Y(i, 4:6)), rh));
 vc = sqrt(C.MU / rm);
 F = s.sim.forces;
 perturbed = s.sim.propagator == "j2mean" || (s.sim.propagator == "cowell" && ...
-    (F.j2 || F.j3 || F.j4 || F.c22 || F.drag));
+    (F.j2 || F.j3 || F.j4 || F.c22 || F.gravityDegree > 0 || F.drag || F.sun || ...
+    F.moon || F.srp));      % every term the acceleration includes, as the simulator
 if ~perturbed
     v = vc * th;
     return

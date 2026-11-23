@@ -136,6 +136,7 @@ def test_circularize_under_j2_leaves_only_the_j2_ripple(inc):
     lo, hi = _radius_range(sim)
     ripple = 1.5 * 1.0826e-3 * 6378.137 ** 2 / 7068.0 * math.sin(math.radians(inc)) ** 2
     assert hi - lo < 0.01 + ripple, (hi - lo, ripple)
+    print("SWING", hi - lo, ripple)
 
 
 def test_hohmann_to_geo_arrives_at_the_target_radius_with_j2():
@@ -216,3 +217,20 @@ def test_a_far_off_plane_change_is_still_previewed():
     from satflight.planner import plane_change_summary
     sim = _one(_el(altitude=420, i=51.6), ForceModel(j2=True))
     assert plane_change_summary(sim, "S", 5.0, "delay", 30 * 86400.0).startswith("dV ~")
+
+
+def test_circularize_under_the_egm2008_field_with_j2_switched_off():
+    # the field counts as a perturbation even with the j2 switch off: circularize
+    # used to aim at a two-body orbit under it, a 10.6 km swing against the J2
+    # run's 3.1 km (the field's own swing here is 3.3 km)
+    from satflight.maneuvers import Maneuver
+
+    def swing(forces):
+        sim = _one(_el(perigee_alt=690, apogee_alt=710, i=98.0, argp=40, nu=10), forces)
+        sim.schedule(Maneuver("S", "circularize", timing="periapsis"))
+        sim.advance(sim.maneuvers[0].t - sim.t + 1.0)
+        lo, hi = _radius_range(sim)
+        return hi - lo
+
+    field, j2 = swing(ForceModel(j2=False, gravity_degree=8)), swing(ForceModel(j2=True))
+    assert abs(field - j2) < 0.5, (field, j2)

@@ -606,6 +606,24 @@ def test_launch_preview_replans_in_the_background(app):
     assert not prev.updating
 
 
+def test_launch_dialog_sets_the_payloads_drag_and_reflectivity(app):
+    # only scenario files could set them; the defaults are what files assume
+    app.paused = True
+    app.open("launch")
+    dlg = app.dialogs[-1]
+    assert dlg.values()["payload_cd"] == 2.2
+    assert dlg.values()["payload_cr"] == pytest.approx(CR_DEFAULT)
+    fill(dlg, "payload_cr", 3.0)                  # out of range: refused, saying so
+    dlg.submit()
+    assert dlg.error and "reflectivity" in dlg.error and app.dialogs
+    fill(dlg, "payload_cd", 2.6)
+    fill(dlg, "payload_cr", 1.5)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    spec = app.sim.ascent_of(app.selected).spec
+    assert (spec.payload_cd, spec.payload_cr) == (2.6, 1.5)
+
+
 def test_launch_dialog_reports_impossible_launches(app):
     app.open("launch")
     dlg = app.dialogs[-1]

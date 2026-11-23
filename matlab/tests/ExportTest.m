@@ -15,6 +15,58 @@ classdef ExportTest < ExportCase
                 "hohmann", ["--duration", "6h", "--step", "120"]));
         end
 
+        function sunMoonAndSunlight(tc)
+            % the Sun's and Moon's gravity and sunlight pressure (dimmed through the
+            % Earth's penumbra) with each satellite's Cr: a light sail-like craft that
+            % crosses the shadow, a dense one, and a finite burn (Cr A / m stays at
+            % ignition, as the simulator keeps it)
+            sc = satflight.newScenario("Sunlit", J2=true, Drag=true, Sun=true, Moon=true, ...
+                Srp=true, Epoch=datetime(2026, 3, 20, 6, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Sail", satflight.orbitElements(Altitude=800, ...
+                I=60, Raan=40, Nu=10), Mass=50, Area=20, Cr=1.9);
+            sc = satflight.addSatellite(sc, "Dense", satflight.orbitElements( ...
+                PerigeeAlt=600, ApogeeAlt=20000, I=30, Raan=120, Argp=45, Nu=200), Mass=2000, ...
+                Area=5, Cr=1.1);
+            sc = satflight.addSatellite(sc, "Burner", satflight.orbitElements(Altitude=700, ...
+                I=98, Raan=0, Nu=90), Mass=500, Area=8);
+            % (a small burn: it leaves e under 0.01, where the drift analysis does not
+            % fit argp; at e 0.017 a quarter-day coast fits -2.40 deg/day against J2's
+            % -2.96 with or without the Sun, Moon and sunlight - short-period J2)
+            sc = satflight.addManeuver(sc, "Burner", "finite", Timing="delay", Delay=1200, ...
+                Dv=[0.5 0 0], Thrust=50, Isp=220, Duration=200);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "sunlit.json"));
+            [~, out] = tc.check(tc.export(file, "sunlit", ["--duration", "6h", "--step", ...
+                "60"]));
+            D = out.diagnostics;
+            for c = ["acc_sun_ms2", "acc_moon_ms2"]
+                tc.verifyTrue(all(D.(c) > 0), c);   % each term applied, and measured
+            end
+            % sunlight pushes in the light and not in the umbra, which the Sail crosses
+            tc.verifyTrue(all(D.acc_srp_ms2 >= 0) && any(D.acc_srp_ms2 > 0));
+            tc.verifyTrue(any(D.acc_srp_ms2(D.name == "Sail") == 0), "Sail never in umbra");
+            tc.verifyTrue(all(startsWith(out.conservation.expected, "not kept (the Sun")));
+        end
+
+        function launchInSunlight(tc)
+            % a launch under the Sun, Moon and sunlight pressure: the payload separates
+            % with its own Cr, the spent stages keep the default, and every object flies
+            % as the simulator flies it
+            sc = satflight.newScenario("Sunlit launch", J2=true, Drag=true, Sun=true, ...
+                Moon=true, Srp=true, Epoch=datetime(2026, 3, 20, 6, 0, 0, TimeZone="UTC"));
+            sc = satflight.addLaunch(sc, "Sail", Vehicle="Falcon 9 (approx.)", ...
+                Lat=28.562, Lon=-80.577, Timing="delay", Delay=300, PerigeeAlt=500, ...
+                ApogeeAlt=500, Inclination=40, PayloadMass=800, PayloadArea=30, ...
+                PayloadCr=1.7, TrackStages=true);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "sunlit_launch.json"));
+            [~, out] = tc.check(tc.export(file, "sunlit_launch", ["--duration", "3h", ...
+                "--step", "60"]));
+            O = out.objects;
+            tc.verifyEqual(O.cr(O.name == "Sail"), 1.7);
+            stages = startsWith(O.name, "Sail ");
+            tc.verifyTrue(any(stages), "no spent stage tracked");
+            tc.verifyEqual(O.cr(stages), repmat(1.3, nnz(stages), 1));
+        end
+
         function everyKindOfBurn(tc)
             % finite, plane change, RSW and ECI impulses, circularize and match velocity,
             % node / apsis timings, J3 + C22 + drag, under each of the three propagators

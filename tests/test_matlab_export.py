@@ -488,6 +488,21 @@ def test_launches_alone_can_be_exported(tmp_path):
     assert "sim.names = strings(0, 1);" in text and "planLaunches = false;" in text
 
 
+def test_a_launched_payload_keeps_its_reflectivity_in_matlab(tmp_path):
+    from satflight.forces import ForceModel
+    from satflight.launch import LaunchSpec
+    sc = Scenario(name="Sail", forces=ForceModel(j2=True, sun=True, srp=True),
+                  launches=[LaunchSpec(name="Sail", timing="delay", delay=60.0, kick=2.5,
+                                       payload_cr=1.7)])
+    text = export_live_script(Simulation(sc), tmp_path / "sail.m", "start").read_text(
+        encoding="utf-8")
+    assert "L.payloadCr = 1.7;" in text
+    src = RUNTIME.read_text(encoding="utf-8")
+    assert "s.cr(i) = L.payloadCr;" in src          # set at separation, as Simulation does
+    # the MATLAB launch defaults match LaunchSpec's
+    assert re.search(r'"payloadCr", ([\d.]+)', src).group(1) == repr(LaunchSpec().payload_cr)
+
+
 def test_nothing_in_orbit_is_refused(tmp_path):
     with pytest.raises(ValueError, match="nothing to export"):
         export_live_script(Simulation(Scenario(name="Empty")), tmp_path / "x.m", "start")
@@ -510,6 +525,10 @@ def test_runtime_constants_are_the_simulators():
         assert const(k) == getattr(constants, k)
     assert const("SOI") == constants.SOI_EARTH
     assert const("R_SUN") == constants.R_SUN and const("AU") == constants.AU
+    assert const("MU_SUN") == constants.MU_SUN and const("MU_MOON") == constants.MU_MOON
+    assert const("P_SRP") == constants.P_SRP
+    from satflight.scenario import CR_DEFAULT
+    assert const("CR_DEFAULT") == CR_DEFAULT
     assert "C.DEG = pi / 180;" in src
     from satflight import launch, simulation
     from satflight.maneuvers import G0
@@ -535,6 +554,34 @@ def test_runtime_constants_are_the_simulators():
     atm = np.array([[float(x) for x in row.split()] for row in table.replace("...", "").split(";")])
     python_table = np.column_stack([atmosphere.H0, atmosphere.RHO0, atmosphere.SCALE_H])
     assert np.array_equal(atm, python_table)
+
+
+def test_the_sun_moon_and_sunlight_pressure_export_with_each_satellites_cr(tmp_path):
+    """The MATLAB port flies them (ExportTest/sunMoonAndSunlight holds it to the
+    simulator); the script carries the switches and every satellite's Cr."""
+    from satflight.forces import ForceModel
+    sc = Scenario(name="Lit", forces=ForceModel(j2=True, drag=True, sun=True, moon=True,
+                                                srp=True),
+                  satellites=[SatSpec("Shiny", {"type": "elements", "altitude": 700, "i": 98},
+                                      cr=1.8),
+                              SatSpec("Plain", {"type": "elements", "altitude": 500})])
+    text = export_live_script(Simulation(sc), tmp_path / "lit.m", "start", 600, 60).read_text(
+        encoding="utf-8")
+    assert re.search(r'^sim\.forces = struct\(.*"sun", true, "moon", true, "srp", true\);',
+                     text, re.M)
+    props = [[float(x) for x in r.split()] for r in block(text, "props")]
+    assert [p[3] for p in props] == [1.8, 1.3]
+    assert "sim.cr = props(:, 4);" in text
+
+
+def test_only_the_egm2008_field_is_still_refused(tmp_path):
+    from satflight.forces import ForceModel
+    from satflight.matlab_export import unported_forces
+    assert unported_forces(ForceModel(sun=True, moon=True, srp=True)) == []
+    sc = lone_satellite()
+    sc.forces = ForceModel(gravity_degree=8, sun=True)
+    with pytest.raises(ValueError, match=r"does not model the EGM2008 8x8 field yet"):
+        export_live_script(Simulation(sc), tmp_path / "egm.m", "start", 60, 60)
 
 
 def test_snapshot_carries_a_burn_under_way():

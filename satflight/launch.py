@@ -54,7 +54,17 @@ from dataclasses import asdict, dataclass, field, fields
 import numpy as np
 
 from .atmosphere import H0, RHO0, SCALE_H, TOP_KM
-from .constants import F_EARTH, J2, J3, J4, MU_EARTH, OMEGA_EARTH, R_EARTH, SOI_EARTH
+from .constants import (
+    CR_DEFAULT,
+    F_EARTH,
+    J2,
+    J3,
+    J4,
+    MU_EARTH,
+    OMEGA_EARTH,
+    R_EARTH,
+    SOI_EARTH,
+)
 from .elements import rv2coe
 from .frames import ecef_to_eci_state, geodetic_to_ecef
 from .strict import (
@@ -260,6 +270,7 @@ class LaunchSpec:
     payload_mass: float = 1000.0 # kg
     payload_area: float = 5.0    # m^2 once separated
     payload_cd: float = 2.2
+    payload_cr: float = CR_DEFAULT   # reflectivity once separated (stages keep the default)
     circularize: bool = False    # the payload circularizes at its first apogee
     track_stages: bool = True    # spent stages become objects of their own
     color: list | None = None
@@ -273,6 +284,8 @@ class LaunchSpec:
         d["vehicle"] = self.vehicle.to_dict()
         if d["resume"] is None:
             del d["resume"]
+        if d["payload_cr"] == CR_DEFAULT:   # files from before it existed stay unchanged
+            del d["payload_cr"]
         return d
 
     @classmethod
@@ -316,6 +329,7 @@ def validate(spec: LaunchSpec):
             raise ValueError(f"{s.name} would burn {s.burn_time / 60:.0f} min; the ascent model "
                              f"allows {MAX_BURN / 60:.0f} (use a finite-burn maneuver instead)")
     drag_props(spec.payload_mass, spec.payload_area, spec.payload_cd, "payload")
+    within(spec.payload_cr, 0.0, 2.5, "payload reflectivity Cr")
     if spec.track_stages:
         # each dropped part flies on as an object with the body's drag area
         least = v.cd * v.area / MAX_CDA_OVER_M

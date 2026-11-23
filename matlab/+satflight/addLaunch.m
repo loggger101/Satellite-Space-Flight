@@ -11,7 +11,8 @@ function sc = addLaunch(sc, name, opts)
 %   Guidance: "orbit" (to PerigeeAlt, ApogeeAlt km at Inclination deg, heading
 %   Direction "north" or "south") or "open" (gravity turn on Azimuth deg with
 %   VerticalTime s and Kick deg).
-%   Payload: PayloadMass (kg), PayloadArea (m^2), PayloadCd, Circularize
+%   Payload: PayloadMass (kg), PayloadArea (m^2), PayloadCd, PayloadCr
+%   (sunlight reflectivity, 0..2.5; the spent stages keep 1.3), Circularize
 %   (at first apogee), TrackStages (spent stages become objects), Color.
 %
 %   sc = satflight.addLaunch(sc, "Demo-1", Vehicle="Electron (approx.)", ...
@@ -41,6 +42,7 @@ arguments
     opts.PayloadMass (1,1) double
     opts.PayloadArea (1,1) double
     opts.PayloadCd (1,1) double
+    opts.PayloadCr (1,1) double
     opts.Circularize (1,1) logical
     opts.TrackStages (1,1) logical
     opts.Color (1,3) double
@@ -55,7 +57,8 @@ s = copyOptions(s, opts, ["Vehicle", "vehicle"; "Site", "site"; "Lat", "lat"; "L
     "PerigeeAlt", "perigee_alt"; "ApogeeAlt", "apogee_alt"; "Inclination", "inclination"; ...
     "Direction", "direction"; "Raan", "raan"; "Target", "target"; "Azimuth", "azimuth"; ...
     "VerticalTime", "vertical_time"; "Kick", "kick"; "PayloadMass", "payload_mass"; ...
-    "PayloadArea", "payload_area"; "PayloadCd", "payload_cd"; "Circularize", "circularize"; ...
+    "PayloadArea", "payload_area"; "PayloadCd", "payload_cd"; "PayloadCr", "payload_cr"; ...
+    "Circularize", "circularize"; ...
     "TrackStages", "track_stages"; "Color", "color"]);
 if isfield(s, "vehicle") && isstruct(s.vehicle) && isfield(s.vehicle, "stages")
     s.vehicle.stages = asCellRow(s.vehicle.stages, "launch " + name + " stages");

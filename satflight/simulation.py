@@ -41,7 +41,7 @@ from .analysis import (
     osculating_to_mean_a,
     osculating_to_mean_i,
 )
-from .constants import MU_EARTH, SOI_EARTH
+from .constants import CR_DEFAULT, MU_EARTH, SOI_EARTH
 from .eclipse import shadow_fraction
 from .elements import kepler_propagate, rv2coe
 from .ephemeris import sun_position
@@ -219,7 +219,7 @@ class Satellite:
     area: float = 5.0
     cd: float = 2.2
     dry_mass: float = 0.0         # kg left with the propellant gone; 0 = no limit
-    cr: float = 1.3               # sunlight reflectivity (scenario.CR_DEFAULT)
+    cr: float = CR_DEFAULT        # sunlight reflectivity
     status: str = ACTIVE
     dv_used: float = 0.0          # km/s
     shadow: float = 1.0           # illuminated fraction
@@ -674,6 +674,7 @@ class Simulation:
         self.ascents.remove(asc)
         sat, spec = asc.sat, asc.spec
         sat.mass, sat.area, sat.cd = asc.mass, spec.payload_area, spec.payload_cd
+        sat.cr = spec.payload_cr
         sat.energy_ref = None
         sat.launch_report = dict(asc.summary(), vehicle=spec.vehicle.name, site=spec.site,
                                  lat=spec.lat, lon=spec.lon, t0=asc.t0)

@@ -16,14 +16,17 @@ export loses nothing there.
 
 ## Order of work
 
-1. **Check the step-6a MATLAB suite run.** On 2026-11-22, with the year
+1. **Done 2026-11-22: no regression.** One test alone took 230-290 s against
+   the 280 s session limit, on main as on the branch; sessions now get 900 s
+   (a `time_limit` mark) and all 74 tests pass. The original note:
+   **Check the step-6a MATLAB suite run.** On 2026-11-22, with the year
    study's 12 arc workers loading the machine, sessions export-3, export-6
    and export-7 failed (pytest's 300 s watchdog per session, probably time).
    Read `port1_suite.txt` in the session scratchpad; rerun the failed
    sessions when the machine is quiet. A real failure is a regression from
    step 6a (the `derivative` / `acceleration` signatures changed for every
    export) and comes first.
-2. **Launch payload Cr (a gap in the simulator itself).** `LaunchSpec` has
+2. **Done 2026-11-22 (branch `launch-payload-cr`).** Launch payload Cr (a gap in the simulator itself). `LaunchSpec` has
    `payload_area` and `payload_cd` but no Cr, so with sunlight pressure on
    every launched payload is Cr 1.3.
    - Python: `LaunchSpec.payload_cr` (default 1.3, left out of `to_dict` when

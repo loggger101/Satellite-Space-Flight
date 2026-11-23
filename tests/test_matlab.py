@@ -62,7 +62,8 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("passesAndAnimationFile",),     # on 2026-11-22
                 ("transferFiguresAndFiles",),                              # ~150 (2 videos)
                 ("everyIntegrator",),                                      # ~90
-                ("sunMoonAndSunlight",))
+                ("sunMoonAndSunlight",),
+                ("launchInSunlight",))
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
 BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
                       # one session (launch_day, starlink_shell the slowest), so

@@ -47,6 +47,26 @@ classdef ExportTest < ExportCase
             tc.verifyTrue(all(startsWith(out.conservation.expected, "not kept (the Sun")));
         end
 
+        function launchInSunlight(tc)
+            % a launch under the Sun, Moon and sunlight pressure: the payload separates
+            % with its own Cr, the spent stages keep the default, and every object flies
+            % as the simulator flies it
+            sc = satflight.newScenario("Sunlit launch", J2=true, Drag=true, Sun=true, ...
+                Moon=true, Srp=true, Epoch=datetime(2026, 3, 20, 6, 0, 0, TimeZone="UTC"));
+            sc = satflight.addLaunch(sc, "Sail", Vehicle="Falcon 9 (approx.)", ...
+                Lat=28.562, Lon=-80.577, Timing="delay", Delay=300, PerigeeAlt=500, ...
+                ApogeeAlt=500, Inclination=40, PayloadMass=800, PayloadArea=30, ...
+                PayloadCr=1.7, TrackStages=true);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "sunlit_launch.json"));
+            [~, out] = tc.check(tc.export(file, "sunlit_launch", ["--duration", "3h", ...
+                "--step", "60"]));
+            O = out.objects;
+            tc.verifyEqual(O.cr(O.name == "Sail"), 1.7);
+            stages = startsWith(O.name, "Sail ");
+            tc.verifyTrue(any(stages), "no spent stage tracked");
+            tc.verifyEqual(O.cr(stages), repmat(1.3, nnz(stages), 1));
+        end
+
         function everyKindOfBurn(tc)
             % finite, plane change, RSW and ECI impulses, circularize and match velocity,
             % node / apsis timings, J3 + C22 + drag, under each of the three propagators

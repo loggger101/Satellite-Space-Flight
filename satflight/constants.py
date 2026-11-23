@@ -39,6 +39,9 @@ JD_J2000 = 2451545.0
 SECONDS_PER_DAY = 86400.0
 SIDEREAL_DAY = 2.0 * math.pi / OMEGA_EARTH   # ~86164.09 s
 
+# --- Spacecraft defaults ---------------------------------------------------
+CR_DEFAULT = 1.3      # reflectivity: 1 absorbs all sunlight, 2 mirrors it straight back
+
 # --- Useful derived radii -------------------------------------------------
 R_GEO = (MU_EARTH * (SIDEREAL_DAY / (2.0 * math.pi)) ** 2) ** (1.0 / 3.0)  # ~42164 km
 

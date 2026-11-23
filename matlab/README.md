@@ -34,7 +34,7 @@ compares it with theory).
 | `addConstellation(sc, name, ...)` | a Walker shell: `Altitude`, `Inclination`, `Total`, `Planes`, `Phasing`, `Pattern` |
 | `addStation(sc, name, lat, lon, ...)` | a ground station; `Alt`, `MinEl` |
 | `addManeuver(sc, sat, kind, ...)` | a scheduled burn: `Timing`, `T`/`Delay`, `Dv` + `Frame`, `DeltaI`, finite-burn `Thrust`/`Isp`/`Duration` |
-| `addLaunch(sc, name, ...)` | a rocket launch: `Vehicle` preset or struct, pad, timing, target orbit, payload |
+| `addLaunch(sc, name, ...)` | a rocket launch: `Vehicle` preset or struct, pad, timing, target orbit, payload (`PayloadMass`, `PayloadArea`, `PayloadCd`, `PayloadCr`) |
 
 Orbits for `addSatellite`:
 

@@ -47,7 +47,16 @@ from .analysis import (
     osculating_to_mean_a,
     tuned_sso_inclination,
 )
-from .constants import F_EARTH, J2, MU_EARTH, OMEGA_EARTH, R_EARTH, R_GEO, SOI_EARTH
+from .constants import (
+    CR_DEFAULT,
+    F_EARTH,
+    J2,
+    MU_EARTH,
+    OMEGA_EARTH,
+    R_EARTH,
+    R_GEO,
+    SOI_EARTH,
+)
 from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
@@ -94,7 +103,6 @@ ORBIT_REQUIRED = {"state": ("r", "v"), "tle": ("line1", "line2"),
 SIZES = (("a",), ("altitude",), ("perigee_alt", "apogee_alt"))
 
 
-CR_DEFAULT = 1.3      # reflectivity: 1 absorbs all sunlight, 2 mirrors it straight back
 
 
 def check_cr(cr, what: str):

@@ -7,7 +7,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from satflight.constants import R_EARTH
+from satflight.constants import CR_DEFAULT, R_EARTH
 from satflight.elements import rv2coe
 from satflight.forces import ForceModel
 from satflight.frames import eci_to_ecef
@@ -21,6 +21,7 @@ from satflight.launch import (
     fly,
     plan_launch,
     resolve,
+    validate,
     vehicle_preset,
 )
 from satflight.maneuvers import Maneuver
@@ -199,6 +200,26 @@ def test_vehicle_waits_on_the_pad_turning_with_the_earth_then_flies():
     assert any("liftoff" in t for t in kinds) and any("SECO" in t for t in kinds)
     assert sim.sats[i].launch_report["outcome"] == "orbit"
     assert sim.sats[i].mass == 5000.0 and sim.sats[i].area == 5.0
+
+
+def test_the_payload_separates_with_its_own_reflectivity_and_the_stages_with_the_default():
+    sim = Simulation(_scenario(launches=[spec(name="Sail", payload_cr=1.7)]))
+    sim.advance(1500.0)
+    assert sim.ascent_of(sim.index_of("Sail")) is None
+    assert sim.sats[sim.index_of("Sail")].cr == 1.7
+    assert sim.sats[sim.index_of("Sail Stage 2")].cr == CR_DEFAULT
+
+
+def test_payload_reflectivity_is_kept_in_the_file_only_when_set():
+    assert "payload_cr" not in spec(name="Plain").to_dict()
+    d = spec(name="Sail", payload_cr=1.7).to_dict()
+    assert d["payload_cr"] == 1.7 and LaunchSpec.from_dict(d).payload_cr == 1.7
+
+
+@pytest.mark.parametrize("cr", [-0.1, 2.6])
+def test_a_payload_reflectivity_outside_0_to_2_5_is_refused(cr):
+    with pytest.raises(ValueError, match="payload reflectivity Cr"):
+        validate(spec(name="Bad", payload_cr=cr))
 
 
 @pytest.mark.parametrize("propagator", ["cowell", "j2mean", "kepler"])

@@ -488,6 +488,21 @@ def test_launches_alone_can_be_exported(tmp_path):
     assert "sim.names = strings(0, 1);" in text and "planLaunches = false;" in text
 
 
+def test_a_launched_payload_keeps_its_reflectivity_in_matlab(tmp_path):
+    from satflight.forces import ForceModel
+    from satflight.launch import LaunchSpec
+    sc = Scenario(name="Sail", forces=ForceModel(j2=True, sun=True, srp=True),
+                  launches=[LaunchSpec(name="Sail", timing="delay", delay=60.0, kick=2.5,
+                                       payload_cr=1.7)])
+    text = export_live_script(Simulation(sc), tmp_path / "sail.m", "start").read_text(
+        encoding="utf-8")
+    assert "L.payloadCr = 1.7;" in text
+    src = RUNTIME.read_text(encoding="utf-8")
+    assert "s.cr(i) = L.payloadCr;" in src          # set at separation, as Simulation does
+    # the MATLAB launch defaults match LaunchSpec's
+    assert re.search(r'"payloadCr", ([\d.]+)', src).group(1) == repr(LaunchSpec().payload_cr)
+
+
 def test_nothing_in_orbit_is_refused(tmp_path):
     with pytest.raises(ValueError, match="nothing to export"):
         export_live_script(Simulation(Scenario(name="Empty")), tmp_path / "x.m", "start")

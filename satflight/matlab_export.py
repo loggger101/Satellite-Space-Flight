@@ -301,6 +301,7 @@ def _launch(a) -> list[str]:
             "% kick NaN: searched by the planner",
             f"L.payloadMass = {_num(spec.payload_mass)}; "
             f"L.payloadArea = {_num(spec.payload_area)}; L.payloadCd = {_num(spec.payload_cd)}; "
+            f"L.payloadCr = {_num(spec.payload_cr)}; "
             f"L.circularize = {_bool(spec.circularize)}; "
             f"L.trackStages = {_bool(spec.track_stages)};"]
     n = "[]" if r.n is None else _vec(r.n)

@@ -30,6 +30,7 @@ from .timeutil import gmst
 
 RTOL = ATOL = 1e-11      # tight: the integration must sit far below the cm-level truth
 H_MAX = 60.0
+MIN_AFTER_S = 1800.0     # usable data a fitted burn needs after it (a third of a revolution)
 
 
 class FitError(ValueError):
@@ -161,6 +162,13 @@ def fit_arc(obs: Observations, model: ForceModel, y0, cd_am: float, cr_am: float
     use = np.asarray(obs.use, bool)
     if use.sum() * 3 < len(idx):
         raise FitError(f"{use.sum()} usable positions cannot fix {len(idx)} parameters")
+    for b in burns:
+        # an impulse needs a good part of a revolution after it; without it, its
+        # column is noise that the normalised solve blows up
+        after = obs.t[use & (obs.t > b)]
+        if not after.size or after[-1] - b < MIN_AFTER_S:
+            raise FitError(f"burn at {b:.0f} s has under {MIN_AFTER_S:.0f} s of usable "
+                           "observations after it; end the arc before its window")
 
     def unpack(rows):
         return (rows[:, :6], rows[:, 6], rows[:, 7], rows[:, 8:].reshape(len(rows), k, 3))

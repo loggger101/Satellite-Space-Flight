@@ -107,6 +107,21 @@ def test_later_burns_are_estimated_with_everything_else_held():
     assert none.iterations == 0 and none.rms_m == pytest.approx(res.rms_m, abs=1e-3)
 
 
+@pytest.mark.parametrize("hours_before_end", [-0.1, 0.0, 0.4])
+def test_a_burn_without_half_an_hour_of_data_after_it_is_refused(hours_before_end):
+    """Past the data, or too near its end, an impulse is fitted to noise: the
+    normalised least squares blew such a column up into km/s (2025-11-25)."""
+    obs = truth(3)
+    t_burn = 3 * 3600.0 - hours_before_end * 3600.0
+    with pytest.raises(fit.FitError, match=f"burn at {t_burn:.0f} s has under 1800 s"):
+        fit.fit_arc(obs, MODEL, Y0, cd_am=CD_AM, cr_am=CR_AM, fit_cr=False, burns=[t_burn])
+    held = fit.Observations(obs.t, obs.r, obs.use & (obs.t < 2 * 3600.0), JD0, 0.03)
+    with pytest.raises(fit.FitError, match="burn at 5400 s has under 1800 s"):
+        fit.fit_arc(held, MODEL, Y0, cd_am=CD_AM, cr_am=CR_AM, fit_cr=False, burns=[5400.0])
+    fit.fit_arc(obs, MODEL, Y0, cd_am=CD_AM, cr_am=CR_AM, fit_cr=False,
+                burns=[3 * 3600.0 - 1800.0])                            # exactly enough
+
+
 def test_a_fit_that_cannot_converge_says_so():
     obs = truth(3)
     wild = Y0 + np.array([300.0, 0, 0, 0, 0.3, 0])                    # far from any orbit
@@ -116,6 +131,7 @@ def test_a_fit_that_cannot_converge_says_so():
 
 # --- the real files --------------------------------------------------------------------------
 
+@pytest.mark.time_limit(900)   # two 30x30 half-day fits: 508 s alone here (2026-11-22)
 def test_a_real_sentinel_1a_arc_fits_to_metres():
     from satflight import poeorb
     have = poeorb.local_files("S1A")

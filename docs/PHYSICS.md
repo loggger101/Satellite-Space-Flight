@@ -108,6 +108,12 @@ of Vallado Table 8-4 (CIRA-72, mean solar activity) from 0 to 1000 km,
 extrapolated to 2500 km and zero above. `density_scale` multiplies it to mimic
 solar maximum (~3x at 400 km) or minimum (~0.3x); real densities vary by an
 order of magnitude over the solar cycle, so decay times are indicative.
+At Sentinel-1's 693 km the weekly accuracy arcs fit the scale (with Cd 2.2 at
+10 m^2): 1.23 on average for 1A and 1.27 for 1C (0.43 to 4.05 week by week,
+the two satellites agreeing within a few percent), a mean Cd of 2.7-2.8 for
+the year 2025-07 .. 2026-06 near solar maximum. The scale is held for the
+three days flown on, so a storm that starts after the fit day costs most of
+the prediction error (see the study report).
 
 **Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:
@@ -252,6 +258,20 @@ line along +X (so the argument of perigee becomes the longitude of perigee);
 circular orbits use argp = 0 (so the true anomaly becomes the argument of
 latitude). With these conventions the two functions round-trip exactly,
 including retrograde-equatorial and hyperbolic orbits.
+
+**Revolution means** (`satflight/study.py`, the Sentinel-1 study). Each
+ascending node is found in the inertial frame by Newton's method on a cubic
+Hermite z between the 10 s precise states (to the microsecond), and each
+revolution's a, e cos/sin argp and i are time averages from node to node of
+the osculating elements, integrated exactly over that span with the node
+states at its ends. J2 swings osculating a by about 10 km twice a revolution,
+so a plain average of the samples (which start and end between nodes) is off
+by up to 17 m; the exact span is good to millimetres on a Kepler orbit. The
+short-period terms cancel; the frozen eccentricity's long-period terms and
+drag's decay stay. LTAN is UT1 + node longitude / 15 h (mean solar time).
+Burns are sized from the step in these means across a burn, fitted with a
+line in time and the daily wobble (harmonics 1 and 2 of the node's
+Earth-fixed longitude): `dv_along = v da / 2a`, `dv_cross >= v |di|`.
 
 ## Maneuver planning
 

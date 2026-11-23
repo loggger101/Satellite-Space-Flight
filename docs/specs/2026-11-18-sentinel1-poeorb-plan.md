@@ -191,6 +191,62 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
    - Accuracy arcs, the long-term series (LTAN, i, a, e and argp, the
      12-day repeat, 1A-1C phasing, burns) and the Markdown report.
    - `tests/test_sentinel1.py` moved onto the data.
+   **Done 2026-11-20 (branch `study-and-report`):**
+   - `satflight/study.py` measures; `tools/sentinel1_study.py series|arcs|report`
+     writes `docs/analysis/sentinel1/` (daily CSVs per satellite, `burns.csv`,
+     `phasing.csv`, `arcs.csv`, `report.md` and three PNGs).
+   - Revolution means run node to node (ascending nodes from a Newton solve on
+     the Hermite z), integrated exactly over the span: a plain mean of the
+     samples is off by up to 17 m in a, since J2 swings a by 10 km twice a
+     revolution.
+   - The year (2025-07-01 .. 2026-06-30): mean a 7070.980 km (1A) and
+     7071.005 km (1C), i 98.1805 and 98.1822 deg, LTAN 18:01.2 and 18:00.2,
+     e 1.184e-3 with argp 90 deg (frozen; e swings 1.173-1.192e-3 over the
+     year). Each equator crossing lands within about 24 m (median daily RMS)
+     of its relative orbit's usual crossing, 300 m at worst; 175 revolutions
+     in 12 days to 0.005 revolutions a day.
+   - 1C flies 176.2 deg behind 1A, not the nominal 180 (checked directly from
+     the argument of latitude on 2025-09-01: 176.16 deg). ESA has no 1C files
+     for 2026-06-09..18; afterwards 1C was raised 1.9 km, lowered again on 23
+     June, and has flown 206.7 deg behind, 229 km off its old track.
+   - Burns: 91 manoeuvres (129 windows) for 1A, 101 (200) for 1C, about
+     every 4 days. Each is sized from the step in the revolution means
+     (drag decay and the daily wobble fitted out); placebo windows between
+     burns put the noise at 1.3-1.6 mm/s along-track and 22 mm/s cross-track,
+     so the series sizes the along-track part (median about 4 mm/s) but not
+     the cross-track part.
+   - Accuracy arcs: weekly, a 24 h fit at 60 s (state, density scale, an
+     impulse per burn; Cr 1.3; EGM2008 70x70 + drag + Sun + Moon + SRP) flown
+     72 h on with only the later burns fitted. A burn needs half an hour of
+     data after its window (`fit.MIN_AFTER_S`; `fit_arc` refuses one without):
+     at the fit's end it ends the fit where its window begins and moves to the
+     prediction, at the check's end it ends the check. Without that rule four
+     arcs ran away (one impulse grew to 2.9 km/s, fitted to noise). 102 arcs
+     (52 for 1A, 50 for 1C; 1C's 2026-06-09 and 06-16 fall in ESA's gap); 11
+     fits and 19 checks were cut short at a burn (shortest 23.4 h and 71.4 h).
+     The fit day leaves 0.4 m radial, 0.8 m along-track and 1.4 m cross-track
+     RMS, so impulses stand in for the finite burns well enough. Flown on,
+     the median along-track RMS is 9 m on day 1, 18-19 m on day 2 and
+     23-24 m on day 3 (90th percentile 32-60, 69-102 and 94-127 m); radial
+     2-5 m, cross-track 5-13 m. The density scale averages 1.23 (1A) and
+     1.27 (1C), 0.43-4.05 week by week, the two satellites within a few
+     percent of each other: a mean Cd of 2.7-2.8 at 10 m^2.
+   - The large errors are space weather. Against GFZ's Kp index (not part of
+     the pipeline; checked by hand on 2026-11-22): 44 of the 102 arcs see
+     Kp >= 5 somewhere in their four days, and those have a day-3 along-track
+     median of 42 m (90th percentile 302 m) against 16 m (91 m) for the rest;
+     7 of the 10 worst arcs are storm weeks (2025-11-11/12 Kp 8.7: 1.3 km;
+     2026-01-19/20 Kp 7.7: 1.6 km for 1A).
+   - `tests/test_sentinel1.py` checks the defaults against the committed
+     CSVs: the 12-day repeat, LTAN, inclination, argp and the 176/207 deg
+     phasing.
+   - `default.json` now flies what the data show: 1C 176.3 deg behind 1A
+     (the July 2025 - May 2026 mean) instead of 180, and the measured mean
+     e 1.1837e-3 at argp 90 instead of the first-order J2 + J3 1.0443e-3.
+     `tools/make_scenarios.py` finds each satellite's osculating start by flying
+     it and correcting until its revolution-mean e vector matches (osculating
+     1.2695e-3 at 68.9 deg for 1A, 1.1865e-3 at 112.0 deg for 1C: the J2 swing
+     depends on where each starts). The repeat still closes to 10 ms a period.
 6. **MATLAB.**
    - The port of the new forces and replay to `matlab_runtime.m`.
    - Study results as CSV/MAT plus a plotting function.
@@ -200,7 +256,11 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
 - Sentinel-1's drag and SRP reference areas. They only scale the fitted Cd
   and Cr, so the fits absorb them; nominal starting values are about 10 m^2
   for drag and 25 m^2 for SRP.
-- A better atmosphere: polar motion is now in (section 3); the remaining
-  one-day along-track prediction error (~100 m) is drag. The report shows the
-  error budget first.
-- Finite burns, if the impulse's residual around a burn matters in step 5.
+- A better atmosphere: polar motion is now in (section 3). The study measured
+  the remaining error: 9 m along-track after a day and 24 m after three in
+  quiet and moderate weeks, up to 1.6 km over three days when a storm starts
+  after the fit. A density model driven by Kp / F10.7 (NRLMSIS, JB2008) is
+  what would close that, and would need space-weather data the way polar
+  motion needs IERS's.
+- Finite burns: not needed so far. The fit day's 0.8 m along-track RMS with
+  impulses shows no residual worth modelling around the burns.

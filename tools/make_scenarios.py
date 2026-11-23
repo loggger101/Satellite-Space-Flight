@@ -50,8 +50,10 @@ def el(**kw):
 # Sentinel-1 reference orbit (ESA): sun-synchronous, 175 revolutions in a
 # 12-day repeat cycle, ascending node at 18:00 local mean solar time (dawn-dusk),
 # frozen eccentricity with the perigee held over the North Pole (argp 90 deg).
-# Sentinel-1C flies 1A's orbit 180 deg behind it (where 1B was), so the pair
-# covers each ground track every 6 days.
+# Sentinel-1C flies 1A's orbit about half a revolution behind it (where 1B
+# was), so the pair covers each ground track every 6 days: 180 deg nominally,
+# 176.3 deg in ESA's precise orbits (mean July 2025 - May 2026, 175.9-176.7;
+# docs/analysis/sentinel1/phasing.csv).
 S1_REVS, S1_DAYS = 175, 12
 S1_LTAN = 18.0                     # h, local mean solar time of the ascending node
 # Mean altitude (km above R_EARTH) whose node-to-node period, flown with J2, J3
@@ -59,8 +61,49 @@ S1_LTAN = 18.0                     # h, local mean solar time of the ascending n
 # the repeat closes to ~2 ms after 175 revolutions (tests/test_sentinel1.py
 # measures it). The published mean semi-major axis is 7071 km (693 km).
 S1_ALT = 692.827267
-# Frozen eccentricity under J2 + J3 (first order): e = -J3 Re sin(i) / (2 J2 a)
-S1_E = 0.0010443
+# Frozen eccentricity, the mean over a revolution as the precise orbits show it
+# (both satellites, July 2025 - May 2026; daily_S1*.csv), argp 90 deg. The
+# first-order J2 + J3 value, -J3 Re sin(i) / (2 J2 a) = 1.0443e-3, is 12 % low.
+S1_E_MEAN = 0.0011837
+S1_PHASE = 176.3                   # deg, 1C behind 1A
+
+
+def _mean_e_vector(sim, k, revs=2, step=10.0):
+    """Satellite ``k``'s (e cos argp, e sin argp) averaged over whole
+    revolutions, node to node, flown with the scenario's forces."""
+    import numpy as np
+
+    from satflight.elements import rv2coe
+    from satflight.fit import fly
+    s = sim.scenario.satellites[k]
+    t = np.arange(0.0, (revs + 1.1) * S1_DAYS * 86400.0 / S1_REVS, step)
+    rv = fly(sim.scenario.forces, sim.clock.jd(0.0), 0.0, sim.y[k], t,
+             s.cd * s.area / s.mass, 0.0, states=True)
+    z = rv[:, 0, 2]
+    up = np.flatnonzero((z[:-1] < 0) & (z[1:] >= 0))
+    lo, hi = up[0] + 1, up[revs] + 1
+    e = rv2coe(rv[lo:hi, 0], rv[lo:hi, 1])
+    span = t[hi - 1] - t[lo]
+    return np.array([np.trapezoid(e.e * np.cos(e.argp), t[lo:hi]) / span,
+                     np.trapezoid(e.e * np.sin(e.argp), t[lo:hi]) / span])
+
+
+def frozen_start(build, k, target, tol=1e-7, max_iter=8):
+    """The osculating (e, argp deg) at the epoch that flies the mean
+    eccentricity vector ``target``: J2 swings e by ~1e-3 twice a revolution,
+    so the start differs from the mean, and by where the satellite starts.
+    ``build(osc)`` makes the scenario with osculating vectors ``osc`` (one per
+    satellite); the others stay as given. Fixed point: the short-period part
+    hardly changes as the start moves by 1e-4."""
+    import numpy as np
+    target = np.asarray(target, float)
+    osc = [target.copy() for _ in range(2)]
+    for _ in range(max_iter):
+        miss = target - _mean_e_vector(Simulation(build(osc)), k)
+        osc[k] = osc[k] + miss
+        if np.linalg.norm(miss) < tol:
+            return math.hypot(*osc[k]), math.degrees(math.atan2(osc[k][1], osc[k][0]))
+    raise RuntimeError(f"satellite {k}: mean e not within {tol} after {max_iter} passes")
 
 
 def s1_raan(epoch: datetime) -> float:
@@ -71,24 +114,40 @@ def s1_raan(epoch: datetime) -> float:
 
 
 def default():
-    """Sentinel-1A and -1C on ESA's reference orbit (until real orbit data replaces it)."""
+    """Sentinel-1A and -1C on ESA's reference orbit, with the eccentricity and
+    phasing their precise orbits show."""
     raan = s1_raan(EPOCH)
+    us = (0.0, (-S1_PHASE) % 360.0)   # argument of latitude at the epoch, deg
 
-    def s1(name, u, mass):             # u: argument of latitude at the epoch, deg
-        return SatSpec(name, el(altitude=S1_ALT, e=S1_E, i="sso", raan=round(raan, 6),
-                                argp=90.0, nu=(u - 90.0) % 360.0),
-                       color=None, mass=mass, area=10.0, cd=2.2)
+    def build(osc):
+        def s1(name, u, mass, v):
+            e, argp = math.hypot(*v), math.degrees(math.atan2(v[1], v[0]))
+            return SatSpec(name, el(altitude=S1_ALT, e=round(e, 9), i="sso",
+                                    raan=round(raan, 6), argp=round(argp, 6),
+                                    nu=round((u - argp) % 360.0, 6)),
+                           color=None, mass=mass, area=10.0, cd=2.2)
+        return _default_scenario([s1("Sentinel-1A", us[0], 2164.0, osc[0]),
+                                  s1("Sentinel-1C", us[1], 2200.0, osc[1])])
 
+    target = (0.0, S1_E_MEAN)          # argp 90 deg
+    starts = [frozen_start(build, k, target) for k in range(2)]
+    return build([(e * math.cos(math.radians(w)), e * math.sin(math.radians(w)))
+                  for e, w in starts])
+
+
+def _default_scenario(satellites):
     return Scenario(
         name="Sentinel-1A and 1C",
         description="ESA's Copernicus radar pair on the Sentinel-1 reference orbit: "
                     "693 km, sun-synchronous (98.18 deg), dawn-dusk with the ascending "
                     "node at 18:00, frozen perigee over the North Pole, 175 orbits in a "
-                    "12-day repeat. 1C flies 180 deg behind 1A, so together they revisit "
-                    "each ground track every 6 days. Open the map (M) to watch the tracks "
-                    "interleave. Nominal orbit, not tracking data.",
+                    "12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, so "
+                    "together they revisit each ground track every 6 days. Open the map "
+                    "(M) to watch the tracks interleave. Reference orbit with the "
+                    "eccentricity and spacing ESA's precise orbits show (2025-26), not "
+                    "tracking data.",
         epoch=EPOCH, forces=ForceModel(j2=True, j3=True, j4=True, drag=True), warp=120,
-        satellites=[s1("Sentinel-1A", 0.0, 2164.0), s1("Sentinel-1C", 180.0, 2200.0)],
+        satellites=satellites,
         stations=[GroundStation("Svalbard", 78.23, 15.39, 0.5, 5.0),
                   GroundStation("Matera", 40.65, 16.70, 0.5, 5.0),
                   GroundStation("Maspalomas", 27.76, -15.63, 0.2, 5.0),

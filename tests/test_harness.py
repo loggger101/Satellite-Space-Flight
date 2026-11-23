@@ -29,6 +29,15 @@ def test_a_hanging_test_fails_with_its_stack_and_the_run_goes_on(tmp_path):
     assert "1 failed, 1 passed" in out
 
 
+def test_a_test_marked_with_its_own_time_limit_gets_that_limit(tmp_path):
+    out = run_suite(tmp_path, "import time\n\nimport pytest\n\n\n"
+                              "@pytest.mark.time_limit(8)\n"
+                              "def test_slow_but_allowed():\n    time.sleep(3)\n\n\n"
+                              "@pytest.mark.time_limit(1)\n"
+                              "def test_hangs():\n    while True:\n        time.sleep(0.05)\n")
+    assert "ran over 1 s" in out and "1 failed, 1 passed" in out, out
+
+
 def test_a_warning_is_a_failure(tmp_path):
     out = run_suite(tmp_path, "import numpy as np\n\n"
                               "def test_divides():\n    np.float64(1.0) / np.float64(0.0)\n")

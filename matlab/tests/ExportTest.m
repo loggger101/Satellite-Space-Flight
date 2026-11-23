@@ -92,12 +92,17 @@ classdef ExportTest < ExportCase
                 Epoch=datetime(2026, 3, 20, 6, 0, 0, TimeZone="UTC"));
             sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
                 I=98.18, Raan=278, Nu=30));
+            % a circularize aims with the field even with the j2 switch off (it used to
+            % aim at a two-body orbit, here and in the simulator)
+            sc = satflight.addManeuver(sc, "Low", "circularize", Timing="delay", Delay=1800);
             file = satflight.saveScenario(sc, fullfile(tc.Tmp, "field_alone.json"));
-            [~, out] = tc.check(tc.export(file, "field_alone", ["--duration", "3h", ...
+            [diffs, out] = tc.check(tc.export(file, "field_alone", ["--duration", "3h", ...
                 "--step", "60"]));
+            tc.verifyLessThan(diffs.max_diff_km, 0.001);
             K = out.conservation;
-            tc.verifyEqual(K.quantity, "Jacobi constant");
-            tc.verifyEqual(K.expected, "constant");
+            tc.verifyEqual(height(K), 2);                   % before and after the burn
+            tc.verifyTrue(all(K.quantity == "Jacobi constant"));
+            tc.verifyTrue(all(K.expected == "constant"));
             % the two routes through the coefficients (V/W for the motion, Legendre
             % for the potential) agree, or the constant would wander; the simulator's
             % own drift here is 4.7e-9, its integrator's tolerance (rtol 1e-9)

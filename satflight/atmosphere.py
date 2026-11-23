@@ -52,3 +52,43 @@ def density(alt_km, scale: float = 1.0) -> np.ndarray:
     idx = np.clip(np.searchsorted(H0, hc, side="right") - 1, 0, len(H0) - 1)
     rho = RHO0[idx] * np.exp(-(hc - H0[idx]) / SCALE_H[idx]) * scale
     return np.where(h > TOP_KM, 0.0, rho)
+
+
+# --- NRLMSIS 2.1 ----------------------------------------------------------------
+
+ATMOSPHERES = ("table", "msis")     # forces "atmosphere": the table above, or NRLMSIS
+_UNIX_JD = 2440587.5
+
+
+def msis_density(alt_km, lat_rad, lon_rad, jd: float, scale: float = 1.0,
+                 table=None) -> np.ndarray:
+    """NRLMSIS 2.1 total mass density (kg/m^3) at geodetic heights (km),
+    latitudes and longitudes (rad), all at one UTC Julian date, times ``scale``.
+
+    The model (pymsis) is driven by the measured space weather of the date
+    (:mod:`satflight.spaceweather`; ``table`` defaults to the downloaded one)
+    with the 3-hourly ap history (storm-time mode). It follows the solar cycle,
+    storms, the day/night bulge, season and latitude, which the table above
+    cannot. Zero above ``TOP_KM`` like the table; SpaceWeatherError for a date
+    without measured space weather."""
+    try:
+        import pymsis
+    except ImportError as exc:
+        raise ImportError("the NRLMSIS atmosphere needs pymsis: pip install pymsis") from exc
+    from . import spaceweather
+    h = np.atleast_1d(np.asarray(alt_km, dtype=float))
+    lat = np.broadcast_to(np.asarray(lat_rad, dtype=float), h.shape)
+    lon = np.broadcast_to(np.asarray(lon_rad, dtype=float), h.shape)
+    rho = np.zeros(h.shape)
+    air = h <= TOP_KM
+    if air.any():
+        # to the millisecond first, so 03:00 that comes out as 02:59:59.99996 is 03:00
+        ms = np.round((jd - _UNIX_JD) * 86400e3)
+        utc = np.datetime64(int(ms), "ms")
+        n = int(air.sum())
+        f107, f107a, ap = (table or spaceweather.load()).indices(np.array([utc]))
+        rho[air] = pymsis.calculate(
+            np.full(n, utc), np.degrees(lon[air]), np.degrees(lat[air]),
+            np.clip(h[air], 0.0, None), np.repeat(f107, n), np.repeat(f107a, n),
+            np.repeat(ap, n, axis=0), geomagnetic_activity=-1)[:, 0]
+    return rho * scale

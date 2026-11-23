@@ -253,6 +253,33 @@ def test_the_arcs_resume_and_record_what_could_not_run(tmp_path):
     assert [(r["mission"], r["start"]) for r in bad] == [("S1C", "2025-07-08")]
 
 
+def test_msis_arcs_go_to_their_own_file_and_can_be_picked(tmp_path, monkeypatch):
+    """--atmosphere msis flies the arcs with NRLMSIS into arcs_msis.csv (the
+    table's arcs.csv is left alone); --only picks arcs by mission and day."""
+    seen = []
+
+    def accuracy_arc(m, d, model, mass, eop_table=None):
+        seen.append((m, d, model.atmosphere, model.drag))
+        return _fake_arc(m, d)
+    monkeypatch.setattr(tool.study, "accuracy_arc", accuracy_arc)
+    monkeypatch.setattr(tool.eop, "read", lambda: None)
+    monkeypatch.setattr(tool, "_WORKER", {})
+    tool.write_csv(tmp_path / "arcs.csv", [], tool.ARC_COLUMNS)
+    before = (tmp_path / "arcs.csv").read_bytes()
+    tool.run_arcs(date(2025, 7, 1), date(2025, 7, 20), out=lambda s: 0, dest=tmp_path,
+                  atmosphere="msis", only=[("S1A", date(2025, 7, 15)),
+                                           ("S1C", date(2025, 7, 1))])
+    assert seen == [("S1C", date(2025, 7, 1), "msis", True),
+                    ("S1A", date(2025, 7, 15), "msis", True)]
+    rows = tool.read_csv(tmp_path / "arcs_msis.csv")
+    assert [(r["mission"], r["start"]) for r in rows] == [("S1C", "2025-07-01"),
+                                                          ("S1A", "2025-07-15")]
+    assert (tmp_path / "arcs.csv").read_bytes() == before
+    with pytest.raises(ValueError, match="2025-07-16.*not a weekly arc"):
+        tool.run_arcs(date(2025, 7, 1), date(2025, 7, 20), dest=tmp_path,
+                      only=[("S1A", date(2025, 7, 16))])
+
+
 def test_the_arcs_come_out_in_date_order_whatever_order_they_finished_in(tmp_path):
     """Workers finish out of order and rows are appended as they do; the
     figures draw lines through the rows, so the file and its reader are sorted."""

@@ -118,6 +118,14 @@ def test_the_orbit_tab_shows_the_lifetime(tmp_path):
         info = app.orbit_info()
         sheet = [r for _, rs in property_sections(info, 0.0, life=later) for r in rs]
         assert all(glossary.row(label) for label, _ in sheet)
+        # under NRLMSIS these rows still come from the table, and say so
+        assert lifetime_rows(later, 1.0, "msis")[0][0] == "Lifetime (table)"
+        sheet = [r for _, rs in property_sections(info, 0.0, life=later, atmosphere="msis")
+                 for r in rs]
+        labels = {label for label, _ in sheet}
+        assert {"Perigee density (table)", "Drag at perigee (table)",
+                "Lifetime (table)"} <= labels and "Lifetime" not in labels
+        assert all(glossary.row(label) for label in labels)
 
         app.load_scenario(ROOT / "scenarios" / "orbit_tour.json")
         app.select(0)

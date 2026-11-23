@@ -4,6 +4,7 @@ dialogs, keyboard shortcuts and panels."""
 import math
 import os
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"          # before pygame is imported
@@ -205,6 +206,68 @@ def test_physics_dialog_switches_models(app):
     dlg.submit()
     assert app.sim.forces.drag and app.sim.forces.j3 and app.sim.propagator == "kepler"
     frame(app, 3)
+
+
+def _space_weather_around(root, day, before=150, after=60):
+    """A measured SW-All table under ``root`` from ``before`` days ahead of
+    ``day`` to ``after`` days past it (quiet: ap 7, F10.7 120)."""
+    from satflight import spaceweather
+    p = spaceweather.table_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rows = [",".join(str(x) for x in [day + np.timedelta64(k, "D"), 2600, 1, *([10] * 8), 80,
+                                       *([7] * 8), 7, 0.1, 0, 50, "120.0", "120.0", "OBS",
+                                       "120.0", 0.0, 0.0, 0.0])
+            for k in range(-before, after)]
+    p.write_text("\n".join([spaceweather.HEADER, *rows]) + "\n", encoding="ascii")
+
+
+MSIS_LABEL = "NRLMSIS 2.1 (measured space weather)"
+
+
+def _today(app):
+    return np.datetime64(app.sim.datetime().date().isoformat(), "D")
+
+
+def test_physics_dialog_picks_the_msis_atmosphere(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("SATFLIGHT_DATA", str(tmp_path / "data"))
+    app.open("physics")
+    dlg = app.dialogs[-1]
+    assert dlg.widgets["atmosphere"].value == "Mean-Sun table"
+    dlg.set("drag", True)
+    dlg.set("atmosphere", MSIS_LABEL)
+    dlg.submit()                       # no table downloaded: refused, saying how to get one
+    assert dlg.error and "fetch_space_weather" in dlg.error and app.dialogs
+    assert app.sim.forces.atmosphere == "table"
+    _space_weather_around(tmp_path / "data", _today(app))
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert app.sim.forces.atmosphere == "msis" and app.sim.forces.label().endswith("DRAG(MSIS)")
+    frame(app, 3)
+    app.open("physics")
+    assert app.dialogs[-1].widgets["atmosphere"].value == MSIS_LABEL
+
+
+def test_a_run_past_the_space_weather_pauses_with_the_reason(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("SATFLIGHT_DATA", str(tmp_path / "data"))
+    _space_weather_around(tmp_path / "data", _today(app), after=42)  # 81-day mean: 1 more day
+    app.open("physics")
+    dlg = app.dialogs[-1]
+    dlg.set("drag", True)
+    dlg.set("atmosphere", MSIS_LABEL)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    now = app.sim.datetime()
+    end = datetime.combine(now.date() + timedelta(days=2), datetime.min.time(), now.tzinfo)
+    app.sim.advance((end - now).total_seconds() - 600)     # ten minutes before it runs out
+    app.paused, app.warp = False, 600.0
+    for _ in range(40):
+        app.update(0.1)
+        if app.paused:
+            break
+    assert app.paused and "81-day mean" in app.sim.events[-1].text
+    t = app.sim.t
+    app.update(0.1)                                         # stays put while paused
+    assert app.sim.t == t
 
 
 def test_scenario_dialog_load_save_export(app, tmp_path):

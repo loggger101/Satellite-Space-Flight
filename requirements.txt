@@ -2,6 +2,8 @@ numpy>=1.24
 pygame-ce>=2.4
 # optional: SGP4 initialization of TLEs (the propagator skyfield uses)
 # sgp4>=2.22
+# the NRLMSIS atmosphere (forces "atmosphere": "msis"; data: tools/fetch_space_weather.py)
+pymsis>=0.13
 # the year study's figures (tools/sentinel1_study.py report)
 matplotlib>=3.7
 # development

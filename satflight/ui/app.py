@@ -17,6 +17,7 @@ from ..frames import geodetic_height
 from ..orbitinfo import orbit_info
 from ..scenario import Scenario, j2_acts, orbit_state, palette_color
 from ..simulation import ACTIVE, Simulation
+from ..spaceweather import SpaceWeatherError
 from ..tle import split_tles
 from . import background, burnnode, dialogs, launchui, theme, tips, welcome
 from .camera import Camera
@@ -720,7 +721,12 @@ class App:
             return
         if not self.paused:
             t0 = time.perf_counter()
-            self.sim.advance(self.warp * min(dt_real, MAX_FRAME_DT))
+            try:
+                self.sim.advance(self.warp * min(dt_real, MAX_FRAME_DT))
+            except SpaceWeatherError as exc:      # NRLMSIS past the measured space weather
+                self.paused = True
+                self.sim.log(f"Paused: {exc}")
+                self.toast(f"Paused: {exc}")
             self.sim_cost = time.perf_counter() - t0
         if self.plan_preview is not None:
             if self.plan_preview.active:

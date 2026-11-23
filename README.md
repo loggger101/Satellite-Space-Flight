@@ -129,7 +129,8 @@ taking shape and the time to cutoff.
   the full **EGM2008** field to degree and order 70 in their place
 - **Sun and Moon gravity** and **sunlight pressure** (cannonball `Cr`, off in the
   Earth's shadow)
-- **Atmospheric drag** (piecewise-exponential atmosphere, co-rotating with the Earth,
+- **Atmospheric drag** (piecewise-exponential atmosphere, or **NRLMSIS 2.1** driven by
+  measured space weather; co-rotating with the Earth,
   solar-activity scale factor)
 - Impulsive burns and **finite-thrust burns** with propellant use (Tsiolkovsky), and an
   optional dry mass at which the propellant runs out
@@ -396,6 +397,7 @@ repository (about half a GB for a year):
 ```bash
 python tools/fetch_poeorb.py            # S1A and S1C, 2025-07-01 to 2026-06-30
 python tools/fetch_eop.py               # IERS polar motion and UT1-UTC (~4 MB)
+python tools/fetch_space_weather.py     # CelesTrak F10.7 and ap, for NRLMSIS (~3 MB)
 python tools/fit_arc.py S1A 2025-07-03 --check 24   # fit a day, fly one more
 ```
 

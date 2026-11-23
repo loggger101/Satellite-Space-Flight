@@ -10,7 +10,8 @@ each burn's delta-v. Polar motion comes out of the truth with the IERS
 table (tools/fetch_eop.py); ``--no-pole`` leaves it in. With ``--check H``
 it then flies the solution H more hours, estimating any burns there from the
 truth with everything else held, and prints how far it strays: the force
-model's own error.
+model's own error. ``--atmosphere msis`` flies drag through NRLMSIS with
+the measured space weather (tools/fetch_space_weather.py) instead of the table.
 
 Needs the files from tools/fetch_poeorb.py and tools/fetch_eop.py.
 """
@@ -40,10 +41,11 @@ def _rms(x):
 
 
 def run(mission: str, day: date, hours: float, degree: int, step: float, check: float,
-        fit_cr: bool, out=print, pole: bool = True) -> dict:
+        fit_cr: bool, out=print, pole: bool = True, atmosphere: str = "table") -> dict:
     """Fit ``hours`` of ``mission`` from 00:00 UTC on ``day``; check ``check``
     hours past it. Returns the numbers it printed."""
-    model = ForceModel(gravity_degree=degree, drag=True, sun=True, moon=True, srp=True)
+    model = ForceModel(gravity_degree=degree, drag=True, sun=True, moon=True, srp=True,
+                       atmosphere=atmosphere)
     last = day + timedelta(days=max(0, int(np.ceil((hours + check) / 24.0)) - 1))
     arc = poeorb.load_arc(mission, day, last)
     table = eop.read() if pole else None
@@ -94,9 +96,12 @@ def main(argv=None) -> int:
     p.add_argument("--no-cr", dest="fit_cr", action="store_false", help="hold Cr at 1.3")
     p.add_argument("--no-pole", dest="pole", action="store_false",
                    help="leave polar motion in the truth (to see its size)")
+    p.add_argument("--atmosphere", choices=["table", "msis"], default="table",
+                   help="the drag's atmosphere (default the table)")
     a = p.parse_args(argv)
     try:
-        run(a.mission, a.day, a.hours, a.degree, a.step, a.check, a.fit_cr, pole=a.pole)
+        run(a.mission, a.day, a.hours, a.degree, a.step, a.check, a.fit_cr, pole=a.pole,
+            atmosphere=a.atmosphere)
     except (poeorb.PoeorbError, eop.EopError, fit.FitError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -115,6 +115,23 @@ the year 2025-07 .. 2026-06 near solar maximum. The scale is held for the
 three days flown on, so a storm that starts after the fit day costs most of
 the prediction error (see the study report).
 
+With `"atmosphere": "msis"` in the forces (Physics dialog: "Atmosphere for
+drag") the density is NRLMSIS 2.1 (pymsis) at the satellite's geodetic
+latitude, longitude and height and the time, so it follows the solar cycle,
+storms, the day/night bulge, season and latitude. It is driven by measured
+space weather: CelesTrak's `SW-All.csv` (`tools/fetch_space_weather.py`, read
+by `satflight.spaceweather`): the previous day's F10.7, its 81-day mean
+centred on the day, and the 3-hourly ap history (storm-time mode). Only
+measured days are used (`OBS`, and `INT`, CelesTrak's fill for a day without
+a reading): a time whose inputs reach a prediction (the 81-day mean does for
+the last 40 days), or the F10.7 of a solar radio burst (over 400 sfu), is
+refused, and the app pauses saying why. `density_scale` still multiplies the
+result, as a correction (1 = as modelled). A storm with ap 300 makes the air
+at 700 km about 7 times denser. MSIS runs in single precision, about 0.1 ms
+per satellite per evaluation. The lifetime estimate and the Orbit tab's
+perigee density stay on the table and are marked "(table)". MATLAB exports
+refuse a run using it (base MATLAB has no MSIS).
+
 **Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:
 `nu`, the visible fraction of the solar disc from the conical umbra /
@@ -498,7 +515,9 @@ down, without flying the run forward (satflight/lifetime.py):
   (no attitude-dependent panels, no Earth albedo or infrared). Tides, polar
   motion and relativity are not modelled ([SCOPE.md](SCOPE.md)).
 - Launch ascents fly J2-J4 and drag whatever else the scenario switches on.
-- Static exponential atmosphere (no diurnal bulge, no space-weather input).
+- The default atmosphere is the static exponential table (no diurnal bulge, no
+  space-weather input); NRLMSIS 2.1 with measured space weather is the
+  alternative. No thermospheric winds in either (the air turns with the Earth).
 - Launch vehicles: point mass with instantaneous attitude (no rotational
   dynamics or aerodynamic loads, no winds), serial staging only (no strap-on
   boosters burning alongside a core), no engine-out, a single burn to orbit

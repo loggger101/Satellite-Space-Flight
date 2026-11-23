@@ -283,7 +283,7 @@ EVENTS = {
 def row(label: str) -> str:
     """The explanation of a property-sheet row ``label`` ('' if there is none)."""
     key = label.strip()
-    key = key.removesuffix(" (off)")
+    key = key.removesuffix(" (off)").removesuffix(" (table)")   # the table under NRLMSIS
     if key in ROWS:
         return ROWS[key]
     for sym in (f" {OMEGA}", f" {omega}", f" {nu}", " (10\N{DEGREE SIGN})"):

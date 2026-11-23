@@ -161,3 +161,25 @@ def _kill_tree(proc):
     else:
         os.killpg(proc.pid, signal.SIGKILL)
     return "MATLAB was stopped"
+
+
+def test_readstudy_columns_match_the_study_writer():
+    """readStudy.m refuses any study CSV whose header differs from its lists, so
+    each list must be what tools/sentinel1_study.py writes (the arcs' from its
+    ARC_COLUMNS, the rest from the files it wrote)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    try:
+        import sentinel1_study as tool
+    finally:
+        sys.path.remove(str(ROOT / "tools"))
+    src = (PKG / "readStudy.m").read_text(encoding="utf-8")
+    calls = r"(?:dailyCols = |readOne\(fullfile[^\[]*)\[(.*?)\]"    # not its definition
+    lists = [_quoted(m) for m in re.findall(calls, src, re.S)]
+    study = ROOT / "docs" / "analysis" / "sentinel1"
+
+    def header(name):
+        return (study / name).read_text(encoding="utf-8").splitlines()[0].split(",")
+
+    assert lists == [header("daily_S1A.csv"), header("phasing.csv"), header("burns.csv"),
+                     tool.ARC_COLUMNS]
+    assert header("daily_S1C.csv") == header("daily_S1A.csv")

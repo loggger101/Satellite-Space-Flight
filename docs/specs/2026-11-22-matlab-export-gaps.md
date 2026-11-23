@@ -83,9 +83,17 @@ export loses nothing there.
    10 s states in the script (~26,000 rows per satellite for three days,
    several MB) or have MATLAB read ESA's POEORB files and apply polar motion
    itself. Toolkit builders for the `replay` / `precise` orbit types follow.
-5. **Study results in MATLAB** (second half of step 6): the year study's
+5. **Done 2026-11-23 (branch `matlab-study`).** `satflight.readStudy` reads
+   the study's CSVs into four tables (daily, phasing, burns, arcs; MAT through
+   `save -struct`), refusing a foreign column, and `satflight.plotStudy` draws
+   the report's three figures. `SatflightToolkitTest/studyTablesMatchTheCsvs`
+   checks every column's row count, filled cells and sum against Python's own
+   reading of the files; `tests/test_matlab.py` holds readStudy's column lists
+   to the study writer. Found on the way, fixed in the report too: the elements
+   figure ticked the placebo windows as burns (`elements.png` regenerated; the
+   report text and the other figures came out byte-identical). The original
+   note: **Study results in MATLAB** (second half of step 6): the year study's
    CSVs (`docs/analysis/sentinel1/`) as tables / MAT plus a plotting function.
-   After the step-5 branch (`study-and-report`) is merged.
 
 ## Smaller items
 

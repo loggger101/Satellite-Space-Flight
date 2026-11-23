@@ -106,6 +106,88 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             end
         end
 
+        function studyTablesMatchTheCsvs(tc)
+            % the year study's CSVs as tables, every number as Python reads it
+            folder = fullfile(tc.Root, "docs", "analysis", "sentinel1");
+            S = satflight.readStudy();
+            tc.verifyEqual(sort(string(fieldnames(S)))', ["arcs" "burns" "daily" "phasing"]);
+            tc.verifyEqual(S.daily.date.TimeZone, 'UTC');
+            tc.verifyEqual(S.burns.start_utc.TimeZone, 'UTC');
+            tc.verifyEqual(string(S.daily.date(1), "yyyy-MM-dd"), "2025-07-01");
+            tc.verifyEqual(unique(S.daily.mission)', ["S1A" "S1C"]);
+            tc.verifyEqual(unique(S.burns.kind)', ["burn" "placebo"]);
+            failed = S.arcs(S.arcs.error ~= "", :);
+            tc.verifyNotEmpty(failed);
+            tc.verifyTrue(all(isnan(failed.fit_rms_m)));
+            tc.verifySubstring(failed.error(1), "(run tools/fetch_poeorb.py)");
+            tc.verifyEqual(S.burns.note(1), "");
+
+            files = struct("daily_S1A", S.daily(S.daily.mission == "S1A", :), ...
+                "daily_S1C", S.daily(S.daily.mission == "S1C", :), "phasing", S.phasing, ...
+                "burns", S.burns, "arcs", S.arcs);
+            lines = splitlines(strip(string(runPython([fullfile(tc.Root, "matlab", ...
+                "tests", "study_sums.py"), folder]))));
+            tc.assertGreaterThan(numel(lines), 60);
+            for line = lines'
+                f = split(line, ",");
+                T = files.(erase(f(1), ".csv"));
+                tc.verifyEqual(height(T), double(f(3)), line);
+                x = T.(f(2));
+                if isdatetime(x)
+                    tc.verifyEqual(nnz(~isnat(x)), double(f(4)), line);
+                elseif isstring(x)
+                    tc.verifyEqual(nnz(x ~= ""), double(f(4)), line);
+                else
+                    tc.verifyEqual(nnz(~isnan(x)), double(f(4)), line);
+                    tc.verifyEqual(sum(x(~isnan(x))), double(f(5)), "RelTol", 1e-12, ...
+                        "AbsTol", 1e-9, line);
+                end
+            end
+        end
+
+        function studyFolderRefusals(tc)
+            % a folder without the daily tables, or with a foreign column, is refused;
+            % the arcs, burns and phasing may not have been run yet
+            src = fullfile(tc.Root, "docs", "analysis", "sentinel1");
+            empty = fullfile(tc.Tmp, "nostudy");
+            mkdir(empty);
+            tc.verifyError(@() satflight.readStudy(empty), "satflight:noFile");
+            part = fullfile(tc.Tmp, "partstudy");
+            mkdir(part);
+            copyfile(fullfile(src, "daily_S1A.csv"), part);
+            S = satflight.readStudy(part);
+            tc.verifyEqual(unique(S.daily.mission), "S1A");
+            tc.verifyEqual(height(S.arcs), 0);
+            tc.verifyTrue(ismember("density_scale", S.arcs.Properties.VariableNames));
+            tc.verifyEqual(height(S.phasing), 0);
+            bad = fullfile(tc.Tmp, "badstudy");
+            mkdir(bad);
+            text = readlines(fullfile(src, "phasing.csv"));
+            text(1) = replace(text(1), "max_deg", "biggest_deg");
+            copyfile(fullfile(src, "daily_S1A.csv"), bad);
+            writelines(text, fullfile(bad, "phasing.csv"));
+            tc.verifyError(@() satflight.readStudy(bad), "satflight:badStudy");
+        end
+
+        function studyFigures(tc)
+            S = satflight.readStudy();
+            figs = satflight.plotStudy(S);
+            tc.addTeardown(@() close(figs));
+            tc.verifyEqual(numel(figs), 3);
+            tc.verifyEqual(string({figs.Name}), ["Mean elements" "Track and phasing" ...
+                "Prediction accuracy"]);
+            one = satflight.plotStudy(S, Figures="accuracy");
+            tc.addTeardown(@() close(one));
+            tc.verifyEqual(string(one.Name), "Prediction accuracy");
+            % the burn ticks are the burns, not the placebo windows
+            ax = findobj(figs(1), "Type", "axes", "Tag", "a");
+            ticks = findall(ax, "Tag", "burns");        % kept out of the legend
+            tc.verifyEqual(sum(arrayfun(@(h) numel(h.XData), ticks)), ...
+                nnz(S.burns.kind == "burn"));
+            tc.verifyError(@() satflight.plotStudy(S, Figures="nope"), ...
+                "MATLAB:validators:mustBeMember");
+        end
+
         function sunMoonAndSunlightOptions(tc)
             % the third bodies and sunlight pressure switch on from MATLAB, with each
             % satellite's and each constellation's reflectivity, and the simulator

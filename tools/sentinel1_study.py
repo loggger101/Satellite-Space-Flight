@@ -288,6 +288,12 @@ def _pct(x, q):
     return float(np.percentile(x, q)) if x.size else math.nan
 
 
+def burn_days(burns, mission):
+    """The days ``mission`` burned; the placebo windows are where nothing did."""
+    return [np.datetime64(r["start_utc"][:10]) for r in burns
+            if r["mission"] == mission and r["kind"] == "burn"]
+
+
 def _figures(dest, daily, phasing, burns, arcs):
     import matplotlib
     matplotlib.use("Agg")
@@ -321,7 +327,7 @@ def _figures(dest, daily, phasing, burns, arcs):
         ax[0].text(0.01, 0.92, f"off scale: up to {np.nanmax(a_all):+.2f}",
                    transform=ax[0].transAxes, fontsize=8)
     for m in daily:
-        bt = [np.datetime64(r["start_utc"][:10]) for r in burns if r["mission"] == m]
+        bt = burn_days(burns, m)
         ax[0].plot(bt, np.full(len(bt), ax[0].get_ylim()[0]), "|", color=colours[m], ms=8)
     ax[0].set_ylabel("mean a - 7000 km")
     ax[1].set_ylabel("mean inclination (deg)")

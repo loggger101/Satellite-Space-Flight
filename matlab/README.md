@@ -76,6 +76,31 @@ faithfully: a NaN or Inf, an epoch without a time zone, a misspelt option name.
 osculating `a_km`, `e`, `i_deg`, `raan_deg`, `argp_deg`, `nu_deg`. Select a
 satellite with `T(T.name == "ISS", :)`.
 
+## The Sentinel-1 year study
+
+| function | |
+|---|---|
+| `S = readStudy(folder)` | the study's CSVs (`docs/analysis/sentinel1` by default) as four tables |
+| `plotStudy(S, ...)` | the report's figures: `Figures` any of `"elements"`, `"track"`, `"accuracy"` |
+
+`S.daily` has one row per satellite per day (revolution-mean `a_km`, `e`,
+`argp_deg`, `i_deg`, `ltan_h`, and the ground track's `track_rms_m` and
+`track_max_m`); `S.phasing` how far 1C runs behind 1A each day; `S.burns` every
+manoeuvre window (`kind` `"burn"`) and every control window between them
+(`"placebo"`), sized from the jump in the mean elements; `S.arcs` one row per
+weekly accuracy arc, with the fitted drag and the R/S/W prediction error for
+three days. Dates are UTC datetimes, a blank number is NaN, and `note` and
+`error` say why a window or arc has none. The tables come from
+`tools/sentinel1_study.py`; `save("study.mat", "-struct", "S")` keeps them as a
+MAT file.
+
+```matlab
+S = satflight.readStudy();
+a = S.arcs(S.arcs.error == "" & S.arcs.mission == "S1A", :);
+median(a.day3_s_m)            % along-track error after three days, m
+satflight.plotStudy(S, Figures="accuracy");
+```
+
 ## Exporting a running simulation
 
 The app's Scenarios dialog (Ctrl+O) has an **Export MATLAB** button. It writes

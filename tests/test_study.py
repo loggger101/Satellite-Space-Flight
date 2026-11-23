@@ -407,3 +407,12 @@ def test_a_fit_day_cut_below_half_is_refused(tmp_path):
     with pytest.raises(FitError, match="burn at 2.0 h leaves under half"):
         study.accuracy_arc("S1A", date(2025, 7, 1), ForceModel(j2=False), 2164.0,
                            fit_hours=6.0, check_hours=48.0, step=120.0, root=tmp_path)
+
+
+def test_only_the_burns_are_ticked_on_the_elements_figure():
+    """The placebo windows are where nothing burned: no tick for them."""
+    burns = [{"mission": "S1A", "kind": "burn", "start_utc": "2025-07-05T10:00:00"},
+             {"mission": "S1A", "kind": "placebo", "start_utc": "2025-07-20T10:00:00"},
+             {"mission": "S1C", "kind": "burn", "start_utc": "2025-07-06T23:59:00"}]
+    assert tool.burn_days(burns, "S1A") == [np.datetime64("2025-07-05")]
+    assert tool.burn_days(burns, "S1C") == [np.datetime64("2025-07-06")]

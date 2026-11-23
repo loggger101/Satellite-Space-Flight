@@ -111,3 +111,11 @@ export loses nothing there.
   with J2 off left a 10.6 km radius swing after a circularize; now 3.3 km, as
   J2's 3.1 km (`tests/test_planners.py`); `ExportTest/egm2008Field` holds a
   circularize under the field alone to the simulator within 1 m.
+- NRLMSIS drag (forces "atmosphere": "msis", added 2026-11-23). The user chose
+  to call pymsis from MATLAB rather than translate NRLMSIS 2.1, whose NRL
+  licence would govern a translation (research use only, notices, delivery
+  to NRL). The runtime reads `SW-All.csv` itself by the simulator's rules and
+  calls pymsis through MATLAB's Python (`pyenv`, or `SATFLIGHT_MSIS_PYTHON`
+  before Python loads; R2026a warns that 3.14 is unsupported, so a 3.13 with
+  pymsis is used here). `ExportTest/nrlmsisDrag` flies the 12 November 2025
+  storm against the simulator; `nrlmsisPastTheMeasuredDays` checks the refusal.

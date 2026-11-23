@@ -130,7 +130,7 @@ result, as a correction (1 = as modelled). A storm with ap 300 makes the air
 at 700 km about 7 times denser. MSIS runs in single precision, about 0.1 ms
 per satellite per evaluation. The lifetime estimate and the Orbit tab's
 perigee density stay on the table and are marked "(table)". MATLAB exports
-refuse a run using it (base MATLAB has no MSIS).
+call pymsis through MATLAB's Python for it (matlab/README.md, "Which Python").
 
 **Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:

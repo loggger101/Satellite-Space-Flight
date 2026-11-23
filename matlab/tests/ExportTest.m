@@ -109,6 +109,58 @@ classdef ExportTest < ExportCase
             tc.verifyLessThan(K.drift_rel, 1e-8);
         end
 
+        function nrlmsisDrag(tc)
+            % drag through NRLMSIS 2.1 (pymsis in MATLAB's Python) with the measured
+            % space weather, through the storm of 12 November 2025 (ap 300): a
+            % Sentinel-1-like orbit and a low, light one, held to the simulator
+            tc.assumeTrue(hasSpaceWeather(), "the space-weather table is not here");
+            % (a density scale other than 1, so a runtime that drops it disagrees)
+            sc = satflight.newScenario("Storm", Drag=true, Atmosphere="msis", ...
+                DensityScale=1.3, Epoch=datetime(2025, 11, 12, 0, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
+                I=98.18, Raan=278, Nu=30), Mass=2164, Area=10);
+            sc = satflight.addSatellite(sc, "Cube", satflight.orbitElements(Altitude=400, ...
+                I=51.6, Raan=10, Nu=200), Mass=4, Area=0.03);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "storm.json"));
+            script = tc.export(file, "storm", ["--duration", "6h", "--step", "60"]);
+            tc.verifyTrue(any(contains(readlines(script), """atmosphere"", ""msis""")));
+            [diffs, out] = tc.check(script);
+            % the same model on the same inputs: under a metre (the table would be
+            % kilometres off for the Cube, whose air is several times denser)
+            tc.verifyLessThan(diffs.max_diff_km, 0.001);
+            D = out.diagnostics;
+            tc.verifyTrue(all(D.acc_drag_ms2 > 0));
+            % the storm: the low one meets more drag than the table's mean air gives
+            % (its 3.725e-12 kg/m^3 at 400 km; NRLMSIS gave about 1.4 times that here,
+            % before the scale of 1.3)
+            cube = D(D.name == "Cube", :);
+            v = 7.67;                                       % km/s at 400 km, roughly
+            table = 0.5 * 2.2 * 0.03 / 4 * 3.725e-12 * (v * 1e3) ^ 2;
+            tc.verifyGreaterThan(median(cube.acc_drag_ms2), 1.2 * table);
+        end
+
+        function nrlmsisPastTheMeasuredDays(tc)
+            % the 81-day mean F10.7 reaches predictions in the last 40 days of the
+            % table: a run there stops with the reason, as the simulator does
+            tc.assumeTrue(hasSpaceWeather(), "the space-weather table is not here");
+            sc = satflight.newScenario("Too new", Drag=true, Atmosphere="msis", ...
+                Epoch=datetime("today", TimeZone="UTC") - days(5));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=500));
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "too_new.json"));
+            script = tc.export(file, "too_new", ["--duration", "1h", "--step", "60", ...
+                "--no-compare"]);
+            try
+                tc.runAlone(script);
+                tc.verifyFail("a run past the measured space weather went ahead");
+            catch err
+                tc.verifyEqual(string(err.identifier), "satflight:spaceWeather", err.message);
+                tc.verifySubstring(err.message, "81-day mean");
+            end
+            % and an unknown atmosphere is refused when the scenario is built
+            tc.verifyError(@() satflight.checkScenario(satflight.newScenario("x", ...
+                Atmosphere="jacchia")), "satflight:python");
+        end
+
         function preciseOrbitReplay(tc)
             % Sentinel-1A on ESA's precise orbit files, read here as the simulator reads
             % them (polar motion taken out with the IERS table), beside its twin flown by
@@ -378,6 +430,19 @@ classdef ExportTest < ExportCase
             tc.check(tc.export(file, "midburn", ["--at", "750", "--duration", "2h"]));
         end
     end
+end
+
+function ok = hasSpaceWeather()
+% whether this machine has CelesTrak's space-weather table where the simulator looks for it
+root = string(getenv("SATFLIGHT_DATA"));
+if strtrim(root) == ""
+    home = getenv("HOME");
+    if ispc
+        home = getenv("USERPROFILE");
+    end
+    root = fullfile(string(home), "satflight-data");
+end
+ok = isfile(fullfile(root, "spaceweather", "SW-All.csv"));
 end
 
 function ok = hasPreciseOrbits(mission, day)

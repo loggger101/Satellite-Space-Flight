@@ -43,6 +43,11 @@ s.C = C;
 F = sim.forces;
 s.env = struct("j2", F.j2, "j3", F.j3, "j4", F.j4, "densityScale", F.densityScale, ...
     "jd0", sim.jd0);
+if msisDrag(F)
+    % NRLMSIS drag: the measured space weather (read here) and pymsis (MATLAB's Python)
+    s.sim.forces = msisSetup(F, sim.dataFolder, C);
+    spaceWeatherIndices(s.sim.forces.sw, msisMillis(sim.jd0));  % a start it cannot serve
+end
 n = numel(sim.names);
 s.names = reshape(string(sim.names), [], 1);
 s.Y = reshape(sim.y0, n, 6);
@@ -360,7 +365,11 @@ end
 F = sim.forces;
 field = F.gravityDegree > 0;      % the field stands in for J2, J3, J4 and C22
 on = [~field & [F.j2, F.j3, F.j4, F.c22], field, F.drag, F.sun, F.moon, F.srp];
-terms = ["J2", "J3", "J4", "C22", "EGM" + F.gravityDegree, "DRAG", "SUN", "MOON", "SRP"];
+drag = "DRAG";
+if msisDrag(F)
+    drag = "DRAG(MSIS)";
+end
+terms = ["J2", "J3", "J4", "C22", "EGM" + F.gravityDegree, drag, "SUN", "MOON", "SRP"];
 used = sim.propagator == "j2mean" & terms == "J2";
 left = terms(on & ~used);
 end
@@ -1160,8 +1169,9 @@ Y = reshape(y, n, 6);
 r = Y(:, 1:3);
 v = Y(:, 4:6);
 theta = 0;
-if F.c22 || F.gravityDegree > 0      % the terms that turn with the Earth
-    theta = gmst(jd0 + t / 86400);
+msis = msisDrag(F);
+if F.c22 || F.gravityDegree > 0 || msis   % the terms that turn with the Earth (NRLMSIS:
+    theta = gmst(jd0 + t / 86400);        % the ground point under each satellite)
 end
 masses = burnRows(:, 4) - mdots .* (t - burnRows(:, 3));
 if F.drag && ~isempty(burnRows)
@@ -1169,8 +1179,8 @@ if F.drag && ~isempty(burnRows)
     cdam(burnRows(:, 1)) = cdam(burnRows(:, 1)) .* burnRows(:, 4) ./ masses;
 end
 jd = [];
-if F.sun || F.moon || F.srp
-    jd = jd0 + t / 86400;      % where the Sun and Moon are
+if F.sun || F.moon || F.srp || msis
+    jd = jd0 + t / 86400;      % where the Sun and Moon are; NRLMSIS's time
 end
 a = acceleration(r, v, cdam, theta, F, C, jd, cram);
 for k = 1:size(burnRows, 1)
@@ -1633,7 +1643,14 @@ else
 end
 if F.drag
     vRel = v - [-C.OMEGA * y, C.OMEGA * x, zeros(size(x))];
-    rho = density(geodeticHeight(r, C), F.densityScale, C);
+    if msisDrag(F)
+        % NRLMSIS 2.1 at each satellite's ground point and height, at the date
+        c = cos(theta); s = sin(theta);
+        [lat, lon, h] = ecefToGeodetic([c .* x + s .* y, -s .* x + c .* y, z], C);
+        rho = msisDensity(h, lat, lon, jd, F, C);
+    else
+        rho = density(geodeticHeight(r, C), F.densityScale, C);
+    end
     speed = vecnorm(vRel, 2, 2);
     a = a + (-0.5e3 * rho .* cdam .* speed) .* vRel;
 end
@@ -1711,12 +1728,176 @@ if any(deep)
 end
 end
 
+function tf = msisDrag(F)
+% whether drag looks the air up in NRLMSIS (forces "atmosphere": "msis")
+tf = F.drag && isfield(F, "atmosphere") && F.atmosphere == "msis";
+end
+
+function F = msisSetup(F, folder, C)
+% NRLMSIS's inputs, once per run: the measured space weather and pymsis
+F.sw = spaceWeatherLoad(folder, C);
+F.msis = pymsisModule();
+end
+
+function m = pymsisModule()
+% pymsis in MATLAB's Python: the python.exe $SATFLIGHT_MSIS_PYTHON names if MATLAB has not
+% loaded Python yet, else the one pyenv is set to
+want = strtrim(string(getenv("SATFLIGHT_MSIS_PYTHON")));
+pe = pyenv;
+if want ~= "" && pe.Status == "NotLoaded"
+    pe = pyenv(Version=want);
+end
+try
+    m = py.importlib.import_module("pymsis");
+catch err
+    error("satflight:pymsis", "NRLMSIS drag runs pymsis in MATLAB's Python (%s), " + ...
+        "which could not load it: %s\nInstall it there (python -m pip install pymsis), or " + ...
+        "point MATLAB at a Python that has it: pyenv(Version=""C:\path\python.exe"") " + ...
+        "before Python loads, or the SATFLIGHT_MSIS_PYTHON environment variable.", ...
+        pe.Executable, err.message);
+end
+end
+
+function ms = msisMillis(jd)
+% a UTC Julian date as whole milliseconds since 1970 (as the simulator rounds it)
+ms = round((jd - 2440587.5) * 86400e3);
+end
+
+function rho = msisDensity(h, lat, lon, jd, F, C)
+% NRLMSIS 2.1 total mass density (kg/m^3) at geodetic heights (km), latitudes and
+% longitudes (rad), all at the one UTC Julian date jd, times F.densityScale; zero above
+% 2500 km like the table (atmosphere.msis_density)
+if ~isscalar(jd)
+    error("satflight:internal", "NRLMSIS takes one date per call, got %d.", numel(jd));
+end
+rho = zeros(size(h));
+air = h <= C.ATM_TOP;
+n = nnz(air);
+if n == 0
+    return
+end
+ms = msisMillis(jd);
+[f107, f107a, ap] = spaceWeatherIndices(F.sw, ms);
+whole = floor(ms / 86400000);
+rest = ms - whole * 86400000;
+d = datetime(1970, 1, 1) + days(whole);
+utc = sprintf("%04d-%02d-%02dT%02d:%02d:%02d.%03d", d.Year, d.Month, d.Day, ...
+    floor(rest / 3600000), floor(mod(rest, 3600000) / 60000), floor(mod(rest, 60000) / 1000), ...
+    mod(rest, 1000));
+aps = cell(1, n);
+for k = 1:n
+    aps{k} = py.list(num2cell(ap));
+end
+out = F.msis.calculate(py.list(repmat({char(utc)}, 1, n)), rad2deg(lon(air).'), ...
+    rad2deg(lat(air).'), max(h(air), 0).', repmat(f107, 1, n), repmat(f107a, 1, n), ...
+    py.list(aps), pyargs("geomagnetic_activity", int32(-1)));
+out = double(out);
+rho(air) = out(:, 1) * F.densityScale;
+end
+
+function W = spaceWeatherLoad(folder, C)
+% CelesTrak's SW-All.csv from the data folder, read strictly as the simulator reads it
+% (spaceweather.read): the measured days (OBS, and INT: CelesTrak's fill for a day
+% without a reading); predictions end it
+file = fullfile(dataRoot(folder), "spaceweather", "SW-All.csv");
+if ~isfile(file)
+    error("satflight:noData", "No space-weather table at %s: run python " + ...
+        "tools/fetch_space_weather.py (NRLMSIS drag needs it).", file);
+end
+lines = readlines(file, EmptyLineRule="skip");
+if isempty(lines) || strtrim(lines(1)) ~= C.SW_HEADER
+    error("satflight:spaceWeather", "%s: not CelesTrak's SW-All columns.", file);
+end
+cols = split(C.SW_HEADER, ",");
+counts = count(lines(2:end), ",") + 1;
+if any(counts ~= numel(cols))
+    k = find(counts ~= numel(cols), 1);
+    error("satflight:spaceWeather", "line %d: %d fields, expected %d.", k + 1, counts(k), ...
+        numel(cols));
+end
+fields = split(strtrim(lines(2:end)), ",", 2);
+kind = fields(:, cols == "F10.7_DATA_TYPE");
+measured = kind == "OBS" | kind == "INT";
+known = measured | kind == "PRD" | kind == "PRM";
+if ~all(known)
+    k = find(~known, 1);
+    error("satflight:spaceWeather", "line %d: F10.7 type ""%s"", expected OBS, INT, PRD " + ...
+        "or PRM.", k + 1, kind(k));
+end
+last = find(~measured, 1) - 1;
+if isempty(last)
+    last = numel(measured);
+end
+if any(measured(last + 1:end))
+    k = last + find(measured(last + 1:end), 1);
+    error("satflight:spaceWeather", "line %d: a measured day after a prediction (line %d).", ...
+        k + 1, last + 2);
+end
+fields = fields(1:last, :);
+num = @(name) str2double(fields(:, cols == name));
+ap3 = str2double(fields(:, startsWith(cols, "AP") & strlength(cols) == 3));
+W = struct("day", days(datetime(fields(:, 1), InputFormat="yyyy-MM-dd") ...
+    - datetime(1970, 1, 1)), "ap3", ap3, "apd", num("AP_AVG"), "f107", num("F10.7_OBS"), ...
+    "f107a", num("F10.7_OBS_CENTER81"));
+bad = any(isnan([W.day, W.ap3, W.apd, W.f107, W.f107a]), 2) | any(W.ap3 < 0, 2);
+if any(bad)
+    k = find(bad, 1);
+    error("satflight:spaceWeather", "line %d: not an SW-All row: %s", k + 1, lines(k + 1));
+end
+gap = find(diff(W.day) ~= 1, 1);
+if ~isempty(gap)
+    error("satflight:spaceWeather", "line %d: %s does not follow %s.", gap + 2, ...
+        fields(gap + 1, 1), fields(gap, 1));
+end
+if numel(W.day) < 2
+    error("satflight:spaceWeather", "%s: fewer than two measured days.", file);
+end
+end
+
+function [f107, f107a, ap] = spaceWeatherIndices(W, ms)
+% NRLMSIS's inputs at a time (ms since 1970, UTC), as spaceweather.Table.indices: F10.7 of
+% the previous day, its 81-day mean centred on the day, and the ap array (the day's Ap; the
+% 3-hour ap now and 3, 6, 9 h before; the means of the eight 12-33 and 36-57 h before)
+minutes = floor(ms / 60000) - W.day(1) * 1440;
+d = floor(minutes / 1440);                 % day index from the first, 0-based
+k = floor(minutes / 180);                  % 3-hour slot index, 0-based
+last = numel(W.day) - 1;
+when = string(datetime(ms / 1000, ConvertFrom="posixtime", TimeZone="UTC", ...
+    Format="yyyy-MM-dd'T'HH:mm"));
+first = string(datetime(1970, 1, 1) + days(W.day(1)), "yyyy-MM-dd");
+final = string(datetime(1970, 1, 1) + days(W.day(end)), "yyyy-MM-dd");
+if d < 1 || d > last
+    error("satflight:spaceWeather", "%s: outside the measured space-weather table " + ...
+        "(%s..%s); fetch a newer table (python tools/fetch_space_weather.py)", when, ...
+        first, final);
+end
+if k < 19
+    error("satflight:spaceWeather", "%s: the ap history (57 h before it) starts before " + ...
+        "the table's %s", when, first);
+end
+if d + 40 > last
+    error("satflight:spaceWeather", "%s: its 81-day mean F10.7 reaches past the last " + ...
+        "measured day %s into predictions; only measured space weather is used", when, final);
+end
+f107 = W.f107(d);                          % the previous day's (1-based d)
+if f107 > 400 || f107 <= 0
+    error("satflight:spaceWeather", "%s: it needs the F10.7 of %s, %.1f sfu: a solar " + ...
+        "radio burst (over 400), not the quiet-Sun flux the model takes", when, ...
+        string(datetime(1970, 1, 1) + days(W.day(d)), "yyyy-MM-dd"), f107);
+end
+f107a = W.f107a(d + 1);
+s = reshape(W.ap3.', [], 1);               % every 3-hour ap in order
+i = k + 1;                                 % the slot now, 1-based
+ap = [W.apd(d + 1), s(i), s(i - 1), s(i - 2), s(i - 3), sum(s(i - 11:i - 4)) / 8, ...
+    sum(s(i - 19:i - 12)) / 8];
+end
+
 function rho = density(h, scale, C)
 % piecewise-exponential atmosphere (Vallado table 8-4), kg/m^3
 hc = max(h, 0);
 k = discretize(hc, [C.ATM(:, 1); inf]);
 rho = C.ATM(k, 2) .* exp(-(hc - C.ATM(k, 1)) ./ C.ATM(k, 3)) * scale;
-rho(h > 2500) = 0;
+rho(h > C.ATM_TOP) = 0;
 end
 
 % --- time and frames -----------------------------------------------------------------------
@@ -3959,6 +4140,11 @@ C.MIN_PERIGEE = 100.0;        % km
 C.MAX_BURN = 3600.0;          % s
 % satflight/atmosphere.py: base altitude km, density kg/m^3, scale height km
 C.TOP_KM = 2500.0;
+C.ATM_TOP = 2500;              % km: no air above it, in the table and NRLMSIS
+% CelesTrak's SW-All.csv columns (spaceweather.HEADER)
+C.SW_HEADER = "DATE,BSRN,ND,KP1,KP2,KP3,KP4,KP5,KP6,KP7,KP8,KP_SUM,AP1,AP2,AP3,AP4,AP5," + ...
+    "AP6,AP7,AP8,AP_AVG,CP,C9,ISN,F10.7_OBS,F10.7_ADJ,F10.7_DATA_TYPE," + ...
+    "F10.7_OBS_CENTER81,F10.7_OBS_LAST81,F10.7_ADJ_CENTER81,F10.7_ADJ_LAST81";
 C.ATM = [0 1.225 7.249; 25 3.899e-2 6.349; 30 1.774e-2 6.682; 40 3.972e-3 7.554;
     50 1.057e-3 8.382; 60 3.206e-4 7.714; 70 8.770e-5 6.549; 80 1.905e-5 5.799;
     90 3.396e-6 5.382; 100 5.297e-7 5.877; 110 9.661e-8 7.263; 120 2.438e-8 9.473;
@@ -5440,6 +5626,9 @@ function [D, K] = satflightDiagnostics(T, sim, burns, objects)
 %   would point to a fault.
 C = satflightConstants();
 F = sim.forces;
+if msisDrag(F)
+    F = msisSetup(F, sim.dataFolder, C);
+end
 terms = ["j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "egm"];
 applied = false(1, 9);
 if sim.propagator == "cowell"
@@ -5479,6 +5668,11 @@ for q = 1:numel(present)
         else
             G.(terms(j)) = true;
         end
+        if terms(j) == "drag" && msisDrag(F)
+            G.atmosphere = F.atmosphere;
+            G.sw = F.sw;
+            G.msis = F.msis;
+        end
         cdam = zeros(height(rows), 1);
         cram = zeros(height(rows), 1);
         if ~isempty(props)
@@ -5489,13 +5683,13 @@ for q = 1:numel(present)
                 cram = props.cr(1) * props.area_m2(1) ./ m;
             end
         end
-        if any(terms(j) == ["sun", "moon", "srp"])
-            % the Sun and Moon at each sample's own date
+        if any(terms(j) == ["sun", "moon", "srp"]) || msisDrag(G)
+            % the Sun and Moon at each sample's own date (NRLMSIS: its air then)
             jd = juliandate(rows.utc);
             extra = zeros(height(rows), 3);
             for k = 1:height(rows)
-                extra(k, :) = acceleration(r(k, :), v(k, :), 0, 0, G, C, jd(k), cram(k)) ...
-                    + C.MU * r(k, :) / rm(k) ^ 3;
+                extra(k, :) = acceleration(r(k, :), v(k, :), cdam(k), theta(k), G, C, ...
+                    jd(k), cram(k)) + C.MU * r(k, :) / rm(k) ^ 3;
             end
         else
             % (theta: the Earth's turn at each sample, for C22 and the EGM2008 field)

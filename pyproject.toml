@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.24", "pygame-ce>=2.4"]
 
 [project.optional-dependencies]
 tle = ["sgp4>=2.22"]
+study = ["matplotlib>=3.7"]          # tools/sentinel1_study.py report: the figures
 dev = ["pytest>=7", "ruff>=0.5"]
 
 [project.scripts]

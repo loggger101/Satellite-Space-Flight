@@ -70,7 +70,9 @@ python -m satflight scenarios/hohmann_to_geo.json     # straight into a scenario
 The front end uses [pygame-ce](https://pyga.me), the maintained community
 edition of pygame (same `import pygame` API; it also ships wheels for Python
 3.13/3.14, which classic pygame does not yet). The optional
-`pip install sgp4` gives proper SGP4 initialization of TLEs. The Earth texture
+`pip install sgp4` gives proper SGP4 initialization of TLEs; matplotlib (in
+`requirements.txt`, or `pip install .[study]`) draws the Sentinel-1 study's
+figures. The Earth texture
 (NASA Blue Marble) and coastlines (Natural Earth) are bundled in `assets/`;
 `python tools/fetch_assets.py` re-downloads them.
 

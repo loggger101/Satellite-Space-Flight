@@ -69,4 +69,5 @@ Files written between 2026-09-29 and 2026-11-18 that still switch on `sun`,
 `moon` or `srp`, or give a satellite a `cr`, now get those forces: they are
 no longer ignored. The MATLAB export flies every one of these terms: the Sun,
 the Moon, sunlight pressure and the EGM2008 field (its coefficients written
-into the script, so it needs no data file).
+into the script, so it needs no data file). A replayed Sentinel-1 unit exports
+too: the script reads the same precise orbit files when it runs.

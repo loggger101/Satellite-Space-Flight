@@ -104,6 +104,75 @@ classdef ExportTest < ExportCase
             tc.verifyLessThan(K.drift_rel, 1e-8);
         end
 
+        function preciseOrbitReplay(tc)
+            % Sentinel-1A on ESA's precise orbit files, read here as the simulator reads
+            % them (polar motion taken out with the IERS table), beside its twin flown by
+            % J2 and drag, with a station that sees both; the recording ends part-way
+            % (3 July 24:00 UTC), where the truth stops and says so
+            tc.assumeTrue(hasPreciseOrbits("S1A", datetime(2025, 7, 3)), ...
+                "the Sentinel-1A files of 3 July 2025 or the IERS table are not here");
+            sc = satflight.newScenario("Replay", J2=true, Drag=true, ...
+                Epoch=datetime(2025, 7, 3, 18, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "S1A truth", satflight.orbitReplay("S1A", ...
+                datetime(2025, 7, 3)));
+            sc = satflight.addSatellite(sc, "S1A twin", satflight.orbitPrecise("S1A"), ...
+                Mass=2164, Area=10, Cd=1.88);
+            sc = satflight.addStation(sc, "Kiruna", 67.86, 20.96, MinEl=5);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "replay.json"));
+            [diffs, out] = tc.check(tc.export(file, "replay", ["--duration", "8h", ...
+                "--step", "60"]));
+            % the truth is the recording itself: the same file, the same arithmetic
+            tc.verifyLessThan(diffs.max_diff_km(diffs.name == "S1A truth"), 1e-6);
+            tc.verifyLessThan(diffs.final_diff_km(diffs.name == "S1A truth"), 1e-6);
+            T = out.T;
+            truth = T(T.name == "S1A truth", :);
+            tc.verifyEqual(truth.status(end), "end of data");
+            tc.verifyEqual(nnz(out.events.text == "S1A truth: end of the recorded orbit " + ...
+                "(S1A data until 2025-07-03 24:00 UTC)"), 1);
+            tc.verifyTrue(any(startsWith(out.events.text, "AOS S1A truth")), "no pass of the truth");
+            % the twin starts on the truth and is measured against it while both fly
+            G = out.truthGap;
+            tc.verifyEqual(unique(G.name), "S1A twin");
+            tc.verifyLessThan(G.distance_km(1), 1e-9);
+            tc.verifyEqual(G.distance_km, vecnorm([G.radial_km, G.along_km, G.cross_km], 2, 2), ...
+                AbsTol=1e-12);
+            ended = truth.t_s(find(truth.status ~= "active", 1));
+            tc.verifyLessThan(max(G.t_s), ended);
+            tc.verifyLessThan(max(G.distance_km), 5);   % J2 and drag alone, 6 h
+            % the forces of the run do not fly the truth: no diagnostics for it
+            tc.verifyFalse(any(out.diagnostics.name == "S1A truth"));
+            tc.verifyTrue(any(out.diagnostics.name == "S1A twin"));
+        end
+
+        function replayWithoutItsFiles(tc)
+            % the files are read when the script runs: with none in the data folder it
+            % stops and names the first day missing, nothing bridged
+            tc.assumeTrue(hasPreciseOrbits("S1A", datetime(2025, 7, 3)), ...
+                "the Sentinel-1A files of 3 July 2025 or the IERS table are not here");
+            sc = satflight.newScenario("Replay", J2=true, ...
+                Epoch=datetime(2025, 7, 3, 18, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "S1A truth", satflight.orbitReplay("S1A", ...
+                datetime(2025, 7, 3)));
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "replay_alone.json"));
+            script = tc.export(file, "replay_alone", ["--duration", "1h", "--step", "60", ...
+                "--no-compare"]);
+            text = readlines(script);
+            k = find(startsWith(text, "dataFolder = """";"));
+            tc.assertNumElements(k, 1);
+            empty = fullfile(tc.Tmp, "no_data");
+            mkdir(empty);
+            text(k) = "dataFolder = """ + empty + """;";
+            here = fullfile(tc.Tmp, "replay_no_data.m");
+            writelines(text, here);
+            try
+                tc.runAlone(here);
+                tc.verifyFail("the script ran without its precise orbit files");
+            catch err
+                tc.verifyEqual(string(err.identifier), "satflight:noData", err.message);
+                tc.verifySubstring(err.message, "2025-07-03");
+            end
+        end
+
         function everyKindOfBurn(tc)
             % finite, plane change, RSW and ECI impulses, circularize and match velocity,
             % node / apsis timings, J3 + C22 + drag, under each of the three propagators
@@ -304,4 +373,21 @@ classdef ExportTest < ExportCase
             tc.check(tc.export(file, "midburn", ["--at", "750", "--duration", "2h"]));
         end
     end
+end
+
+function ok = hasPreciseOrbits(mission, day)
+% whether this machine has the mission's POEORB file for day (UTC) and the IERS table, where
+% the simulator looks for them ($SATFLIGHT_DATA, else ~/satflight-data)
+root = string(getenv("SATFLIGHT_DATA"));
+if strtrim(root) == ""
+    home = getenv("HOME");
+    if ispc
+        home = getenv("USERPROFILE");
+    end
+    root = fullfile(string(home), "satflight-data");
+end
+before = string(datetime(day - days(1), Format="yyyyMMdd"));
+files = dir(fullfile(root, "poeorb", mission, mission + "_OPER_AUX_POEORB_OPOD_*_V" + before ...
+    + "T*.EOF.zip"));
+ok = ~isempty(files) && isfile(fullfile(root, "eop", "finals2000A.all"));
 end

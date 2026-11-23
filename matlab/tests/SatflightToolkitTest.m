@@ -78,6 +78,34 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             tc.verifyTrue(raw.satellites{4}.orbit.osculating);
         end
 
+        function preciseOrbitBuilders(tc)
+            % a replay of a Sentinel-1 unit's precise orbit and its twin, written as the
+            % simulator reads them; an unknown unit is refused here, a malformed day by
+            % the simulator
+            sc = satflight.newScenario("S1", Epoch=datetime(2025, 7, 3, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Truth", satflight.orbitReplay("S1A", ...
+                datetime(2025, 7, 9)));
+            sc = satflight.addSatellite(sc, "Twin", satflight.orbitPrecise("S1A"));
+            path = satflight.saveScenario(sc, fullfile(tc.Tmp, "s1.json"));
+            raw = jsondecode(fileread(path));
+            tc.verifyEqual(raw.satellites(1).orbit, struct("type", 'replay', "mission", 'S1A', ...
+                "until", '2025-07-09'));
+            tc.verifyEqual(raw.satellites(2).orbit.type, 'precise');
+            tc.verifyEqual(satflight.orbitReplay("S1C", "2025-07-09").until, '2025-07-09');
+            tc.verifyError(@() satflight.orbitPrecise("S2A"), ...
+                "MATLAB:validators:mustBeMember");
+            sc = satflight.newScenario("S1", Epoch=datetime(2025, 7, 3, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Truth", satflight.orbitReplay("S1A", "9 July"));
+            path = satflight.saveScenario(sc, fullfile(tc.Tmp, "s1_bad.json"));
+            try
+                satflight.checkScenario(path);
+                tc.verifyFail("the simulator took a malformed replay day");
+            catch err
+                tc.verifyEqual(string(err.identifier), "satflight:python", err.message);
+                tc.verifySubstring(err.message, "expected a date as YYYY-MM-DD");
+            end
+        end
+
         function sunMoonAndSunlightOptions(tc)
             % the third bodies and sunlight pressure switch on from MATLAB, with each
             % satellite's and each constellation's reflectivity, and the simulator

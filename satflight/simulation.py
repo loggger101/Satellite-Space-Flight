@@ -900,6 +900,11 @@ class Simulation:
         if (grid is not None and self.t == shown[0] and self.y.shape == shown[1].shape
                 and np.array_equal(self.y, shown[1])):
             self.t, self.y = grid[0], grid[1]
+            # a recording that ended in the state shown stays at its end: it is no
+            # longer followed, so going back would leave it where the last step had it
+            for i, s in enumerate(self.sats):
+                if s.replay is not None and s.status == ENDED:
+                    self.y[i] = s.replay.state(s.replay.end)
         else:
             self._last_sample = None       # nothing joins the last step's states to these
 

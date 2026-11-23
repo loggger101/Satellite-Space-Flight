@@ -163,6 +163,21 @@ def test_the_truth_stops_where_the_recording_ends(data):
     assert sim.gap_to_truth(sim.index_of("S1A twin")) is None
 
 
+def test_the_truth_stays_at_the_end_of_its_recording_after_it_stops(data):
+    """Its recording ends between two steps, seen when a sample is shown: it
+    stays where the recording ends through the steps after, not where the last
+    step left it (a slip of hundreds of km, 2026-11-22)."""
+    sim = Simulation(_scenario())
+    i = sim.index_of("S1A truth")
+    E = sim.sats[i].replay
+    sim.advance(E.end - 5.0)
+    sim.advance(6.0)             # shown 1 s past the end, inside the twin's next step
+    assert sim.sats[i].status == replay.ENDED and sim._grid[0] < E.end
+    for _ in range(3):
+        assert np.abs(sim.y[i] - E.state(E.end)).max() < 1e-9
+        sim.advance(60.0)
+
+
 def test_the_truth_cannot_be_manoeuvred(data):
     from satflight.maneuvers import Maneuver
     sim = Simulation(_scenario())
@@ -232,8 +247,53 @@ def test_the_bundled_replay_scenario_runs_on_the_real_files():
     assert math.isfinite(sim.t)
 
 
-def test_the_matlab_export_refuses_a_replay_until_it_can_follow_one(data, tmp_path):
+def _exported(sim, tmp_path, **kw):
     from satflight.matlab_export import export_live_script
+    return export_live_script(sim, tmp_path / "replay_test.m", **kw).read_text(encoding="utf-8")
+
+
+def _column(text, name):
+    """The strings of a ``sim.<name> = [...]`` column in an exported script."""
+    import re
+    m = re.search(rf"^sim\.{name} = \[\n(.*?)\n\];", text, re.M | re.S)
+    assert m, f"no sim.{name} column"
+    return [re.fullmatch(r'\s*"([^"]*)"', ln).group(1) for ln in m.group(1).splitlines()]
+
+
+def test_the_matlab_export_has_the_truth_read_its_recording_and_the_twin_keep_its_mission(
+        data, tmp_path):
+    """MATLAB reads the same POEORB files: the script names each replay's
+    mission and last day, the twin's mission (for its gap to the truth), and
+    where the files are."""
+    text = _exported(Simulation(_scenario()), tmp_path)
+    assert _column(text, "names") == ["S1A truth", "S1A twin"]
+    assert _column(text, "mission") == ["S1A", "S1A"]
+    assert _column(text, "replayUntil") == ["2025-07-02", ""]
+    assert 'dataFolder = "";' in text and "sim.dataFolder = dataFolder;" in text
+
+
+def test_a_snapshot_export_keeps_the_twins_mission(data, tmp_path):
+    """From the current moment the twin is a plain state in the scenario, but
+    it is still the twin of its mission."""
     sim = Simulation(_scenario())
-    with pytest.raises(ValueError, match="S1A truth.*recorded"):
-        export_live_script(sim, tmp_path / "replay_test.m")
+    sim.advance(600.0)
+    text = _exported(sim, tmp_path, start="now")
+    assert _column(text, "mission") == ["S1A", "S1A"]
+    assert _column(text, "replayUntil") == ["2025-07-02", ""]
+
+
+def test_a_lone_replay_exports_its_columns_without_brackets(data, tmp_path):
+    from satflight.forces import ForceModel
+    sc = Scenario(name="alone", epoch=EPOCH, forces=ForceModel(j2=False, drag=False),
+                  satellites=[SatSpec("S1A truth", dict(TRUTH))])
+    text = _exported(Simulation(sc), tmp_path)
+    assert 'sim.mission = "S1A";' in text and 'sim.replayUntil = "2025-07-02";' in text
+
+
+def test_without_a_recording_the_script_reads_no_data(tmp_path):
+    from satflight.forces import ForceModel
+    sc = Scenario(name="plain", epoch=EPOCH, forces=ForceModel(),
+                  satellites=[SatSpec("A", {"type": "elements", "a": 7000.0, "e": 0.001,
+                                            "i": 98.0, "raan": 0.0, "argp": 0.0, "nu": 0.0})])
+    text = _exported(Simulation(sc), tmp_path)
+    assert "dataFolder = " not in text and "sim.mission = " not in text

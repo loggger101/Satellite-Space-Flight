@@ -65,7 +65,19 @@ export loses nothing there.
      cut one degree short) must fail it.
    - Measure MATLAB's cost of a 70x70 evaluation (Python ~1.6 ms); a
      multi-day Sentinel-1 export may otherwise take minutes.
-4. **Replay and precise orbits.** A satellite following a recording is
+4. **Done 2026-11-22 (branch `matlab-replay`), the user's choice: MATLAB reads
+   the POEORB files.** The script names each replay's unit and last day and
+   each twin's unit; the runtime reads the files (unzip, the reader's checks
+   and the 10 m seam rule), the IERS table (measured values only), takes polar
+   motion out, turns the Earth back by GMST at UT1 and interpolates as
+   `replay.Ephemeris` does. `ExportTest/preciseOrbitReplay` holds the replayed
+   S1A to the simulator's within 1 mm through the end of its recording, with
+   the twin's gap (`truthGap`); `replayWithoutItsFiles` refuses an empty data
+   folder naming the day. Toolkit: `orbitReplay`, `orbitPrecise`. Found on the
+   way, fixed in the simulator too: a recording that ended at a shown sample
+   between two steps slipped back to the last step's state (380 km) and froze
+   there (`Simulation._resume`). The original note:
+   **Replay and precise orbits.** A satellite following a recording is
    refused; a precise twin exports as a plain state and loses its truth (and
    the R/S/W gap to it). **Needs the user's decision:** embed the recorded
    10 s states in the script (~26,000 rows per satellite for three days,
@@ -79,7 +91,7 @@ export loses nothing there.
 
 - The app's launch form has no payload Cd or Cr field (only scenario files
   set them). Python UI, not the exporter.
-- MATLAB toolkit: no replay / precise orbit builders (item 4).
+- MATLAB toolkit: no replay / precise orbit builders (item 4). Done.
 - `Simulation._perturbed` (and so `circular_velocity`) ignores the EGM2008
   field: a run with the field and J2 off treats a circularize burn as two-body.
   The MATLAB port copies it to stay in step; fix both together.

@@ -12,6 +12,8 @@ function sc = newScenario(name, opts)
 %     J2, J3, J4, C22, Drag   force terms (logical; default J2 on, the rest off)
 %     Sun, Moon     the Sun's and Moon's gravity (logical; default off)
 %     Srp           sunlight pressure, with each satellite's Cr (logical; default off)
+%     GravityDegree the EGM2008 field to this degree and order (2..70) in place of
+%                   J2, J3, J4 and C22 (default 0: those terms)
 %     DensityScale  multiplies the atmosphere's density (default 1)
 %     Integrator    "dopri5" (default), "rk4", "wh" or "leapfrog"
 %     Rtol, Atol, HMax, HFixed   integrator tolerances and step limits
@@ -34,6 +36,7 @@ arguments
     opts.Sun (1,1) logical
     opts.Moon (1,1) logical
     opts.Srp (1,1) logical
+    opts.GravityDegree (1,1) double
     opts.DensityScale (1,1) double
     opts.Integrator (1,1) string
     opts.Rtol (1,1) double
@@ -56,7 +59,7 @@ if ~isempty(fieldnames(integrator))
 end
 forces = copyOptions(struct(), opts, ["J2", "j2"; "J3", "j3"; "J4", "j4"; "C22", "c22"; ...
     "Drag", "drag"; "DensityScale", "density_scale"; "Sun", "sun"; "Moon", "moon"; ...
-    "Srp", "srp"]);
+    "Srp", "srp"; "GravityDegree", "gravity_degree"]);
 if ~isempty(fieldnames(forces))
     sc.forces = forces;
 end

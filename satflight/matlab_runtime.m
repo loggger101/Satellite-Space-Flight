@@ -334,8 +334,9 @@ if sim.propagator == "cowell"
     return
 end
 F = sim.forces;
-on = [F.j2, F.j3, F.j4, F.c22, F.drag, F.sun, F.moon, F.srp];
-terms = ["J2", "J3", "J4", "C22", "DRAG", "SUN", "MOON", "SRP"];
+field = F.gravityDegree > 0;      % the field stands in for J2, J3, J4 and C22
+on = [~field & [F.j2, F.j3, F.j4, F.c22], field, F.drag, F.sun, F.moon, F.srp];
+terms = ["J2", "J3", "J4", "C22", "EGM" + F.gravityDegree, "DRAG", "SUN", "MOON", "SRP"];
 used = sim.propagator == "j2mean" & terms == "J2";
 left = terms(on & ~used);
 end
@@ -1121,7 +1122,7 @@ Y = reshape(y, n, 6);
 r = Y(:, 1:3);
 v = Y(:, 4:6);
 theta = 0;
-if F.c22
+if F.c22 || F.gravityDegree > 0      % the terms that turn with the Earth
     theta = gmst(jd0 + t / 86400);
 end
 masses = burnRows(:, 4) - mdots .* (t - burnRows(:, 3));
@@ -1557,35 +1558,40 @@ x = r(:, 1); y = r(:, 2); z = r(:, 3);
 r2 = x .* x + y .* y + z .* z;
 rm = sqrt(r2);
 a = -C.MU * r ./ rm .^ 3;
-if F.j2
-    k = -1.5 * C.J2 * C.MU * C.RE ^ 2 ./ rm .^ 5;
-    zz = 5 * z .* z ./ r2;
-    a = a + [k .* x .* (1 - zz), k .* y .* (1 - zz), k .* z .* (3 - zz)];
-end
-if F.j3
-    k = -2.5 * C.J3 * C.MU * C.RE ^ 3 ./ rm .^ 7;
-    txy = 3 * z - 7 * z .^ 3 ./ r2;
-    az = 6 * z .* z - 7 * z .^ 4 ./ r2 - 0.6 * r2;
-    a = a + [k .* x .* txy, k .* y .* txy, k .* az];
-end
-if F.j4
-    k = 1.875 * C.J4 * C.MU * C.RE ^ 4 ./ rm .^ 7;
-    s = z .* z ./ r2;
-    txy = 1 - 14 * s + 21 * s .* s;
-    tz = 5 - 70 / 3 * s + 21 * s .* s;
-    a = a + [k .* x .* txy, k .* y .* txy, k .* z .* tz];
-end
-if F.c22
-    c = cos(theta); s = sin(theta);    % theta: one angle, or one per row of r
-    xe = c .* x + s .* y;
-    ye = -s .* x + c .* y;
-    k = 3 * C.MU * C.RE ^ 2 ./ (r2 .* r2 .* rm);
-    w = C.C22 * (xe .* xe - ye .* ye) + 2 * C.S22 * xe .* ye;
-    q = 5 * w ./ r2;
-    gx = k .* (2 * (C.C22 * xe + C.S22 * ye) - q .* xe);
-    gy = k .* (2 * (C.S22 * xe - C.C22 * ye) - q .* ye);
-    gz = -k .* q .* z;
-    a = a + [c .* gx - s .* gy, s .* gx + c .* gy, gz];
+if F.gravityDegree > 0
+    % the EGM2008 field to degree N stands in for J2, J3, J4 and C22
+    a = a + fieldAcceleration(r, theta, F.field);
+else
+    if F.j2
+        k = -1.5 * C.J2 * C.MU * C.RE ^ 2 ./ rm .^ 5;
+        zz = 5 * z .* z ./ r2;
+        a = a + [k .* x .* (1 - zz), k .* y .* (1 - zz), k .* z .* (3 - zz)];
+    end
+    if F.j3
+        k = -2.5 * C.J3 * C.MU * C.RE ^ 3 ./ rm .^ 7;
+        txy = 3 * z - 7 * z .^ 3 ./ r2;
+        az = 6 * z .* z - 7 * z .^ 4 ./ r2 - 0.6 * r2;
+        a = a + [k .* x .* txy, k .* y .* txy, k .* az];
+    end
+    if F.j4
+        k = 1.875 * C.J4 * C.MU * C.RE ^ 4 ./ rm .^ 7;
+        s = z .* z ./ r2;
+        txy = 1 - 14 * s + 21 * s .* s;
+        tz = 5 - 70 / 3 * s + 21 * s .* s;
+        a = a + [k .* x .* txy, k .* y .* txy, k .* z .* tz];
+    end
+    if F.c22
+        c = cos(theta); s = sin(theta);    % theta: one angle, or one per row of r
+        xe = c .* x + s .* y;
+        ye = -s .* x + c .* y;
+        k = 3 * C.MU * C.RE ^ 2 ./ (r2 .* r2 .* rm);
+        w = C.C22 * (xe .* xe - ye .* ye) + 2 * C.S22 * xe .* ye;
+        q = 5 * w ./ r2;
+        gx = k .* (2 * (C.C22 * xe + C.S22 * ye) - q .* xe);
+        gy = k .* (2 * (C.S22 * xe - C.C22 * ye) - q .* ye);
+        gz = -k .* q .* z;
+        a = a + [c .* gx - s .* gy, s .* gx + c .* gy, gz];
+    end
 end
 if F.drag
     vRel = v - [-C.OMEGA * y, C.OMEGA * x, zeros(size(x))];
@@ -1788,6 +1794,114 @@ lam = (lamM + 1.914666471 * sin(m) + 0.019994643 * sin(2 * m)) * C.DEG;
 r = (1.000140612 - 0.016708617 * cos(m) - 0.000139589 * cos(2 * m)) * C.AU;
 eps = (23.439291 - 0.0130042 * t) * C.DEG;
 rs = [r * cos(lam), r * cos(eps) * sin(lam), r * sin(eps) * sin(lam)];
+end
+
+function a = fieldAcceleration(r, theta, G)
+% the EGM2008 field's perturbation (km/s^2, degrees 2..N) at ECI positions r (one per
+% row), the Earth turned by theta (one angle, or one per row): Cunningham's V/W
+% recursion (Montenbruck & Gill 3.2.4-3.2.5), unnormalized, run degree by degree with
+% every order and row at once, as the simulator's gravity.acceleration runs it
+N = G.degree;
+c = cos(theta);
+s = sin(theta);
+x = c .* r(:, 1) + s .* r(:, 2);
+y = -s .* r(:, 1) + c .* r(:, 2);
+z = r(:, 3);
+r2 = x .* x + y .* y + z .* z;
+rho = G.re * G.re ./ r2;
+x0 = G.re * x ./ r2;
+y0 = G.re * y ./ r2;
+z0 = G.re * z ./ r2;
+top = N + 2;                                  % V and W to degree N + 1
+k = size(r, 1);
+V = zeros(k, top, top);
+W = zeros(k, top, top);
+V(:, 1, 1) = G.re ./ sqrt(r2);
+for n = 1:top - 1
+    m = reshape(0:n - 1, 1, 1, []);           % the orders below the diagonal
+    p = (2 * n - 1) ./ (n - m);
+    q = (n + m - 1) ./ (n - m);
+    V(:, n + 1, 1:n) = p .* z0 .* V(:, n, 1:n);
+    W(:, n + 1, 1:n) = p .* z0 .* W(:, n, 1:n);
+    if n >= 2
+        V(:, n + 1, 1:n) = V(:, n + 1, 1:n) - q .* rho .* V(:, n - 1, 1:n);
+        W(:, n + 1, 1:n) = W(:, n + 1, 1:n) - q .* rho .* W(:, n - 1, 1:n);
+    end
+    d = 2 * n - 1;                            % the diagonal from the one before
+    V(:, n + 1, n + 1) = d * (x0 .* V(:, n, n) - y0 .* W(:, n, n));
+    W(:, n + 1, n + 1) = d * (x0 .* W(:, n, n) + y0 .* V(:, n, n));
+end
+n0 = 2:N;                                     % the zonal terms (order 0)
+[mm, nn] = meshgrid(1:N, 2:N);
+keep = mm <= nn;
+n1 = nn(keep)';                               % and the rest, degree n1, order m1
+m1 = mm(keep)';
+V2 = reshape(V, k, []);
+W2 = reshape(W, k, []);
+at = @(n, m) sub2ind([top top], n + 1, m + 1);   % the column of degree n, order m
+C0 = G.c(n0 + 1, 1);
+Cn = G.c(sub2ind(size(G.c), n1 + 1, m1 + 1));
+Sn = G.s(sub2ind(size(G.s), n1 + 1, m1 + 1));
+fac = 0.5 * (n1 - m1 + 1) .* (n1 - m1 + 2);
+vp = V2(:, at(n1 + 1, m1 + 1));
+wp = W2(:, at(n1 + 1, m1 + 1));
+vm = V2(:, at(n1 + 1, m1 - 1));
+wm = W2(:, at(n1 + 1, m1 - 1));
+ax = -(V2(:, at(n0 + 1, 1)) * C0) + sum(0.5 * (-Cn .* vp - Sn .* wp) ...
+    + fac .* (Cn .* vm + Sn .* wm), 2);
+ay = -(W2(:, at(n0 + 1, 1)) * C0) + sum(0.5 * (-Cn .* wp + Sn .* vp) ...
+    + fac .* (-Cn .* wm + Sn .* vm), 2);
+az = sum(-(n0 + 1) .* C0' .* V2(:, at(n0 + 1, 0)), 2) ...
+    + sum((n1 - m1 + 1) .* (-Cn .* V2(:, at(n1 + 1, m1)) - Sn .* W2(:, at(n1 + 1, m1))), 2);
+kk = G.gm / (G.re * G.re);
+gx = kk * ax;
+gy = kk * ay;
+gz = kk * az;
+a = [c .* gx - s .* gy, s .* gx + c .* gy, gz];
+end
+
+function U = fieldPotential(r, theta, G)
+% the EGM2008 field's perturbation potential (km^2/s^2, degrees 2..N; its gradient is
+% fieldAcceleration) by fully normalized Legendre functions, as the simulator's
+% gravity.potential sums it: a second route through the same coefficients
+N = G.degree;
+c = cos(theta);
+s = sin(theta);
+x = c .* r(:, 1) + s .* r(:, 2);
+y = -s .* r(:, 1) + c .* r(:, 2);
+z = r(:, 3);
+rm = sqrt(x .* x + y .* y + z .* z);
+lon = atan2(y, x);
+t = z ./ rm;
+u = sqrt(max(0, 1 - t .* t));
+k = size(r, 1);
+P = zeros(k, N + 1, N + 1);                   % P(:, n + 1, m + 1)
+P(:, 1, 1) = 1;
+P(:, 2, 2) = sqrt(3) * u;
+for m = 2:N
+    P(:, m + 1, m + 1) = sqrt((2 * m + 1) / (2 * m)) * u .* P(:, m, m);
+end
+for m = 0:N
+    for n = m + 1:N
+        a = sqrt((2 * n - 1) * (2 * n + 1) / ((n - m) * (n + m)));
+        P(:, n + 1, m + 1) = a * t .* P(:, n, m + 1);
+        if n >= m + 2
+            b = sqrt((2 * n + 1) * (n + m - 1) * (n - m - 1) ...
+                / ((n - m) * (n + m) * (2 * n - 3)));
+            P(:, n + 1, m + 1) = P(:, n + 1, m + 1) - b * P(:, n - 1, m + 1);
+        end
+    end
+end
+% the fully normalized coefficients, back from the unnormalized ones the script holds
+[mm, nn] = meshgrid(0:N, 0:N);
+scale = sqrt((2 - (mm == 0)) .* (2 * nn + 1) ...
+    .* exp(gammaln(max(nn - mm, 0) + 1) - gammaln(nn + mm + 1)));
+scale(mm > nn) = 1;
+cbar = reshape(G.c ./ scale, 1, N + 1, N + 1);
+sbar = reshape(G.s ./ scale, 1, N + 1, N + 1);
+mv = reshape(0:N, 1, 1, []);
+inner = sum(P .* (cbar .* cos(lon .* mv) + sbar .* sin(lon .* mv)), 3);
+U = G.gm ./ rm .* sum((G.re ./ rm) .^ (0:N) .* inner, 2);
 end
 
 function rm = moonPosition(jd, C)
@@ -4843,15 +4957,16 @@ function [D, K] = satflightDiagnostics(T, sim, burns, objects)
 %   spin times h_z), and the size of the acceleration from each force the run applies
 %   (D). And for each coast, the stretch between burns in orbit, how far the quantity
 %   that physics keeps constant there drifted (K): energy for gravity alone, the Jacobi
-%   constant with the C22 field (which turns with the Earth); with drag on, energy
+%   constant with C22 or the EGM2008 field (which turn with the Earth); with drag on, energy
 %   falls. A conserved quantity that drifts by more than the integrator's tolerance
 %   would point to a fault.
 C = satflightConstants();
 F = sim.forces;
-terms = ["j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp"];
-applied = false(1, 8);
+terms = ["j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "egm"];
+applied = false(1, 9);
 if sim.propagator == "cowell"
-    applied = [F.j2, F.j3, F.j4, F.c22, F.drag, F.sun, F.moon, F.srp];
+    field = F.gravityDegree > 0;      % the field stands in for J2, J3, J4 and C22
+    applied = [~field & [F.j2, F.j3, F.j4, F.c22], F.drag, F.sun, F.moon, F.srp, field];
 end
 present = unique(T.name, "stable")';
 D = cell(numel(present), 1);
@@ -4865,17 +4980,22 @@ for q = 1:numel(present)
     h = cross(r, v, 2);
     theta = gmst(juliandate(rows.utc));
     kepler = speed .^ 2 / 2 - C.MU ./ rm;
-    total = speed .^ 2 / 2 + potential(r, theta, applied, C);
+    total = speed .^ 2 / 2 + potential(r, theta, applied, C, F.field);
     period = NaN(size(rm));
     bound = kepler < 0;
     period(bound) = 2 * pi * sqrt((-C.MU ./ (2 * kepler(bound))) .^ 3 / C.MU) / 60;
-    acc = NaN(height(rows), 9);
+    acc = NaN(height(rows), 10);
     acc(:, 1) = 1000 * C.MU ./ rm .^ 2;
     props = objects(objects.name == present(q), :);
     for j = find(applied)
         G = struct("j2", false, "j3", false, "j4", false, "c22", false, "drag", false, ...
-            "densityScale", F.densityScale, "sun", false, "moon", false, "srp", false);
-        G.(terms(j)) = true;
+            "densityScale", F.densityScale, "sun", false, "moon", false, "srp", false, ...
+            "gravityDegree", 0, "field", F.field);
+        if terms(j) == "egm"
+            G.gravityDegree = F.gravityDegree;
+        else
+            G.(terms(j)) = true;
+        end
         cdam = zeros(height(rows), 1);
         cram = zeros(height(rows), 1);
         if ~isempty(props)
@@ -4895,7 +5015,7 @@ for q = 1:numel(present)
                     + C.MU * r(k, :) / rm(k) ^ 3;
             end
         else
-            % (theta: the Earth's turn at each sample, for the C22 field that turns with it)
+            % (theta: the Earth's turn at each sample, for C22 and the EGM2008 field)
             extra = acceleration(r, v, cdam, theta, G, C, [], []) + C.MU * r ./ rm .^ 3;
         end
         acc(:, j + 1) = 1000 * vecnorm(extra, 2, 2);
@@ -4903,10 +5023,11 @@ for q = 1:numel(present)
     D{q} = table(repmat(present(q), height(rows), 1), rows.t_s, kepler, total, ...
         total - C.OMEGA * h(:, 3), vecnorm(h, 2, 2), h(:, 3), speed, rm, period, acc(:, 1), ...
         acc(:, 2), acc(:, 3), acc(:, 4), acc(:, 5), acc(:, 6), acc(:, 7), acc(:, 8), ...
-        acc(:, 9), VariableNames=["name", "t_s", ...
+        acc(:, 9), acc(:, 10), VariableNames=["name", "t_s", ...
         "energy_MJkg", "energy_total_MJkg", "jacobi_MJkg", "h_km2s", "hz_km2s", "speed_kms", ...
         "r_km", "period_min", "acc_central_ms2", "acc_j2_ms2", "acc_j3_ms2", "acc_j4_ms2", ...
-        "acc_c22_ms2", "acc_drag_ms2", "acc_sun_ms2", "acc_moon_ms2", "acc_srp_ms2"]);
+        "acc_c22_ms2", "acc_drag_ms2", "acc_sun_ms2", "acc_moon_ms2", "acc_srp_ms2", ...
+        "acc_egm_ms2"]);
 end
 D = vertcat(D{:});
 if isempty(D)
@@ -4914,7 +5035,7 @@ if isempty(D)
 end
 
 % the coasts, and the quantity physics keeps there
-if applied(4)
+if applied(4) || applied(9)
     kept = "jacobi_MJkg";
     what = "Jacobi constant";
 else
@@ -4968,9 +5089,10 @@ for q = 1:numel(present)
 end
 end
 
-function U = potential(r, theta, applied, C)
+function U = potential(r, theta, applied, C, field)
 % the specific potential energy (km^2/s^2) at positions r (one per row) of point-mass
-% gravity and the terms applied (J2, J3, J4, C22; theta the Earth's turn): the
+% gravity and the terms applied (J2, J3, J4, C22, the EGM2008 field; theta the
+% Earth's turn): the
 % potential whose gradient is minus acceleration()'s gravity
 rm = vecnorm(r, 2, 2);
 s = r(:, 3) ./ rm;
@@ -4990,6 +5112,9 @@ if applied(4)
     xe = c .* r(:, 1) + sn .* r(:, 2);
     ye = -sn .* r(:, 1) + c .* r(:, 2);
     U = U - 3 * C.MU * C.RE ^ 2 * (C.C22 * (xe .^ 2 - ye .^ 2) + 2 * C.S22 * xe .* ye) ./ rm .^ 5;
+end
+if applied(9)
+    U = U - fieldPotential(r, theta, field);
 end
 end
 
@@ -5050,7 +5175,8 @@ hold(ax, "on");
 d = D(D.name == focus, :);
 forces = ["acc_central_ms2", "central gravity"; "acc_j2_ms2", "J2"; "acc_j3_ms2", "J3"; ...
     "acc_j4_ms2", "J4"; "acc_c22_ms2", "C22"; "acc_drag_ms2", "drag"; ...
-    "acc_sun_ms2", "the Sun"; "acc_moon_ms2", "the Moon"; "acc_srp_ms2", "sunlight"];
+    "acc_sun_ms2", "the Sun"; "acc_moon_ms2", "the Moon"; "acc_srp_ms2", "sunlight"; ...
+    "acc_egm_ms2", "EGM2008 field"];
 for j = 1:size(forces, 1)
     y = d.(forces(j, 1));
     if any(isfinite(y))

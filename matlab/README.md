@@ -29,7 +29,7 @@ compares it with theory).
 
 | function | what it adds |
 |---|---|
-| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`), integrator settings |
+| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`, `GravityDegree` for the EGM2008 field), integrator settings |
 | `addSatellite(sc, name, orbit, ...)` | a satellite, or `Count` copies along one orbit; `Mass`, `Area`, `Cd`, `Cr`, `Color` |
 | `addConstellation(sc, name, ...)` | a Walker shell: `Altitude`, `Inclination`, `Total`, `Planes`, `Phasing`, `Pattern` |
 | `addStation(sc, name, lat, lon, ...)` | a ground station; `Alt`, `MinEl` |
@@ -161,10 +161,12 @@ sections:
    specific energy (two-body and with the potential of the gravity terms the
    run applies), angular momentum and its z part, speed, radius, period, the
    Jacobi constant, and the acceleration from each force applied (central
-   gravity, J2, J3, J4, C22, drag, the Sun, the Moon, sunlight). `conservation`
+   gravity, J2, J3, J4, C22, drag, the Sun, the Moon, sunlight, the EGM2008
+   field). `conservation`
    checks the integrator: per
    coast between burns, how far the quantity physics keeps there drifted
-   (energy, or the Jacobi constant with C22, which turns with the Earth),
+   (energy, or the Jacobi constant with C22 or the EGM2008 field, which turn
+   with the Earth),
    relative to its size, and whether drag makes it fall (with the Sun, the Moon
    or sunlight pressure on, nothing is kept and it says so). A figure plots them,
    the forces on a log scale, and the energy drift since each coast began.
@@ -200,7 +202,8 @@ coastlines, the Earth, stations, burn marks, labels) come from one palette per
 theme (`satflightPalette`), applied again whenever a figure's theme changes.
 
 The code after the sections is a port of the simulator's own: forces J2-J4,
-C22, drag, the Sun's and Moon's gravity (the almanac positions) and sunlight
+C22, the EGM2008 field to degree 70 (Cunningham's recursion; its
+coefficients in the script, the same doubles the simulator uses), drag, the Sun's and Moon's gravity (the almanac positions) and sunlight
 pressure through the Earth's penumbra; every burn kind and timing; finite burns; the Kepler and J2-mean
 propagators; the rocket ascent step for step (fixed 1 s RK4, thrust varying
 with altitude, drag, throttling, vertical rise, pitch kick, gravity turn,

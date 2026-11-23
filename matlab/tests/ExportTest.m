@@ -67,6 +67,43 @@ classdef ExportTest < ExportCase
             tc.verifyEqual(O.cr(stages), repmat(1.3, nnz(stages), 1));
         end
 
+        function egm2008Field(tc)
+            % the EGM2008 field (degree 20) in place of J2-J4 and C22, with the Sun and
+            % Moon: a Sentinel-1-like orbit, a GPS-like one and a burn, held to the
+            % simulator; then the field alone, where the Jacobi constant must hold
+            sc = satflight.newScenario("Field", GravityDegree=20, Drag=true, Sun=true, ...
+                Moon=true, Epoch=datetime(2026, 3, 20, 6, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
+                I=98.18, Raan=278, Nu=30), Mass=2200, Area=10);
+            sc = satflight.addSatellite(sc, "Mid", satflight.orbitElements(Altitude=20200, ...
+                I=55, Raan=60, Nu=200));
+            sc = satflight.addManeuver(sc, "Low", "impulse", Timing="delay", Delay=3000, ...
+                Dv=[0.002 0 0.01]);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "field.json"));
+            [diffs, out] = tc.check(tc.export(file, "field", ["--duration", "6h", "--step", ...
+                "60"]));
+            % held to 1 m, not the usual 10: the port agrees to under a millimetre, and a
+            % field one degree short is 12 m out by the end (close to the usual limit)
+            tc.verifyLessThan(diffs.max_diff_km, 0.001);
+            D = out.diagnostics;
+            tc.verifyTrue(all(D.acc_egm_ms2 > 0));
+            tc.verifyTrue(all(isnan(D.acc_j2_ms2)), "J2 applied besides the field");
+            sc = satflight.newScenario("Field alone", GravityDegree=20, J2=false, ...
+                Epoch=datetime(2026, 3, 20, 6, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
+                I=98.18, Raan=278, Nu=30));
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "field_alone.json"));
+            [~, out] = tc.check(tc.export(file, "field_alone", ["--duration", "3h", ...
+                "--step", "60"]));
+            K = out.conservation;
+            tc.verifyEqual(K.quantity, "Jacobi constant");
+            tc.verifyEqual(K.expected, "constant");
+            % the two routes through the coefficients (V/W for the motion, Legendre
+            % for the potential) agree, or the constant would wander; the simulator's
+            % own drift here is 4.7e-9, its integrator's tolerance (rtol 1e-9)
+            tc.verifyLessThan(K.drift_rel, 1e-8);
+        end
+
         function everyKindOfBurn(tc)
             % finite, plane change, RSW and ECI impulses, circularize and match velocity,
             % node / apsis timings, J3 + C22 + drag, under each of the three propagators

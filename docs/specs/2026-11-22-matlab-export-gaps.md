@@ -43,7 +43,13 @@ export loses nothing there.
      (its own `EXPORT_PARTS` session): a launch with Sun + Moon + SRP,
      PayloadCr 1.7, tracked stages; positions held to the simulator and
      `out.objects.cr` 1.7 for the payload, 1.3 for the stages.
-3. **EGM2008 field (still refused).**
+3. **Done 2026-11-22 (branch `matlab-egm2008`).** The MATLAB field agrees with
+   `gravity.acceleration` and `gravity.potential` to 8e-16 relative; 70x70 costs
+   1.6 ms a call in MATLAB as in Python. `ExportTest/egm2008Field` holds an
+   export to under 1 mm over 6 h; a field one degree short fails it (12 m),
+   and a potential one degree short fails its Jacobi check (1.4e-7 against
+   1e-8; the simulator's own drift is 4.7e-9). The original note:
+   **EGM2008 field (still refused).**
    - The exporter embeds the field's *unnormalized* C and S to degree N with
      repr() digits (Python's `gravity.load(N).c/.s`; ~120 kB at 70x70), so
      MATLAB uses the same doubles and a MATLAB-only script needs no data file.
@@ -73,5 +79,7 @@ export loses nothing there.
 
 - The app's launch form has no payload Cd or Cr field (only scenario files
   set them). Python UI, not the exporter.
-- MATLAB toolkit: no `GravityDegree` (item 3) and no replay / precise orbit
-  builders (item 4).
+- MATLAB toolkit: no replay / precise orbit builders (item 4).
+- `Simulation._perturbed` (and so `circular_velocity`) ignores the EGM2008
+  field: a run with the field and J2 off treats a circularize burn as two-body.
+  The MATLAB port copies it to stay in step; fix both together.

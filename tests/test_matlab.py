@@ -63,7 +63,8 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("transferFiguresAndFiles",),                              # ~150 (2 videos)
                 ("everyIntegrator",),                                      # ~90
                 ("sunMoonAndSunlight",),
-                ("launchInSunlight",))
+                ("launchInSunlight",),
+                ("egm2008Field",))
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
 BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
                       # one session (launch_day, starlink_shell the slowest), so

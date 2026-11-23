@@ -29,8 +29,8 @@ compares it with theory).
 
 | function | what it adds |
 |---|---|
-| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`), integrator settings |
-| `addSatellite(sc, name, orbit, ...)` | a satellite, or `Count` copies along one orbit; `Mass`, `Area`, `Cd`, `Color` |
+| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`), integrator settings |
+| `addSatellite(sc, name, orbit, ...)` | a satellite, or `Count` copies along one orbit; `Mass`, `Area`, `Cd`, `Cr`, `Color` |
 | `addConstellation(sc, name, ...)` | a Walker shell: `Altitude`, `Inclination`, `Total`, `Planes`, `Phasing`, `Pattern` |
 | `addStation(sc, name, lat, lon, ...)` | a ground station; `Alt`, `MinEl` |
 | `addManeuver(sc, sat, kind, ...)` | a scheduled burn: `Timing`, `T`/`Delay`, `Dv` + `Frame`, `DeltaI`, finite-burn `Thrust`/`Isp`/`Duration` |
@@ -92,7 +92,8 @@ sections:
    `animation3DFile` (see Animation), `figureFolder` and `resultsFile` (see Save).
 2. **Scenario**: epoch, force model, propagator, each satellite's exact ECI
    state (with a comment saying what orbit it is: perigee x apogee altitude
-   and inclination, sub-orbital or escaping) and drag properties, the
+   and inclination, sub-orbital or escaping), drag properties and sunlight
+   reflectivity, the
    scheduled burns, ground stations.
 3. **Launches**: per launch the vehicle's stages, the site, the target orbit
    and timing, the simulator's plan and, for a vehicle exported in powered
@@ -106,7 +107,7 @@ sections:
    the velocity, orbit normal and binormal (VNB) at ignition, its mass before and
    after, and the exact state just before and just after it (where `T` has the
    run only at its samples); `objects` each object's family, drag area and
-   coefficient, final and dry mass. Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
+   coefficient, final and dry mass, and reflectivity (Cr). Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
    at the end of the run) and `launchTable`.
 5. **Plots**: ground track (with the night side and the point where the Sun
    is overhead at the end of the run), altitude, elements (only while an
@@ -160,10 +161,12 @@ sections:
    specific energy (two-body and with the potential of the gravity terms the
    run applies), angular momentum and its z part, speed, radius, period, the
    Jacobi constant, and the acceleration from each force applied (central
-   gravity, J2, J3, J4, C22, drag). `conservation` checks the integrator: per
+   gravity, J2, J3, J4, C22, drag, the Sun, the Moon, sunlight). `conservation`
+   checks the integrator: per
    coast between burns, how far the quantity physics keeps there drifted
    (energy, or the Jacobi constant with C22, which turns with the Earth),
-   relative to its size, and whether drag makes it fall. A figure plots them,
+   relative to its size, and whether drag makes it fall (with the Sun, the Moon
+   or sunlight pressure on, nothing is kept and it says so). A figure plots them,
    the forces on a log scale, and the energy drift since each coast began.
 11. **Animation** (`animate = false` to skip it): plays the run back, the
    ground track, with the night side shaded, beside the orbits around the
@@ -197,7 +200,8 @@ coastlines, the Earth, stations, burn marks, labels) come from one palette per
 theme (`satflightPalette`), applied again whenever a figure's theme changes.
 
 The code after the sections is a port of the simulator's own: forces J2-J4,
-C22 and drag; every burn kind and timing; finite burns; the Kepler and J2-mean
+C22, drag, the Sun's and Moon's gravity (the almanac positions) and sunlight
+pressure through the Earth's penumbra; every burn kind and timing; finite burns; the Kepler and J2-mean
 propagators; the rocket ascent step for step (fixed 1 s RK4, thrust varying
 with altitude, drag, throttling, vertical rise, pitch kick, gravity turn,
 closed-loop guidance, staging, fairing jettison, cutoff on the target energy,

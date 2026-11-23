@@ -49,6 +49,7 @@ s.Y = reshape(sim.y0, n, 6);
 s.mass = reshape(sim.mass, [], 1);
 s.area = reshape(sim.area, [], 1);
 s.cd = reshape(sim.cd, [], 1);
+s.cr = reshape(sim.cr, [], 1);
 s.dry = zeros(n, 1);                     % kg left with the propellant gone; 0 = no limit
 if isfield(sim, "dryMass")
     s.dry = reshape(sim.dryMass, [], 1);
@@ -136,8 +137,8 @@ else
     launches = launches(order);
 end
 burns = burnTable(s);
-objects = table(s.names, s.family, s.area, s.cd, s.mass, s.dry, VariableNames=["name", ...
-    "family", "area_m2", "cd", "mass_end_kg", "dry_kg"]);
+objects = table(s.names, s.family, s.area, s.cd, s.mass, s.dry, s.cr, VariableNames=[ ...
+    "name", "family", "area_m2", "cd", "mass_end_kg", "dry_kg", "cr"]);
 end
 
 function idx = freeIdx(s)
@@ -333,8 +334,8 @@ if sim.propagator == "cowell"
     return
 end
 F = sim.forces;
-on = [F.j2, F.j3, F.j4, F.c22, F.drag];
-terms = ["J2", "J3", "J4", "C22", "DRAG"];
+on = [F.j2, F.j3, F.j4, F.c22, F.drag, F.sun, F.moon, F.srp];
+terms = ["J2", "J3", "J4", "C22", "DRAG", "SUN", "MOON", "SRP"];
 used = sim.propagator == "j2mean" & terms == "J2";
 left = terms(on & ~used);
 end
@@ -348,6 +349,7 @@ s.Y(row, :) = y;
 s.mass(row, 1) = mass;
 s.area(row, 1) = area;
 s.cd(row, 1) = cd;
+s.cr(row, 1) = s.C.CR_DEFAULT;   % launched objects: the simulator's default
 s.dry(row, 1) = 0;
 s.status(row, 1) = "active";
 s.dvUsed(row, 1) = 0;
@@ -658,7 +660,8 @@ if s.sim.propagator ~= "cowell"
 end
 n = numel(rows);
 cdam = s.cd(rows) .* s.area(rows) ./ s.mass(rows);
-f = @(t, y) derivative(t, y, n, cdam, s.sim.forces, s.sim.jd0, s.man, zeros(0, 4), ...
+cram = s.cr(rows) .* s.area(rows) ./ s.mass(rows);
+f = @(t, y) derivative(t, y, n, cdam, cram, s.sim.forces, s.sim.jd0, s.man, zeros(0, 4), ...
     zeros(0, 1), s.C);
 if it.method == "dopri5"
     [y, h] = dopri5(f, t0, reshape(Y0, [], 1), t1, h, it, n, s.C);
@@ -1055,6 +1058,7 @@ function f = cowellDerivative(s, idx, te)
 % the derivative of objects idx over a segment from now to te: the run's forces and the
 % thrust of the finite burns under way all through it
 cdam = s.cd(idx) .* s.area(idx) ./ s.mass(idx);
+cram = s.cr(idx) .* s.area(idx) ./ s.mass(idx);   % (a burn's mass loss not passed on)
 burnRows = zeros(0, 4);      % row in idx, maneuver, t0, m0 (mdot in a parallel list)
 mdots = zeros(0, 1);
 for b = s.burns
@@ -1071,7 +1075,7 @@ F = s.sim.forces;
 jd0 = s.sim.jd0;
 man = s.man;
 C = s.C;
-f = @(t, y) derivative(t, y, nIdx, cdam, F, jd0, man, burnRows, mdots, C);
+f = @(t, y) derivative(t, y, nIdx, cdam, cram, F, jd0, man, burnRows, mdots, C);
 end
 
 function y = fixedStep(method, f, t, y, h, n, C)
@@ -1112,7 +1116,7 @@ r = Y(:, 1:3);
 a = d(:, 4:6) + C.MU * r ./ vecnorm(r, 2, 2) .^ 3;
 end
 
-function dy = derivative(t, y, n, cdam, F, jd0, man, burnRows, mdots, C)
+function dy = derivative(t, y, n, cdam, cram, F, jd0, man, burnRows, mdots, C)
 Y = reshape(y, n, 6);
 r = Y(:, 1:3);
 v = Y(:, 4:6);
@@ -1125,7 +1129,11 @@ if F.drag && ~isempty(burnRows)
     % a burning craft gets lighter: its A/m grows (cdam holds Cd A / m at ignition)
     cdam(burnRows(:, 1)) = cdam(burnRows(:, 1)) .* burnRows(:, 4) ./ masses;
 end
-a = acceleration(r, v, cdam, theta, F, C);
+jd = [];
+if F.sun || F.moon || F.srp
+    jd = jd0 + t / 86400;      % where the Sun and Moon are
+end
+a = acceleration(r, v, cdam, theta, F, C, jd, cram);
 for k = 1:size(burnRows, 1)
     row = burnRows(k, 1);
     m = man(burnRows(k, 2));
@@ -1542,7 +1550,9 @@ end
 
 % --- forces --------------------------------------------------------------------------------
 
-function a = acceleration(r, v, cdam, theta, F, C)
+function a = acceleration(r, v, cdam, theta, F, C, jd, cram)
+% jd: the Julian date (UTC, one for every row) the Sun and Moon are placed at; cram:
+% Cr A / m (m^2/kg) of each row for sunlight pressure
 x = r(:, 1); y = r(:, 2); z = r(:, 3);
 r2 = x .* x + y .* y + z .* z;
 rm = sqrt(r2);
@@ -1583,6 +1593,30 @@ if F.drag
     speed = vecnorm(vRel, 2, 2);
     a = a + (-0.5e3 * rho .* cdam .* speed) .* vRel;
 end
+if F.sun || F.srp
+    rs = sunPosition(jd, C);
+    if F.sun
+        a = a + thirdBody(r, rs, C.MU_SUN);
+    end
+    if F.srp
+        % a cannonball pushed away from the Sun, dimmed in the Earth's shadow
+        d = r - rs;
+        dm = vecnorm(d, 2, 2);
+        lit = shadowFraction(r, rs, C);
+        mag = C.P_SRP * cram .* (C.AU ./ dm) .^ 2 * 1e-3 .* lit;
+        a = a + mag .* d ./ dm;
+    end
+end
+if F.moon
+    a = a + thirdBody(r, moonPosition(jd, C), C.MU_MOON);
+end
+end
+
+function a = thirdBody(r, rBody, mu)
+% the tidal pull of a distant body at rBody (km, one row): its pull on each row of r
+% less its pull on the Earth (the frame's origin)
+d = rBody - r;
+a = mu * (d ./ vecnorm(d, 2, 2) .^ 3 - rBody / norm(rBody) ^ 3);
 end
 
 function h = geodeticHeight(r, C)
@@ -1754,6 +1788,32 @@ lam = (lamM + 1.914666471 * sin(m) + 0.019994643 * sin(2 * m)) * C.DEG;
 r = (1.000140612 - 0.016708617 * cos(m) - 0.000139589 * cos(2 * m)) * C.AU;
 eps = (23.439291 - 0.0130042 * t) * C.DEG;
 rs = [r * cos(lam), r * cos(eps) * sin(lam), r * sin(eps) * sin(lam)];
+end
+
+function rm = moonPosition(jd, C)
+% geocentric Moon (km), Vallado Alg. 31 (satflight/ephemeris.py), one date
+t = (jd - 2451545.0) / 36525.0;
+lam = (218.32 + 481267.8813 * t ...
+    + 6.29 * sind(134.9 + 477198.85 * t) ...
+    - 1.27 * sind(259.2 - 413335.38 * t) ...
+    + 0.66 * sind(235.7 + 890534.23 * t) ...
+    + 0.21 * sind(269.9 + 954397.70 * t) ...
+    - 0.19 * sind(357.5 + 35999.05 * t) ...
+    - 0.11 * sind(186.6 + 966404.05 * t)) * C.DEG;
+beta = (5.13 * sind(93.3 + 483202.03 * t) ...
+    + 0.28 * sind(228.2 + 960400.87 * t) ...
+    - 0.28 * sind(318.3 + 6003.18 * t) ...
+    - 0.17 * sind(217.6 - 407332.20 * t)) * C.DEG;
+parallax = (0.9508 ...
+    + 0.0518 * cosd(134.9 + 477198.85 * t) ...
+    + 0.0095 * cosd(259.2 - 413335.38 * t) ...
+    + 0.0078 * cosd(235.7 + 890534.23 * t) ...
+    + 0.0028 * cosd(269.9 + 954397.70 * t)) * C.DEG;
+d = C.RE / sin(parallax);
+eps = (23.439291 - 0.0130042 * t) * C.DEG;
+rm = [d * cos(beta) * cos(lam), ...
+    d * (cos(eps) * cos(beta) * sin(lam) - sin(eps) * sin(beta)), ...
+    d * (sin(eps) * cos(beta) * sin(lam) + cos(eps) * sin(beta))];
 end
 
 function nu = shadowFraction(r, rSun, C)
@@ -3256,6 +3316,11 @@ C.S22 = -9.03803806639e-7;
 C.SOI = 924000.0;
 C.R_SUN = 696000.0;
 C.AU = 149597870.7;
+C.MU_SUN = 1.32712440018e11;  % km^3/s^2
+C.MU_MOON = 4902.800066;      % km^3/s^2
+C.P_SRP = 4.56e-6;            % N/m^2, sunlight pressure at 1 AU
+% satflight/scenario.py
+C.CR_DEFAULT = 1.3;           % sunlight reflectivity of an object given none
 C.DEG = pi / 180;
 C.G0 = 9.80665e-3;            % km/s^2
 % satflight/simulation.py
@@ -4781,10 +4846,10 @@ function [D, K] = satflightDiagnostics(T, sim, burns, objects)
 %   would point to a fault.
 C = satflightConstants();
 F = sim.forces;
-terms = ["j2", "j3", "j4", "c22", "drag"];
-applied = false(1, 5);
+terms = ["j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp"];
+applied = false(1, 8);
 if sim.propagator == "cowell"
-    applied = [F.j2, F.j3, F.j4, F.c22, F.drag];
+    applied = [F.j2, F.j3, F.j4, F.c22, F.drag, F.sun, F.moon, F.srp];
 end
 present = unique(T.name, "stable")';
 D = cell(numel(present), 1);
@@ -4802,27 +4867,44 @@ for q = 1:numel(present)
     period = NaN(size(rm));
     bound = kepler < 0;
     period(bound) = 2 * pi * sqrt((-C.MU ./ (2 * kepler(bound))) .^ 3 / C.MU) / 60;
-    acc = NaN(height(rows), 6);
+    acc = NaN(height(rows), 9);
     acc(:, 1) = 1000 * C.MU ./ rm .^ 2;
     props = objects(objects.name == present(q), :);
     for j = find(applied)
         G = struct("j2", false, "j3", false, "j4", false, "c22", false, "drag", false, ...
-            "densityScale", F.densityScale);
+            "densityScale", F.densityScale, "sun", false, "moon", false, "srp", false);
         G.(terms(j)) = true;
         cdam = zeros(height(rows), 1);
-        if terms(j) == "drag" && ~isempty(props)
-            cdam = props.cd(1) * props.area_m2(1) ./ massAt(burns, props, rows.t_s);
+        cram = zeros(height(rows), 1);
+        if ~isempty(props)
+            m = massAt(burns, props, rows.t_s);
+            if terms(j) == "drag"
+                cdam = props.cd(1) * props.area_m2(1) ./ m;
+            elseif terms(j) == "srp"
+                cram = props.cr(1) * props.area_m2(1) ./ m;
+            end
         end
-        % (theta: the Earth's turn at each sample, for the C22 field that turns with it)
-        extra = acceleration(r, v, cdam, theta, G, C) + C.MU * r ./ rm .^ 3;
+        if any(terms(j) == ["sun", "moon", "srp"])
+            % the Sun and Moon at each sample's own date
+            jd = juliandate(rows.utc);
+            extra = zeros(height(rows), 3);
+            for k = 1:height(rows)
+                extra(k, :) = acceleration(r(k, :), v(k, :), 0, 0, G, C, jd(k), cram(k)) ...
+                    + C.MU * r(k, :) / rm(k) ^ 3;
+            end
+        else
+            % (theta: the Earth's turn at each sample, for the C22 field that turns with it)
+            extra = acceleration(r, v, cdam, theta, G, C, [], []) + C.MU * r ./ rm .^ 3;
+        end
         acc(:, j + 1) = 1000 * vecnorm(extra, 2, 2);
     end
     D{q} = table(repmat(present(q), height(rows), 1), rows.t_s, kepler, total, ...
         total - C.OMEGA * h(:, 3), vecnorm(h, 2, 2), h(:, 3), speed, rm, period, acc(:, 1), ...
-        acc(:, 2), acc(:, 3), acc(:, 4), acc(:, 5), acc(:, 6), VariableNames=["name", "t_s", ...
+        acc(:, 2), acc(:, 3), acc(:, 4), acc(:, 5), acc(:, 6), acc(:, 7), acc(:, 8), ...
+        acc(:, 9), VariableNames=["name", "t_s", ...
         "energy_MJkg", "energy_total_MJkg", "jacobi_MJkg", "h_km2s", "hz_km2s", "speed_kms", ...
         "r_km", "period_min", "acc_central_ms2", "acc_j2_ms2", "acc_j3_ms2", "acc_j4_ms2", ...
-        "acc_c22_ms2", "acc_drag_ms2"]);
+        "acc_c22_ms2", "acc_drag_ms2", "acc_sun_ms2", "acc_moon_ms2", "acc_srp_ms2"]);
 end
 D = vertcat(D{:});
 if isempty(D)
@@ -4841,7 +4923,12 @@ K = table('Size', [0 8], 'VariableTypes', ["string", "double", "double", "double
     "double", "double", "string"], 'VariableNames', ["name", "from_s", "to_s", "samples", ...
     "quantity", "drift_rel", "hz_drift_rel", "expected"]);
 expected = "constant";
-if applied(5)
+outside = ["the Sun", "the Moon", "sunlight pressure"];
+outside = outside(applied(6:8));
+if ~isempty(outside)
+    % bodies and light from outside the Earth's field work on the orbit
+    expected = "not kept (" + strjoin(outside, ", ") + ")";
+elseif applied(5)
     expected = "falls (drag)";
 elseif sim.propagator == "j2mean"
     % the J2-mean propagator moves mean elements: the osculating energy of its states
@@ -4960,7 +5047,8 @@ ax = nexttile(layout);
 hold(ax, "on");
 d = D(D.name == focus, :);
 forces = ["acc_central_ms2", "central gravity"; "acc_j2_ms2", "J2"; "acc_j3_ms2", "J3"; ...
-    "acc_j4_ms2", "J4"; "acc_c22_ms2", "C22"; "acc_drag_ms2", "drag"];
+    "acc_j4_ms2", "J4"; "acc_c22_ms2", "C22"; "acc_drag_ms2", "drag"; ...
+    "acc_sun_ms2", "the Sun"; "acc_moon_ms2", "the Moon"; "acc_srp_ms2", "sunlight"];
 for j = 1:size(forces, 1)
     y = d.(forces(j, 1));
     if any(isfinite(y))

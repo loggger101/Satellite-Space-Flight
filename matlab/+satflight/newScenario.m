@@ -10,6 +10,8 @@ function sc = newScenario(name, opts)
 %                   such as "2026-09-29T12:00:00Z" (default 2026-01-01T00:00:00Z)
 %     Propagator    "cowell" (numerical, default), "kepler" or "j2mean"
 %     J2, J3, J4, C22, Drag   force terms (logical; default J2 on, the rest off)
+%     Sun, Moon     the Sun's and Moon's gravity (logical; default off)
+%     Srp           sunlight pressure, with each satellite's Cr (logical; default off)
 %     DensityScale  multiplies the atmosphere's density (default 1)
 %     Integrator    "dopri5" (default), "rk4", "wh" or "leapfrog"
 %     Rtol, Atol, HMax, HFixed   integrator tolerances and step limits
@@ -29,6 +31,9 @@ arguments
     opts.J4 (1,1) logical
     opts.C22 (1,1) logical
     opts.Drag (1,1) logical
+    opts.Sun (1,1) logical
+    opts.Moon (1,1) logical
+    opts.Srp (1,1) logical
     opts.DensityScale (1,1) double
     opts.Integrator (1,1) string
     opts.Rtol (1,1) double
@@ -50,7 +55,8 @@ if ~isempty(fieldnames(integrator))
     sc.integrator = integrator;
 end
 forces = copyOptions(struct(), opts, ["J2", "j2"; "J3", "j3"; "J4", "j4"; "C22", "c22"; ...
-    "Drag", "drag"; "DensityScale", "density_scale"]);
+    "Drag", "drag"; "DensityScale", "density_scale"; "Sun", "sun"; "Moon", "moon"; ...
+    "Srp", "srp"]);
 if ~isempty(fieldnames(forces))
     sc.forces = forces;
 end

@@ -15,7 +15,9 @@ from satflight import batch, constants
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "matlab" / "+satflight"
-MATLAB_TIMEOUT = 280     # s; under the suite's 300 s watchdog
+MATLAB_SESSION_LIMIT = 900   # s per MATLAB session: one test alone took 230-290 s on
+                             # this machine (2026-11-22), so not the 300 s default
+MATLAB_TIMEOUT = MATLAB_SESSION_LIMIT - 20   # s; MATLAB is stopped first, then the watchdog
 
 
 def _quoted(text):
@@ -56,9 +58,11 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("launchDay", "reEntry"),                                  # 90 + 30
                 ("everyKindOfBurn", "fromTheCurrentMoment", "midBurnSnapshot"),  # 84+26+21
                 ("launchDayMidAscent", "hohmannFromTheStart"),             # 78 + 42
-                ("launchesPlannedHere", "passesAndAnimationFile"),         # 49 + 59
+                ("launchesPlannedHere",),        # these two took 809 s in one session
+                ("passesAndAnimationFile",),     # on 2026-11-22
                 ("transferFiguresAndFiles",),                              # ~150 (2 videos)
-                ("everyIntegrator",))                                      # ~90
+                ("everyIntegrator",),                                      # ~90
+                ("sunMoonAndSunlight",))
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
 BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
                       # one session (launch_day, starlink_shell the slowest), so
@@ -111,6 +115,7 @@ def _ids():
 
 
 @pytest.mark.skipif(shutil.which("matlab") is None, reason="MATLAB is not on the PATH")
+@pytest.mark.time_limit(MATLAB_SESSION_LIMIT)
 @pytest.mark.parametrize("suite, pick, count", _sessions(), ids=_ids())
 def test_matlab_suite(suite, pick, count):
     """matlab/tests/SatflightToolkitTest.m: scenarios round-trip through MATLAB

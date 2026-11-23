@@ -180,12 +180,8 @@ def _epoch_text(epoch: datetime) -> str:
 
 def unported_forces(forces) -> list[str]:
     """The enabled force terms ``matlab_runtime.m`` cannot fly yet."""
-    out = [f"the EGM2008 {forces.gravity_degree}x{forces.gravity_degree} field"
-           ] if forces.field else []
-    return out + [label for key, label in (("sun", "the Sun's gravity"),
-                                           ("moon", "the Moon's gravity"),
-                                           ("srp", "sunlight pressure"))
-                  if getattr(forces, key)]
+    return [f"the EGM2008 {forces.gravity_degree}x{forces.gravity_degree} field"
+            ] if forces.field else []
 
 
 def export_live_script(sim: Simulation, path, start: str = "now", duration: float = 86400.0,
@@ -412,14 +408,15 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             f"sim.propagator = {_str(src.propagator)};",
             f"sim.forces = struct(\"j2\", {_bool(F.j2)}, \"j3\", {_bool(F.j3)}, "
             f"\"j4\", {_bool(F.j4)}, \"c22\", {_bool(F.c22)}, \"drag\", {_bool(F.drag)}, "
-            f"\"densityScale\", {_num(F.density_scale)});",
+            f"\"densityScale\", {_num(F.density_scale)}, \"sun\", {_bool(F.sun)}, "
+            f"\"moon\", {_bool(F.moon)}, \"srp\", {_bool(F.srp)});",
             f"sim.integrator = struct(\"method\", {_str(method)}, \"rtol\", {_num(it.rtol)}, "
             f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)}, "
             f"\"hFixed\", {_num(it.h_fixed)});   % hFixed: the step of rk4, wh and leapfrog"]
 
     if rows:
         out += _text("Satellites at the epoch: ECI position (km) and velocity (km/s), mass (kg), "
-                     "drag area (m^2) and drag coefficient.")
+                     "drag area (m^2), drag coefficient and sunlight reflectivity.")
         if len(rows) == 1:
             out += [f"sim.names = {_str(rows[0][1].name)};"]
         else:
@@ -428,12 +425,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                 "inclination", "sim.y0 = ["]
         out += ["    " + " ".join(_num(x) for x in src.y[i])
                 + f"   % {s.name}: {_orbit_note(src.y[i])}" for i, s in rows] + ["];"]
-        out += ["% mass (kg), area (m^2), Cd", "props = ["]
-        out += [f"    {_num(s.mass)} {_num(s.area)} {_num(s.cd)}" for _, s in rows] + ["];"]
+        out += ["% mass (kg), area (m^2), Cd, Cr", "props = ["]
+        out += [f"    {_num(s.mass)} {_num(s.area)} {_num(s.cd)} {_num(s.cr)}"
+                for _, s in rows] + ["];"]
     else:
         out += _text("No satellites in orbit at the epoch: everything starts on a launch pad.")
-        out += ["sim.names = strings(0, 1);", "sim.y0 = zeros(0, 6);", "props = zeros(0, 3);"]
-    out += ["sim.mass = props(:, 1);", "sim.area = props(:, 2);", "sim.cd = props(:, 3);"]
+        out += ["sim.names = strings(0, 1);", "sim.y0 = zeros(0, 6);", "props = zeros(0, 4);"]
+    out += ["sim.mass = props(:, 1);", "sim.area = props(:, 2);", "sim.cd = props(:, 3);",
+            "sim.cr = props(:, 4);"]
     if any(s.dry_mass > 0 for _, s in rows):
         out += _text("Dry masses (kg): burns stop when the propellant above them is gone "
                      "(0: no limit).")

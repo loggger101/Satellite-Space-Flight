@@ -78,6 +78,23 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             tc.verifyTrue(raw.satellites{4}.orbit.osculating);
         end
 
+        function sunMoonAndSunlightOptions(tc)
+            % the third bodies and sunlight pressure switch on from MATLAB, with each
+            % satellite's and each constellation's reflectivity, and the simulator
+            % takes them
+            sc = satflight.newScenario("Lit", Sun=true, Moon=true, Srp=true);
+            sc = satflight.addSatellite(sc, "Sail", satflight.orbitElements(Altitude=700), ...
+                Cr=1.6);
+            sc = satflight.addConstellation(sc, "Shell", Altitude=1200, Inclination=55, ...
+                Total=2, Planes=1, Phasing=0, Cr=1.1);
+            path = satflight.saveScenario(sc, fullfile(tc.Tmp, "lit.json"));
+            raw = jsondecode(fileread(path));
+            tc.verifyTrue(raw.forces.sun && raw.forces.moon && raw.forces.srp);
+            tc.verifyEqual(raw.satellites.cr, 1.6);
+            tc.verifyEqual(raw.constellations.cr, 1.1);
+            tc.verifySubstring(satflight.checkScenario(path), "SUN+MOON+SRP");
+        end
+
         function loadedScenarioCanBeEdited(tc)
             sc = satflight.loadScenario(fullfile(tc.Root, "scenarios", "hohmann_to_geo.json"));
             tc.verifyClass(sc.satellites, "cell");

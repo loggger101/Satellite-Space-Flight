@@ -41,6 +41,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from . import gravity
 from .batch import parse_duration
 from .constants import R_EARTH
 from .elements import rv2coe
@@ -179,9 +180,28 @@ def _epoch_text(epoch: datetime) -> str:
 
 
 def unported_forces(forces) -> list[str]:
-    """The enabled force terms ``matlab_runtime.m`` cannot fly yet."""
-    return [f"the EGM2008 {forces.gravity_degree}x{forces.gravity_degree} field"
-            ] if forces.field else []
+    """The enabled force terms ``matlab_runtime.m`` cannot fly yet (none since
+    the EGM2008 field was ported; kept so a new term is refused, not dropped)."""
+    return []
+
+
+def _field_lines(F) -> list[str]:
+    """The EGM2008 field to the run's degree as MATLAB lines: its GM and radius
+    and the unnormalized C and S (row n + 1 holds degree n), the same doubles the
+    simulator uses, so a script needs no data file."""
+    if not F.field:
+        return ["sim.forces.field = [];"]
+    f = gravity.load(F.gravity_degree)
+    out = [f"% EGM2008 ({f.name}) to degree {f.degree}: GM (km^3/s^2), radius (km), then the "
+           "unnormalized C and S, row n + 1 for degree n",
+           f"sim.forces.field = struct(\"gm\", {_num(f.gm)}, \"re\", {_num(f.re)}, "
+           f"\"degree\", {f.degree}, \"c\", zeros({f.degree + 1}), "
+           f"\"s\", zeros({f.degree + 1}));"]
+    for name, arr in (("c", f.c), ("s", f.s)):
+        for n in range(2, f.degree + 1):
+            out.append(f"sim.forces.field.{name}({n + 1}, 1:{n + 1}) = ["
+                       + " ".join(_num(x) for x in arr[n, :n + 1]) + "];")
+    return out
 
 
 def export_live_script(sim: Simulation, path, start: str = "now", duration: float = 86400.0,
@@ -410,7 +430,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             f"sim.forces = struct(\"j2\", {_bool(F.j2)}, \"j3\", {_bool(F.j3)}, "
             f"\"j4\", {_bool(F.j4)}, \"c22\", {_bool(F.c22)}, \"drag\", {_bool(F.drag)}, "
             f"\"densityScale\", {_num(F.density_scale)}, \"sun\", {_bool(F.sun)}, "
-            f"\"moon\", {_bool(F.moon)}, \"srp\", {_bool(F.srp)});",
+            f"\"moon\", {_bool(F.moon)}, \"srp\", {_bool(F.srp)}, "
+            f"\"gravityDegree\", {F.gravity_degree});   % gravityDegree N > 0: the EGM2008 "
+            "field to N in place of J2, J3, J4 and C22",
+            *_field_lines(F),
             f"sim.integrator = struct(\"method\", {_str(method)}, \"rtol\", {_num(it.rtol)}, "
             f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)}, "
             f"\"hFixed\", {_num(it.h_fixed)});   % hFixed: the step of rk4, wh and leapfrog"]

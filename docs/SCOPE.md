@@ -67,6 +67,6 @@ Not modelled, and named in the Sentinel-1 report as what is left:
 
 Files written between 2026-09-29 and 2026-11-18 that still switch on `sun`,
 `moon` or `srp`, or give a satellite a `cr`, now get those forces: they are
-no longer ignored. The MATLAB export flies the Sun, the Moon and sunlight
-pressure; it refuses scenarios that use EGM2008 until `matlab_runtime.m`
-models it (step 6 of the Sentinel-1 plan).
+no longer ignored. The MATLAB export flies every one of these terms: the Sun,
+the Moon, sunlight pressure and the EGM2008 field (its coefficients written
+into the script, so it needs no data file).

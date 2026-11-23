@@ -567,21 +567,51 @@ def test_the_sun_moon_and_sunlight_pressure_export_with_each_satellites_cr(tmp_p
                               SatSpec("Plain", {"type": "elements", "altitude": 500})])
     text = export_live_script(Simulation(sc), tmp_path / "lit.m", "start", 600, 60).read_text(
         encoding="utf-8")
-    assert re.search(r'^sim\.forces = struct\(.*"sun", true, "moon", true, "srp", true\);',
-                     text, re.M)
+    assert re.search(r'^sim\.forces = struct\(.*"sun", true, "moon", true, "srp", true, '
+                     r'"gravityDegree", 0\);', text, re.M)
     props = [[float(x) for x in r.split()] for r in block(text, "props")]
     assert [p[3] for p in props] == [1.8, 1.3]
     assert "sim.cr = props(:, 4);" in text
 
 
-def test_only_the_egm2008_field_is_still_refused(tmp_path):
+def test_every_force_model_term_exports(tmp_path):
     from satflight.forces import ForceModel
     from satflight.matlab_export import unported_forces
-    assert unported_forces(ForceModel(sun=True, moon=True, srp=True)) == []
+    assert unported_forces(ForceModel(gravity_degree=70, drag=True, sun=True, moon=True,
+                                      srp=True)) == []
+
+
+def _field_rows(text, name):
+    """The rows the script sets for one coefficient array: {n: [values for m = 0..n]}."""
+    rows = re.findall(rf"^sim\.forces\.field\.{name}\((\d+), 1:\d+\) = \[([^\]]*)\];", text,
+                      re.M)
+    return {int(k) - 1: [float(v) for v in vals.split()] for k, vals in rows}
+
+
+def test_the_egm2008_field_exports_with_the_simulators_own_coefficients(tmp_path):
+    from satflight import gravity
+    from satflight.forces import ForceModel
     sc = lone_satellite()
-    sc.forces = ForceModel(gravity_degree=8, sun=True)
-    with pytest.raises(ValueError, match=r"does not model the EGM2008 8x8 field yet"):
-        export_live_script(Simulation(sc), tmp_path / "egm.m", "start", 60, 60)
+    sc.forces = ForceModel(gravity_degree=12, sun=True)
+    text = export_live_script(Simulation(sc), tmp_path / "egm.m", "start", 60, 60).read_text(
+        encoding="utf-8")
+    assert '"gravityDegree", 12' in text
+    f = gravity.load(12)
+    m = re.search(r'^sim\.forces\.field = struct\("gm", ([^,]+), "re", ([^,]+), '
+                  r'"degree", (\d+), "c", zeros\(13\), "s", zeros\(13\)\);', text, re.M)
+    assert m and float(m.group(1)) == f.gm and float(m.group(2)) == f.re and m.group(3) == "12"
+    for name, want in (("c", f.c), ("s", f.s)):
+        rows = _field_rows(text, name)
+        assert sorted(rows) == list(range(2, 13))           # degrees 0 and 1 stay zero
+        for n, vals in rows.items():
+            assert vals == list(want[n, :n + 1]), (name, n)  # the same doubles, digit for digit
+
+
+def test_without_the_field_the_script_carries_no_coefficients(tmp_path):
+    text = export_live_script(Simulation(lone_satellite()), tmp_path / "plain.m", "start", 60,
+                              60).read_text(encoding="utf-8")
+    assert '"gravityDegree", 0' in text and "sim.forces.field = struct(" not in text
+    assert "sim.forces.field = [];" in text
 
 
 def test_snapshot_carries_a_burn_under_way():

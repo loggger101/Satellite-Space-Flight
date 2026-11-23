@@ -15,7 +15,7 @@ import pygame
 import pytest
 
 from satflight.analysis import osculating_to_mean_a
-from satflight.constants import R_EARTH
+from satflight.constants import CR_DEFAULT, R_EARTH
 from satflight.elements import rv2coe
 from satflight.scenario import Scenario
 from satflight.simulation import Simulation
@@ -169,6 +169,47 @@ def test_walker_dialog(app):
     dlg.submit()
     assert app.sim.n == 19
     frame(app, 2)
+
+
+def test_satellite_dialogs_set_the_reflectivity(app):
+    # Add, Edit and Walker each set Cr (sunlight pressure); out of range is refused
+    sim = app.sim
+    app.open("add")
+    dlg = app.dialogs[-1]
+    assert dlg.values()["cr"] == pytest.approx(CR_DEFAULT)
+    fill(dlg, "cr", 3.0)
+    dlg.submit()
+    assert app.dialogs and "reflectivity" in dlg.error
+    fill(dlg, "cr", 1.8)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert sim.sats[-1].cr == 1.8
+    app.select(sim.n - 1)
+    app.open("edit")
+    dlg = app.dialogs[-1]
+    assert dlg.values()["cr"] == 1.8
+    fill(dlg, "cr", -0.5)
+    dlg.submit()
+    assert app.dialogs and "reflectivity" in dlg.error
+    assert sim.sats[-1].cr == 1.8                     # nothing applied
+    fill(dlg, "cr", 0.9)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert sim.sats[-1].cr == 0.9
+    n0 = sim.n
+    app.open("walker")
+    dlg = app.dialogs[-1]
+    fill(dlg, "total", 4)
+    fill(dlg, "planes", 2)
+    fill(dlg, "cr", 1.7)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert [s.cr for s in sim.sats[n0:]] == [1.7] * 4
+
+
+def test_a_satellite_added_with_a_bad_reflectivity_is_refused(app):
+    with pytest.raises(ValueError, match="reflectivity"):
+        app.sim.add_satellites({"type": "elements", "altitude": 700}, "X", cr=7.0)
 
 
 def test_maneuver_dialog_every_kind(app):

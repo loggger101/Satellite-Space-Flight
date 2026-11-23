@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from ..batch import export_history_csv, parse_duration
-from ..constants import R_EARTH
+from ..constants import CR_DEFAULT, R_EARTH
 from ..elements import period_of, rv2coe
 from ..forces import ForceModel
 from ..integrators import METHODS
@@ -29,6 +29,7 @@ from ..scenario import (
     ConstellationSpec,
     GroundStation,
     Scenario,
+    check_cr,
     j2_acts,
     orbit_state,
     palette_color,
@@ -65,6 +66,8 @@ DRY_TIP = ("Mass left once the propellant is gone. Burns stop there (the log say
            "0 means no limit: any delta-v can be spent.")
 AREA_TIP = "Cross-section facing the airflow, for air drag."
 CD_TIP = "Drag coefficient: about 2.2 for a typical satellite."
+CR_TIP = ("Reflectivity, for sunlight pressure (Forces): 1 absorbs all sunlight, 2 mirrors "
+          "it straight back; 0 to 2.5.")
 
 
 # (orbit-spec key, form field) pairs: the size and shape of each element mode,
@@ -171,6 +174,7 @@ def add_satellite_dialog(app):
         F("dry_mass", "Dry mass (kg)", "float", "0", tip=DRY_TIP),
         F("area", "Area (m^2)", "float", "5", tip=AREA_TIP),
         F("cd", "Drag coefficient Cd", "float", "2.2", tip=CD_TIP),
+        F("cr", "Reflectivity Cr", "float", f"{CR_DEFAULT:g}", tip=CR_TIP),
         F("preview", "", "info", "",
           tip="The orbit these values give: semi-major axis, eccentricity, inclination, "
               "perigee / apogee heights and period."),
@@ -189,7 +193,7 @@ def add_satellite_dialog(app):
         if not 0 <= v["dry_mass"] <= v["mass"]:
             return "dry mass must be between 0 (no limit) and the mass"
         added = sim.add_satellites(orbit, v["name"] or "Sat", count=v["count"],
-                                   dry_mass=v["dry_mass"], **props)
+                                   dry_mass=v["dry_mass"], cr=v["cr"], **props)
         app.select(sim.n - len(added))
         return None
 
@@ -281,6 +285,7 @@ def walker_dialog(app):
           tip="RAAN of the first plane; the others follow from it."),
         F("mass", "Mass each (kg)", "float", "260", tip=MASS_TIP),
         F("dry_mass", "Dry mass each (kg)", "float", "0", tip=DRY_TIP),
+        F("cr", "Reflectivity Cr each", "float", f"{CR_DEFAULT:g}", tip=CR_TIP),
         F("preview", "", "info", "",
           tip="The constellation in Walker notation i:t/p/f, satellites per plane and "
               "the orbital period."),
@@ -291,7 +296,7 @@ def walker_dialog(app):
         c = ConstellationSpec(name=v["name"] or "Walker", altitude=v["altitude"],
                               inclination=v["inclination"], total=v["total"], planes=v["planes"],
                               phasing=v["phasing"], pattern=v["pattern"], raan0=v["raan0"],
-                              mass=v["mass"], dry_mass=v["dry_mass"])
+                              mass=v["mass"], dry_mass=v["dry_mass"], cr=v["cr"])
         if c.total % c.planes:
             raise ValueError("total satellites must be a multiple of the number of planes")
         return c
@@ -310,7 +315,7 @@ def walker_dialog(app):
         c = spec(v)
         states = walker_states(c, j2_acts(sim.propagator, sim.forces))
         color = palette_color(sim.n)
-        props = dict(mass=c.mass, area=c.area, cd=c.cd, dry_mass=c.dry_mass)
+        props = dict(mass=c.mass, area=c.area, cd=c.cd, dry_mass=c.dry_mass, cr=c.cr)
         n0 = sim.n
         sim.add_many([(name, color, props, r, v_) for name, r, v_ in states])
         app.select(n0)
@@ -895,6 +900,7 @@ def edit_satellite_dialog(app):
         F("dry_mass", "Dry mass (kg)", "float", f"{s.dry_mass:g}", tip=DRY_TIP),
         F("area", "Area (m^2)", "float", f"{s.area:g}", tip=AREA_TIP),
         F("cd", "Drag coefficient Cd", "float", f"{s.cd:g}", tip=CD_TIP),
+        F("cr", "Reflectivity Cr", "float", f"{s.cr:g}", tip=CR_TIP),
     ]
 
     def on_ok(v):
@@ -902,8 +908,10 @@ def edit_satellite_dialog(app):
             return "values must be positive"
         if not 0 <= v["dry_mass"] <= v["mass"]:
             return "dry mass must be between 0 (no limit) and the mass"
+        check_cr(v["cr"], f"satellite {s.name!r}")     # ValueError: shown, nothing applied
         sim.rename(sim.sats.index(s), v["name"] or s.name)
         s.mass, s.area, s.cd, s.dry_mass = v["mass"], v["area"], v["cd"], v["dry_mass"]
+        s.cr = v["cr"]
         return None
 
     return FormDialog(app, "Edit satellite", specs, on_ok, "Apply",

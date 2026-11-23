@@ -56,6 +56,7 @@ from .scenario import (
     GroundStation,
     SatSpec,
     Scenario,
+    check_cr,
     check_single_replay,
     expand,
     j2_acts,
@@ -402,6 +403,7 @@ class Simulation:
         sat = Satellite(self.unique_name(name), tuple(color), **props)
         drag_props(sat.mass, sat.area, sat.cd, sat.name)
         check_dry_mass(sat.dry_mass, sat.mass, sat.name)
+        check_cr(sat.cr, f"satellite {sat.name!r}")
         self._replays = self._replays or sat.replay is not None
         self.sats.append(sat)
         self.y = np.vstack([self.y, np.concatenate([r, v])[None, :]])

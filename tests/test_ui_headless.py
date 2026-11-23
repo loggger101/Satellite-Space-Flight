@@ -171,6 +171,49 @@ def test_walker_dialog(app):
     frame(app, 2)
 
 
+def test_satellite_dialogs_set_the_reflectivity(app):
+    # Add, Edit and Walker each set Cr (sunlight pressure); out of range is refused
+    sim = app.sim
+    app.open("add")
+    dlg = app.dialogs[-1]
+    assert dlg.values()["cr"] == pytest.approx(CR_DEFAULT)
+    fill(dlg, "cr", 3.0)
+    dlg.submit()
+    assert app.dialogs and "reflectivity" in dlg.error
+    fill(dlg, "cr", 1.8)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert sim.sats[-1].cr == 1.8
+    app.select(sim.n - 1)
+    app.open("edit")
+    dlg = app.dialogs[-1]
+    assert dlg.values()["cr"] == 1.8
+    fill(dlg, "cr", -0.5)
+    dlg.submit()
+    assert app.dialogs and "reflectivity" in dlg.error
+    assert sim.sats[-1].cr == 1.8                     # nothing applied
+    fill(dlg, "cr", 0.9)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert sim.sats[-1].cr == 0.9
+    n0 = sim.n
+    app.open("walker")
+    dlg = app.dialogs[-1]
+    fill(dlg, "total", 4)
+    fill(dlg, "planes", 2)
+    fill(dlg, "cr", 1.7)
+    fill(dlg, "area", 6.5)                        # and the drag, which it lacked too
+    fill(dlg, "cd", 2.4)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert [(s.cr, s.area, s.cd) for s in sim.sats[n0:]] == [(1.7, 6.5, 2.4)] * 4
+
+
+def test_a_satellite_added_with_a_bad_reflectivity_is_refused(app):
+    with pytest.raises(ValueError, match="reflectivity"):
+        app.sim.add_satellites({"type": "elements", "altitude": 700}, "X", cr=7.0)
+
+
 def test_maneuver_dialog_every_kind(app):
     kinds = ["Change orbit to...", "Impulse (V/N/B components)", "Hohmann transfer",
              "Bi-elliptic transfer", "Circularize", "Plane change", "Rendezvous (Lambert)",

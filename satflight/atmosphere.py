@@ -4,6 +4,9 @@ rho(h) = rho0 * exp(-(h - h0) / H) within each altitude band. Values are
 for mean solar activity; real densities at 400 km swing by ~10x over the
 solar cycle, so decay times are indicative rather than predictive. The
 ``scale`` argument lets a scenario model solar max (~3) or min (~0.3).
+
+:func:`msis_density` is the alternative (forces "atmosphere": "msis"): NRLMSIS
+2.1 by place and time, driven by the measured space weather.
 """
 
 from __future__ import annotations

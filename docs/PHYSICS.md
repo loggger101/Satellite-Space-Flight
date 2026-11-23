@@ -132,6 +132,25 @@ per satellite per evaluation. The lifetime estimate and the Orbit tab's
 perigee density stay on the table and are marked "(table)". MATLAB exports
 refuse a run using it (base MATLAB has no MSIS).
 
+Against Sentinel-1's precise orbits, six of the study's arcs were fitted again
+with MSIS (`tools/sentinel1_study.py arcs --atmosphere msis`, rows in
+`docs/analysis/sentinel1/arcs_msis.csv`): the four with the largest storm
+errors and two quiet ones. The fitted density scale is 0.78-1.36 where the
+table needed 0.85-4.05, and the along-track error after three days falls on
+five of the six:
+
+| arc | weather | table | MSIS |
+|---|---|---|---|
+| 1A 2025-11-11 | storm | 1347 m | 508 m |
+| 1A 2026-01-20 | storm | 1627 m | 1139 m |
+| 1C 2025-11-04 | storm | 445 m | 226 m |
+| 1C 2026-01-20 | storm | 269 m | 130 m |
+| 1A 2025-12-09 | quiet | 18 m | 4 m |
+| 1A 2025-08-05 | quiet | 19 m | 22 m |
+
+MSIS still runs light in the January 2026 storm: both satellites' fits want a
+scale of 1.36 there.
+
 **Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:
 `nu`, the visible fraction of the solar disc from the conical umbra /

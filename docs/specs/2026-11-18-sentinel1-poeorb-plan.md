@@ -256,7 +256,14 @@ goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.
 - Sentinel-1's drag and SRP reference areas. They only scale the fitted Cd
   and Cr, so the fits absorb them; nominal starting values are about 10 m^2
   for drag and 25 m^2 for SRP.
-- A better atmosphere: polar motion is now in (section 3). The study measured
+- A better atmosphere: done 2026-11-23 as NRLMSIS 2.1 driven by CelesTrak's
+  measured space weather (`"atmosphere": "msis"`). Six arcs fitted again with it
+  (`docs/analysis/sentinel1/arcs_msis.csv`) cut the three-day along-track error
+  in all four storm weeks (1347 to 508 m, 1627 to 1139 m, 445 to 226 m, 269 to
+  130 m) and in one quiet week (18 to 4 m); the other quiet week went from 19 to
+  22 m. The fitted density scale narrows from 0.85-4.05 to 0.78-1.36
+  (PHYSICS.md, Atmosphere). The note as written before it:
+  polar motion is now in (section 3). The study measured
   the remaining error: 9 m along-track after a day and 24 m after three in
   quiet and moderate weeks, up to 1.6 km over three days when a storm starts
   after the fit. A density model driven by Kp / F10.7 (NRLMSIS, JB2008) is

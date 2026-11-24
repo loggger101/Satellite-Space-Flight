@@ -20,7 +20,8 @@
     "gravity_degree": 0,
     "sun": false,
     "moon": false,
-    "srp": false
+    "srp": false,
+    "atmosphere": "table"
   },
   "record_dt": 20.0,
   "warp": 3600,

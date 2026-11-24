@@ -726,6 +726,12 @@ This is all Earth gravity, so it is **in scope**.
 
 ### B2. A better atmosphere in the drag force
 
+**Status (2026-11-23):** Density done: NRLMSIS 2.1 (pymsis) with CelesTrak's
+measured F10.7 and ap is an atmosphere choice (`"atmosphere": "msis"`), the
+table staying the default; the day/night bulge comes with it. Measured against
+Sentinel-1 in PHYSICS.md. Still open: Cd stays a constant per satellite,
+thermospheric winds, and ascents, lifetime and the Orbit tab stay on the table.
+
 **Why:** The density is the Vallado Table 8-4 piecewise exponential, a
 function of altitude only, times a constant `density_scale`. It is the
 largest *physical* error source in LEO:

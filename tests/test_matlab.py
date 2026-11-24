@@ -64,6 +64,7 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("everyIntegrator",),                                      # ~90
                 ("sunMoonAndSunlight",),
                 ("launchInSunlight",),
+                ("customLaunches",),                                       # 79
                 ("egm2008Field",),
                 ("nrlmsisDrag", "nrlmsisPastTheMeasuredDays"),
                 ("preciseOrbitReplay", "replayWithoutItsFiles"))

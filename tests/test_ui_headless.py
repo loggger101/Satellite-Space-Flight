@@ -290,6 +290,30 @@ def test_physics_dialog_picks_the_msis_atmosphere(app, tmp_path, monkeypatch):
     assert app.dialogs[-1].widgets["atmosphere"].value == MSIS_LABEL
 
 
+PHYSICAL_CD_LABEL = "Physical, sphere (needs NRLMSIS)"
+
+
+def test_physics_dialog_picks_the_physical_drag_coefficient(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("SATFLIGHT_DATA", str(tmp_path / "data"))
+    _space_weather_around(tmp_path / "data", _today(app))
+    app.open("physics")
+    dlg = app.dialogs[-1]
+    assert dlg.widgets["cd_model"].value == "Fixed (each satellite's Cd)"
+    dlg.set("drag", True)
+    dlg.set("cd_model", PHYSICAL_CD_LABEL)
+    dlg.submit()                       # with the table: refused, saying why
+    assert dlg.error and "NRLMSIS" in dlg.error and app.dialogs
+    assert app.sim.forces.cd_model == "fixed"
+    dlg.set("atmosphere", MSIS_LABEL)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    assert app.sim.forces.cd_model == "dria_sphere"
+    assert app.sim.forces.label().endswith("DRAG(MSIS,Cd)")
+    frame(app, 3)
+    app.open("physics")
+    assert app.dialogs[-1].widgets["cd_model"].value == PHYSICAL_CD_LABEL
+
+
 def test_a_run_past_the_space_weather_pauses_with_the_reason(app, tmp_path, monkeypatch):
     monkeypatch.setenv("SATFLIGHT_DATA", str(tmp_path / "data"))
     _space_weather_around(tmp_path / "data", _today(app), after=42)  # 81-day mean: 1 more day

@@ -21,7 +21,8 @@
     "sun": false,
     "moon": false,
     "srp": false,
-    "atmosphere": "table"
+    "atmosphere": "table",
+    "cd_model": "fixed"
   },
   "record_dt": 20.0,
   "warp": 1200,

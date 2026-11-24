@@ -172,3 +172,95 @@ def test_the_matlab_export_flies_msis_drag(table, tmp_path):
     assert 'dataFolder = "";' in msis and "sim.dataFolder = dataFolder;" in msis
     assert 'dataFolder = "";' not in plain and "sim.dataFolder = dataFolder;" not in plain
     assert "pymsis" in msis.split("function ")[0]          # the script says what it needs
+
+
+def test_msis_state_gives_the_density_species_and_temperature(table):
+    from satflight import atmosphere
+    from satflight.drag_coefficient import MASS_KG, SPECIES
+    jd = _jd(np.datetime64("2025-03-01T05:17", "m"))
+    h = np.array([95.0, 300.0, 693.0, 1000.0, 2600.0])
+    lat, lon = np.radians([10.0, -40.0, 70.0, 0.0, 5.0]), np.radians([0.0, 90.0, -150, 20, 0])
+    st = atmosphere.msis_state(h, lat, lon, jd)
+    assert st.number_density.shape == (5, len(SPECIES))
+    assert np.array_equal(st.rho, atmosphere.msis_density(h, lat, lon, jd))
+    assert np.all(np.isfinite(st.number_density)) and np.all(st.number_density >= 0)
+    air = h <= atmosphere.TOP_KM
+    # the species add up to the total (pymsis works in single precision)
+    np.testing.assert_allclose((st.number_density[air] * MASS_KG).sum(1), st.rho[air],
+                               rtol=2e-3)
+    assert np.all(st.temperature[air] > 150.0)
+    assert st.rho[~air] == 0.0 and np.all(st.number_density[~air] == 0.0)
+
+
+def test_msis_state_refuses_a_species_pymsis_leaves_unknown_in_the_air(table, monkeypatch):
+    """A NaN species reads as none only where that leaves MSIS's own total
+    intact (a species it does not model at that height); one that hides real
+    air is an error, not a zero."""
+    from satflight import atmosphere
+    real = pymsis.calculate
+
+    def broken(*a, **k):
+        out = real(*a, **k)
+        out[:, 3] = np.nan                     # atomic oxygen
+        return out
+    monkeypatch.setattr(pymsis, "calculate", broken)
+    with pytest.raises(ValueError, match="species add up"):
+        atmosphere.msis_state(np.array([500.0]), np.zeros(1), np.zeros(1),
+                              _jd(np.datetime64("2025-03-01T05:17", "m")))
+
+
+# --- the physical drag coefficient (forces "cd_model": "dria_sphere") ---------------
+
+def test_the_cd_model_is_checked_and_kept_in_scenario_files():
+    assert ForceModel().cd_model == "fixed"
+    with pytest.raises(ValueError, match="cd_model 'newton'"):
+        ForceModel(drag=True, atmosphere="msis", cd_model="newton")
+    with pytest.raises(ValueError, match="needs the NRLMSIS atmosphere"):
+        ForceModel(drag=True, cd_model="dria_sphere")
+    m = ForceModel(drag=True, atmosphere="msis", cd_model="dria_sphere")
+    assert ForceModel.from_dict(json.loads(json.dumps(m.to_dict()))) == m
+    assert m.label() == "2B+J2+DRAG(MSIS,Cd)"
+    assert ForceModel(drag=False, atmosphere="msis", cd_model="dria_sphere").label() == "2B+J2"
+
+
+@pytest.mark.parametrize("when, lat, lon, alt", [
+    ("2025-03-01T05:17", 37.0, -120.0, 693.0),
+    ("2025-04-11T13:40", -71.5, 155.0, 702.0),      # the synthetic storm day
+])
+def test_physical_cd_scales_drag_by_the_sphere_coefficient_over_2_2(table, when, lat, lon,
+                                                                     alt):
+    """The satellite's Cd*A/m is taken at Cd 2.2; the drag uses the sphere's Cd
+    for the air at that place and time instead."""
+    from satflight import atmosphere
+    from satflight.drag_coefficient import sphere_cd
+    from satflight.frames import eci_to_geodetic
+    t = np.datetime64(when, "m")
+    gmst = 0.7
+    r, v = _place(lat, lon, alt, gmst)
+    fixed = accel_drag(r, v, np.array([0.02]), 1.3, "msis", gmst, _jd(t))
+    got = accel_drag(r, v, np.array([0.02]), 1.3, "msis", gmst, _jd(t), cd_model="dria_sphere")
+    la, lo, h = eci_to_geodetic(r, gmst)
+    st = atmosphere.msis_state(h, la, lo, _jd(t))
+    speed = np.linalg.norm(v - np.cross(OMEGA_VEC, r), axis=-1) * 1e3
+    cd = sphere_cd(speed, st.number_density, st.temperature)
+    assert 2.3 < cd[0] < 3.4
+    np.testing.assert_allclose(got, fixed * cd[0] / 2.2, rtol=1e-12)
+
+
+def test_physical_cd_flows_through_the_force_model(table):
+    r, v = _place(10.0, 20.0, 693.0, 0.5)
+    jd = _jd(np.datetime64("2025-04-11T12:00", "m"))
+    base = ForceModel(drag=False).acceleration(r, v, np.array([0.02]))
+    m = ForceModel(drag=True, atmosphere="msis", cd_model="dria_sphere")
+    want = accel_drag(r, v, np.array([0.02]), 1.0, "msis", 0.5, jd, cd_model="dria_sphere")
+    np.testing.assert_allclose(m.acceleration(r, v, np.array([0.02]), 0.5, jd) - base, want,
+                               rtol=1e-9, atol=1e-18)
+    assert m.breakdown(r, v, 0.02, 0.5, jd)["drag"][0] == pytest.approx(
+        np.linalg.norm(want), rel=1e-12)
+
+
+def test_physical_cd_is_not_exported_to_matlab_yet(table, tmp_path):
+    assert unported_forces(ForceModel(drag=True, atmosphere="msis",
+                                      cd_model="dria_sphere")) == ["physical Cd"]
+    assert unported_forces(ForceModel(drag=False, atmosphere="msis",
+                                      cd_model="dria_sphere")) == []

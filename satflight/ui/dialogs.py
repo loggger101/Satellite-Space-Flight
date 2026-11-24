@@ -66,7 +66,9 @@ MASS_TIP = "Spacecraft mass; with the area and Cd it sets how strongly air drag 
 DRY_TIP = ("Mass left once the propellant is gone. Burns stop there (the log says so). "
            "0 means no limit: any delta-v can be spent.")
 AREA_TIP = "Cross-section facing the airflow, for air drag."
-CD_TIP = "Drag coefficient: about 2.2 for a typical satellite."
+CD_TIP = ("Drag coefficient: about 2.2 for a typical satellite. When Physics works Cd out "
+          "from the air (physical drag coefficient), this is a correction on it instead: "
+          "2.2 = as modelled, 2.42 = 10% more drag.")
 CR_TIP = ("Reflectivity, for sunlight pressure (Forces): 1 absorbs all sunlight, 2 mirrors "
           "it straight back; 0 to 2.5.")
 
@@ -682,6 +684,18 @@ ATMOSPHERE_TIPS = {
         "season. Needs the measured space weather: python tools/fetch_space_weather.py. "
         "MATLAB exports run it through pymsis in MATLAB's Python."),
 }
+# where drag's Cd comes from
+CD_MODEL_CHOICES = {"Fixed (each satellite's Cd)": "fixed",
+                    "Physical, sphere (needs NRLMSIS)": "dria_sphere"}
+CD_MODEL_TIPS = {
+    "Fixed (each satellite's Cd)": "Each satellite's own Cd, the same in any air.",
+    "Physical, sphere (needs NRLMSIS)": (
+        "Cd worked out from the NRLMSIS air at the satellite: its temperature and the "
+        "atomic oxygen stuck on the surface (Sentman's sphere, SESAM accommodation). About "
+        "2.8 at 700 km; it varies a few % around the orbit and dips in storms. Each "
+        "satellite's Cd becomes a correction on it (2.2 = as modelled). Not in MATLAB "
+        "exports yet."),
+}
 
 
 def physics_dialog(app):
@@ -719,6 +733,10 @@ def physics_dialog(app):
           next(k for k, a in ATMOSPHERE_CHOICES.items() if a == fm.atmosphere),
           list(ATMOSPHERE_CHOICES), option_tips=ATMOSPHERE_TIPS,
           tip="What drag looks the air density up in."),
+        F("cd_model", "Drag coefficient", "choice",
+          next(k for k, c in CD_MODEL_CHOICES.items() if c == fm.cd_model),
+          list(CD_MODEL_CHOICES), option_tips=CD_MODEL_TIPS,
+          tip="Where drag's Cd comes from: each satellite's, or the air itself."),
         F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}",
           tip=DENSITY_TIP),
         F("sun", "Sun's gravity", "bool", fm.sun, tip=FORCE_TIPS["sun"]),
@@ -734,11 +752,15 @@ def physics_dialog(app):
     def on_ok(v):
         if v["rtol"] <= 0 or v["atol"] <= 0 or v["h_max"] <= 0 or v["h_fixed"] <= 0:
             return "tolerances and steps must be positive"
-        forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
-                            drag=v["drag"], density_scale=v["density_scale"],
-                            gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
-                            moon=v["moon"], srp=v["srp"],
-                            atmosphere=ATMOSPHERE_CHOICES[v["atmosphere"]])
+        try:
+            forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
+                                drag=v["drag"], density_scale=v["density_scale"],
+                                gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
+                                moon=v["moon"], srp=v["srp"],
+                                atmosphere=ATMOSPHERE_CHOICES[v["atmosphere"]],
+                                cd_model=CD_MODEL_CHOICES[v["cd_model"]])
+        except ValueError as exc:     # physical Cd with the table
+            return str(exc).removeprefix("forces ")
         if forces.msis_drag:          # the space weather must cover now, or say why not
             now = np.datetime64(sim.datetime().replace(tzinfo=None), "m")
             try:

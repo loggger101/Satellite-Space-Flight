@@ -729,8 +729,12 @@ This is all Earth gravity, so it is **in scope**.
 **Status (2026-11-23):** Density done: NRLMSIS 2.1 (pymsis) with CelesTrak's
 measured F10.7 and ap is an atmosphere choice (`"atmosphere": "msis"`), the
 table staying the default; the day/night bulge comes with it. Measured against
-Sentinel-1 in PHYSICS.md. Still open: Cd stays a constant per satellite,
-thermospheric winds, and ascents, lifetime and the Orbit tab stay on the table.
+Sentinel-1 in PHYSICS.md. 2026-11-24: a physical Cd (free-molecular sphere,
+SESAM accommodation, from the MSIS species) is an opt-in `cd_model`; on the six
+Sentinel-1 arcs it held every arc within 10% but made the storm arcs slightly
+worse, so the constant Cd stays the default (PHYSICS.md). Still open: a panel
+model of the satellite, thermospheric winds, and ascents, lifetime and the
+Orbit tab stay on the table.
 
 **Why:** The density is the Vallado Table 8-4 piecewise exponential, a
 function of altitude only, times a constant `density_scale`. It is the

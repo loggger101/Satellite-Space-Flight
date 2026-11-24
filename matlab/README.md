@@ -29,7 +29,7 @@ compares it with theory).
 
 | function | what it adds |
 |---|---|
-| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`, `GravityDegree` for the EGM2008 field), integrator settings |
+| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`, `GravityDegree` for the EGM2008 field, `Atmosphere` "table" or "msis" for drag), integrator settings |
 | `addSatellite(sc, name, orbit, ...)` | a satellite, or `Count` copies along one orbit; `Mass`, `Area`, `Cd`, `Cr`, `Color` |
 | `addConstellation(sc, name, ...)` | a Walker shell: `Altitude`, `Inclination`, `Total`, `Planes`, `Phasing`, `Pattern` |
 | `addStation(sc, name, lat, lon, ...)` | a ground station; `Alt`, `MinEl` |
@@ -80,7 +80,7 @@ satellite with `T(T.name == "ISS", :)`.
 
 | function | |
 |---|---|
-| `S = readStudy(folder)` | the study's CSVs (`docs/analysis/sentinel1` by default) as four tables |
+| `S = readStudy(folder)` | the study's CSVs (`docs/analysis/sentinel1` by default) as five tables |
 | `plotStudy(S, ...)` | the report's figures: `Figures` any of `"elements"`, `"track"`, `"accuracy"` |
 
 `S.daily` has one row per satellite per day (revolution-mean `a_km`, `e`,
@@ -89,7 +89,8 @@ satellite with `T(T.name == "ISS", :)`.
 manoeuvre window (`kind` `"burn"`) and every control window between them
 (`"placebo"`), sized from the jump in the mean elements; `S.arcs` one row per
 weekly accuracy arc, with the fitted drag and the R/S/W prediction error for
-three days. Dates are UTC datetimes, a blank number is NaN, and `note` and
+three days, and `S.arcs_msis` the same for the arcs fitted again with NRLMSIS
+drag. Dates are UTC datetimes, a blank number is NaN, and `note` and
 `error` say why a window or arc has none. The tables come from
 `tools/sentinel1_study.py`; `save("study.mat", "-struct", "S")` keeps them as a
 MAT file.
@@ -248,7 +249,13 @@ in Settings: blank for `$SATFLIGHT_DATA`, else `~/satflight-data`, where
 `tools/fetch_poeorb.py` and `tools/fetch_eop.py` put them) with the reader's
 checks, polar motion taken out with the IERS table, and the same interpolation
 between the 10 s samples; a day missing from the folder stops the run, naming
-it. Numerical runs use the
+it. Drag through NRLMSIS 2.1 (`Atmosphere="msis"`) is the one part not ported:
+the script calls pymsis, the model the simulator uses, in MATLAB's own Python
+(see below), with the measured space weather it reads itself from
+`dataFolder` (CelesTrak's `SW-All.csv`, `tools/fetch_space_weather.py`) by the
+simulator's rules, refusing a time whose inputs reach a prediction. (A MATLAB
+translation of NRLMSIS would fall under NRL's research licence, so it is
+called rather than copied.) Numerical runs use the
 simulator's own integrators, ported step for step: its adaptive Dormand-Prince
 5(4) `dopri5` (the same error norm and step control, a 10 s first step, the step
 size carried from one stretch of the run to the next) or the fixed-step `rk4`,
@@ -306,6 +313,18 @@ right one before calling them:
 ```matlab
 setenv("SATFLIGHT_PYTHON", "C:\path\to\python.exe")
 ```
+
+A script whose drag uses NRLMSIS runs pymsis inside MATLAB (`py.` calls), so
+that Python must be one MATLAB supports (R2026a: not 3.14) and have pymsis:
+
+```matlab
+pyenv(Version="C:\path\to\python.exe")   % once; MATLAB remembers it
+% or, for one session, before any Python loads:
+setenv("SATFLIGHT_MSIS_PYTHON", "C:\path\to\python.exe")
+```
+
+and in that Python, `python -m pip install pymsis`. Without it the script
+stops with `satflight:pymsis`, saying which Python it tried.
 
 ## Tests
 

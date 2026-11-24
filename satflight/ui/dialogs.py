@@ -680,7 +680,7 @@ ATMOSPHERE_TIPS = {
         "The US Naval Research Lab's model: density by place and time, following the "
         "solar cycle, storms (7 times denser at 700 km in a big one), day and night, "
         "season. Needs the measured space weather: python tools/fetch_space_weather.py. "
-        "Not in MATLAB exports."),
+        "MATLAB exports run it through pymsis in MATLAB's Python."),
 }
 
 

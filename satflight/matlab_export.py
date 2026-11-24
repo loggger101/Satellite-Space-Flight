@@ -180,10 +180,10 @@ def _epoch_text(epoch: datetime) -> str:
 
 
 def unported_forces(forces) -> list[str]:
-    """The enabled force terms ``matlab_runtime.m`` cannot fly yet: drag through
-    NRLMSIS (base MATLAB has no MSIS, and the runtime does not read the space
-    weather). A run using it is refused rather than flown with the table."""
-    return ["the NRLMSIS atmosphere"] if forces.msis_drag else []
+    """The enabled force terms ``matlab_runtime.m`` cannot fly yet (none since
+    NRLMSIS drag was ported: the runtime calls pymsis through MATLAB's Python;
+    kept so a new term is refused, not dropped)."""
+    return []
 
 
 def _field_lines(F) -> list[str]:
@@ -366,6 +366,7 @@ def _none(x, default: float) -> float:
 def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step,
             compare, recorded) -> list[str]:
     F, it = src.forces, scenario.integrator
+    msis = F.msis_drag
     epoch = ensure_utc(scenario.epoch)
     exported = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     launches = list(src.ascents)
@@ -380,7 +381,12 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         "Press **Run** to run it here in MATLAB with the simulator's own physics"
         + (" and rocket ascents" if launches else "")
         + (", plot the results and, when the simulator is installed, run it there too and "
-           "compare." if compare else " and plot the results. It needs MATLAB alone."))
+           "compare." if compare else " and plot the results."
+           + ("" if msis else " It needs MATLAB alone."))
+        + (" Drag uses NRLMSIS 2.1, which runs in Python: MATLAB's Python (`pyenv`, or the "
+           "`SATFLIGHT_MSIS_PYTHON` environment variable naming a python.exe) needs pymsis "
+           "(`python -m pip install pymsis`), and the measured space weather is read from "
+           "`dataFolder` (tools/fetch_space_weather.py)." if msis else ""))
     out += ["%%"]
     out += _text("## Settings\nHow far to propagate and how often to sample (seconds). "
                  "Change them freely.")
@@ -397,8 +403,11 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                 for m, until in recorded)
     if replays:
         out += ['dataFolder = "";   % the precise orbits and the IERS table (tools/fetch_poeorb'
-                '.py, tools/fetch_eop.py): "" = $SATFLIGHT_DATA, else ~/satflight-data, as the '
-                "simulator"]
+                '.py, tools/fetch_eop.py)' + (" and the space weather" if msis else "")
+                + ': "" = $SATFLIGHT_DATA, else ~/satflight-data, as the simulator']
+    elif msis:
+        out += ['dataFolder = "";   % the space weather (tools/fetch_space_weather.py): "" = '
+                "$SATFLIGHT_DATA, else ~/satflight-data, as the simulator"]
     out += ["animate = true;   % play the run back (Animation section)",
             'animationFile = "";   % e.g. "run.gif" or "run.mp4": also save the map animation',
             'animation3DFile = "";   % e.g. "orbits.mp4": also save the 3-D animation',
@@ -438,8 +447,9 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             f"\"j4\", {_bool(F.j4)}, \"c22\", {_bool(F.c22)}, \"drag\", {_bool(F.drag)}, "
             f"\"densityScale\", {_num(F.density_scale)}, \"sun\", {_bool(F.sun)}, "
             f"\"moon\", {_bool(F.moon)}, \"srp\", {_bool(F.srp)}, "
-            f"\"gravityDegree\", {F.gravity_degree});   % gravityDegree N > 0: the EGM2008 "
-            "field to N in place of J2, J3, J4 and C22",
+            f"\"gravityDegree\", {F.gravity_degree}, \"atmosphere\", {_str(F.atmosphere)});"
+            "   % gravityDegree N > 0: the EGM2008 field to N in place of J2, J3, J4 and C22; "
+            'atmosphere "msis": NRLMSIS 2.1 for drag',
             *_field_lines(F),
             f"sim.integrator = struct(\"method\", {_str(method)}, \"rtol\", {_num(it.rtol)}, "
             f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)}, "
@@ -482,6 +492,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
                 out += [f"sim.{name} = ["] + [f"    {_str(x)}" for x in col] + ["];"]
         if replays:
             out += ["sim.dataFolder = dataFolder;"]
+    if msis:
+        out += ["sim.dataFolder = dataFolder;"]
     if any(s.dry_mass > 0 for _, s in rows):
         out += _text("Dry masses (kg): burns stop when the propellant above them is gone "
                      "(0: no limit).")

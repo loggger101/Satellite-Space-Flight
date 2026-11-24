@@ -15,6 +15,10 @@ function sc = newScenario(name, opts)
 %     GravityDegree the EGM2008 field to this degree and order (2..70) in place of
 %                   J2, J3, J4 and C22 (default 0: those terms)
 %     DensityScale  multiplies the atmosphere's density (default 1)
+%     Atmosphere    what drag looks the density up in: "table" (by height, mean
+%                   Sun; default) or "msis" (NRLMSIS 2.1 with the measured space
+%                   weather; exported scripts run it through pymsis in MATLAB's
+%                   Python and read tools/fetch_space_weather.py's table)
 %     Integrator    "dopri5" (default), "rk4", "wh" or "leapfrog"
 %     Rtol, Atol, HMax, HFixed   integrator tolerances and step limits
 %     RecordDt      seconds between recorded samples (default 20)
@@ -38,6 +42,7 @@ arguments
     opts.Srp (1,1) logical
     opts.GravityDegree (1,1) double
     opts.DensityScale (1,1) double
+    opts.Atmosphere (1,1) string
     opts.Integrator (1,1) string
     opts.Rtol (1,1) double
     opts.Atol (1,1) double
@@ -59,7 +64,7 @@ if ~isempty(fieldnames(integrator))
 end
 forces = copyOptions(struct(), opts, ["J2", "j2"; "J3", "j3"; "J4", "j4"; "C22", "c22"; ...
     "Drag", "drag"; "DensityScale", "density_scale"; "Sun", "sun"; "Moon", "moon"; ...
-    "Srp", "srp"; "GravityDegree", "gravity_degree"]);
+    "Srp", "srp"; "GravityDegree", "gravity_degree"; "Atmosphere", "atmosphere"]);
 if ~isempty(fieldnames(forces))
     sc.forces = forces;
 end

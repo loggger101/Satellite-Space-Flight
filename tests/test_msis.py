@@ -16,7 +16,7 @@ import pytest
 from satflight import spaceweather as sw
 from satflight.forces import ForceModel, accel_drag
 from satflight.frames import OMEGA_VEC, geodetic_to_ecef
-from satflight.matlab_export import unported_forces
+from satflight.matlab_export import export_live_script, unported_forces
 from satflight.scenario import SatSpec, Scenario
 from satflight.simulation import Simulation
 from satflight.timeutil import UTC, julian_date
@@ -158,8 +158,17 @@ def test_a_run_outside_the_measured_table_stops_with_the_reason(table):
         sim.advance(600)
 
 
-def test_the_matlab_export_refuses_msis_drag():
-    assert unported_forces(ForceModel(drag=True, atmosphere="msis")) == [
-        "the NRLMSIS atmosphere"]
-    assert unported_forces(ForceModel(drag=False, atmosphere="msis")) == []
-    assert unported_forces(ForceModel(drag=True)) == []
+def test_the_matlab_export_flies_msis_drag(table, tmp_path):
+    """MATLAB runs NRLMSIS through pymsis (matlab/tests/ExportTest nrlmsisDrag):
+    the script names the atmosphere and reads the space weather from dataFolder."""
+    assert unported_forces(ForceModel(drag=True, atmosphere="msis")) == []
+    texts = {}
+    for atmosphere in ("msis", "table"):
+        sim = _sim(datetime(2025, 4, 11, tzinfo=UTC), atmosphere)
+        path = export_live_script(sim, tmp_path / f"run_{atmosphere}.m", duration=600.0)
+        texts[atmosphere] = path.read_text(encoding="utf-8")
+    msis, plain = texts["msis"], texts["table"]
+    assert '"atmosphere", "msis"' in msis and '"atmosphere", "table"' in plain
+    assert 'dataFolder = "";' in msis and "sim.dataFolder = dataFolder;" in msis
+    assert 'dataFolder = "";' not in plain and "sim.dataFolder = dataFolder;" not in plain
+    assert "pymsis" in msis.split("function ")[0]          # the script says what it needs

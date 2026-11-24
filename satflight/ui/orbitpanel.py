@@ -586,14 +586,17 @@ def span(seconds: float) -> str:
     return f"{years:.1f} years" if years < 10 else f"{years:,.0f} years"
 
 
-def lifetime_rows(life, density_scale: float):
+def lifetime_rows(life, density_scale: float, atmosphere: str = "table"):
     """Rows for the estimated lifetime: ``life`` is seconds left under the
-    run's air (see App.lifetime), or a phrase saying why there is none."""
+    run's air (see App.lifetime), or a phrase saying why there is none. The
+    estimate always uses the mean-Sun table; under NRLMSIS (``atmosphere``
+    "msis") the row says so."""
     if life is None:
         return []
+    name = "Lifetime (table)" if atmosphere == "msis" else "Lifetime"
     if isinstance(life, str):
-        return [("Lifetime", life)]
-    rows = [("Lifetime", span(life))]
+        return [(name, life)]
+    rows = [(name, span(life))]
     if 0 < life < math.inf and density_scale > 0:
         mean = life * density_scale            # the lifetime goes as 1 / density
         rows.append(("At solar max / min", f"{span(mean / 3.0)} / {span(mean / 0.3)}"))
@@ -602,9 +605,11 @@ def lifetime_rows(life, density_scale: float):
 
 
 def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf,
-                      life=None, density_scale: float = 1.0):
+                      life=None, density_scale: float = 1.0, atmosphere: str = "table"):
     """The Orbit tab's property sheet: [(section title, [(label, value)])].
-    ``life`` and ``density_scale``: see :func:`lifetime_rows`."""
+    ``life``, ``density_scale`` and ``atmosphere``: see :func:`lifetime_rows`;
+    the perigee air is the table's too, marked so under NRLMSIS."""
+    table = " (table)" if atmosphere == "msis" else ""
     el = info.el
     D = math.degrees
     closed = info.closed
@@ -671,12 +676,12 @@ def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf
         ("Area / Cd", f"{info.area:g} m^2 / {info.cd:g}"),
         ("Area-to-mass", num(info.area_to_mass, "m^2/kg", 4)),
         ("Ballistic coeff m/CdA", num(info.ballistic, "kg/m^2", 1)),
-        ("Perigee density", unless_arc(
+        ("Perigee density" + table, unless_arc(
             f"{info.rho_perigee:.2e} kg/m^3, {info.perigee_height:,.0f} km"
             if info.rho_perigee else "none")),
-        ("Drag at perigee", unless_arc(f"{info.drag_perigee:.3e} m/s^2"
+        ("Drag at perigee" + table, unless_arc(f"{info.drag_perigee:.3e} m/s^2"
                                        if info.rho_perigee else "none")),
-        *lifetime_rows(life, density_scale),
+        *lifetime_rows(life, density_scale, atmosphere),
         ("Delta-v spent", num(dv_used * 1000, "m/s", 2)),
         ("Delta-v left", f"{num(dv_left * 1000, 'm/s', 1)} at Isp 300 s"
          if math.isfinite(dv_left) else "no dry mass set"),
@@ -715,6 +720,7 @@ def draw_orbit_tab(surf, x, y, w, app, i) -> int:
                    info.v_apo, info.v_peri, info.speed, "km/s", 3, s.color)
         y += px(50)
     for title, rows in property_sections(info, s.dv_used, dv_left(s), app.lifetime(),
-                                         sim.forces.density_scale):
+                                         sim.forces.density_scale,
+                                         "msis" if sim.forces.msis_drag else "table"):
         y = draw_section(surf, fonts, x, y, w, title, rows)
     return y

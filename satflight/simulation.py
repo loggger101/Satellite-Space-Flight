@@ -831,7 +831,7 @@ class Simulation:
                 for k, b, cda in burn_rows:
                     ka[k] = cda / (b.m0 - b.mdot * (t - b.t0))
             # (a burn's mass loss is not passed on to sunlight pressure: Cr*A/m at ignition)
-            a = forces.acceleration(r, v, ka, float(clock.gmst(t)) if forces.earth_fixed else 0.0,
+            a = forces.acceleration(r, v, ka, float(clock.gmst(t)) if forces.needs_gmst else 0.0,
                                     float(clock.jd(t)) if forces.needs_time else None, cr_am)
             for k, b, _ in burn_rows:
                 m = b.m0 - b.mdot * (t - b.t0)

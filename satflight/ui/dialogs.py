@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .. import spaceweather
 from ..batch import export_history_csv, parse_duration
 from ..constants import CR_DEFAULT, R_EARTH
 from ..elements import period_of, rv2coe
@@ -667,7 +668,20 @@ def field_choice(degree: int) -> str:
     FIELD_TIPS[label] = f"The full measured field to degree and order {degree}."
     return label
 DENSITY_TIP = ("Multiplies the air density: about 0.3 at solar minimum, 1 on average, 3 at "
-               "solar maximum (when the Sun heats and puffs up the upper atmosphere).")
+               "solar maximum (when the Sun heats and puffs up the upper atmosphere). With "
+               "NRLMSIS, which already follows the Sun, it is a correction: 1 as modelled.")
+# what drag looks the air up in
+ATMOSPHERE_CHOICES = {"Mean-Sun table": "table",
+                      "NRLMSIS 2.1 (measured space weather)": "msis"}
+ATMOSPHERE_TIPS = {
+    "Mean-Sun table": "Density by height alone, for average solar activity (scaled by the "
+                      "density scale below). Fast; needs no data.",
+    "NRLMSIS 2.1 (measured space weather)": (
+        "The US Naval Research Lab's model: density by place and time, following the "
+        "solar cycle, storms (7 times denser at 700 km in a big one), day and night, "
+        "season. Needs the measured space weather: python tools/fetch_space_weather.py. "
+        "Not in MATLAB exports."),
+}
 
 
 def physics_dialog(app):
@@ -701,6 +715,10 @@ def physics_dialog(app):
         F("j4", "J4", "bool", fm.j4, tip=FORCE_TIPS["j4"]),
         F("c22", "C22/S22 (elliptical equator)", "bool", fm.c22, tip=FORCE_TIPS["c22"]),
         F("drag", "Atmospheric drag", "bool", fm.drag, tip=FORCE_TIPS["drag"]),
+        F("atmosphere", "Atmosphere for drag", "choice",
+          next(k for k, a in ATMOSPHERE_CHOICES.items() if a == fm.atmosphere),
+          list(ATMOSPHERE_CHOICES), option_tips=ATMOSPHERE_TIPS,
+          tip="What drag looks the air density up in."),
         F("density_scale", "Density scale (solar activity)", "float", f"{fm.density_scale:g}",
           tip=DENSITY_TIP),
         F("sun", "Sun's gravity", "bool", fm.sun, tip=FORCE_TIPS["sun"]),
@@ -716,10 +734,18 @@ def physics_dialog(app):
     def on_ok(v):
         if v["rtol"] <= 0 or v["atol"] <= 0 or v["h_max"] <= 0 or v["h_fixed"] <= 0:
             return "tolerances and steps must be positive"
-        sim.forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
-                                drag=v["drag"], density_scale=v["density_scale"],
-                                gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
-                                moon=v["moon"], srp=v["srp"])
+        forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
+                            drag=v["drag"], density_scale=v["density_scale"],
+                            gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
+                            moon=v["moon"], srp=v["srp"],
+                            atmosphere=ATMOSPHERE_CHOICES[v["atmosphere"]])
+        if forces.msis_drag:          # the space weather must cover now, or say why not
+            now = np.datetime64(sim.datetime().replace(tzinfo=None), "m")
+            try:
+                spaceweather.load().indices(np.array([now]))
+            except spaceweather.SpaceWeatherError as exc:
+                return f"NRLMSIS: {exc}"
+        sim.forces = forces
         sim.set_propagator(v["propagator"])
         it.method = v["method"]
         it.rtol, it.atol, it.h_max, it.h_fixed = v["rtol"], v["atol"], v["h_max"], v["h_fixed"]

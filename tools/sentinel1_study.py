@@ -207,47 +207,60 @@ ARC_COLUMNS = ["mission", "start", "fit_rms_m", "fit_r_m", "fit_s_m", "fit_w_m",
 _WORKER = {}
 
 
-def _arc_row(m, d, degree, one=None):
+def _arc_row(m, d, degree, one=None, atmosphere="table"):
     """One arc's row; what the data cannot support is a row with the reason."""
     try:
         if one is not None:
             return one(m, d)
-        if degree not in _WORKER:           # once per process
+        if (degree, atmosphere) not in _WORKER:           # once per process
             from satflight.forces import ForceModel
-            _WORKER[degree] = (ForceModel(gravity_degree=degree, drag=True, sun=True,
-                                          moon=True, srp=True), eop.read())
-        model, table = _WORKER[degree]
+            _WORKER[degree, atmosphere] = (ForceModel(
+                gravity_degree=degree, drag=True, sun=True, moon=True, srp=True,
+                atmosphere=atmosphere), eop.read())
+        model, table = _WORKER[degree, atmosphere]
         return study.accuracy_arc(m, d, model, MASS[m], eop_table=table)
     except (poeorb.PoeorbError, fit.FitError) as exc:
         return {"mission": m, "start": d.isoformat(), "error": str(exc)}
 
 
+def arcs_file(atmosphere="table"):
+    """The arcs' file name: arcs.csv for the table, arcs_<model>.csv otherwise."""
+    return "arcs.csv" if atmosphere == "table" else f"arcs_{atmosphere}.csv"
+
+
 def run_arcs(first=FIRST, last=LAST, degree=70, limit=None, missions=MISSIONS, out=print,
-             dest=OUT, one=None, workers=1):
+             dest=OUT, one=None, workers=1, atmosphere="table", only=None):
     """Every weekly arc not already in ``dest``/arcs.csv, ``workers`` at a time
     (processes), each row written as it finishes; ``one`` (for tests) replaces
-    :func:`study.accuracy_arc` and runs in this process."""
-    path = dest / "arcs.csv"
+    :func:`study.accuracy_arc` and runs in this process. ``atmosphere`` "msis"
+    flies them with NRLMSIS into arcs_msis.csv; ``only`` [(mission, day)]
+    runs just those (ValueError for one that is not a weekly arc)."""
+    path = dest / arcs_file(atmosphere)
     done = {(r["mission"], r["start"]) for r in read_csv(path)} if path.exists() else set()
     if not path.exists():
         write_csv(path, [], ARC_COLUMNS)
-    todo = [(m, d) for d in study.arc_starts(first, last) for m in missions
-            if (m, d.isoformat()) not in done]
+    starts = study.arc_starts(first, last)
+    for m, d in only or ():
+        if d not in starts or m not in missions:
+            raise ValueError(f"{m} {d.isoformat()} is not a weekly arc of the study "
+                             f"({starts[0]}, {starts[1]}, ... for {', '.join(missions)})")
+    todo = [(m, d) for d in starts for m in missions
+            if (m, d.isoformat()) not in done and (not only or (m, d) in only)]
     todo = todo[:limit] if limit else todo
     pool = None
     if one is not None or workers <= 1:
-        rows = (_arc_row(m, d, degree, one) for m, d in todo)
+        rows = (_arc_row(m, d, degree, one, atmosphere) for m, d in todo)
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
         pool = ProcessPoolExecutor(max_workers=workers)
-        futures = [pool.submit(_arc_row, m, d, degree) for m, d in todo]
+        futures = [pool.submit(_arc_row, m, d, degree, None, atmosphere) for m, d in todo]
         rows = (f.result() for f in as_completed(futures))
     try:
         _write_arc_rows(path, rows, len(todo), out)
     finally:
         if pool is not None:     # an unexpected error: stop, without hours of waiting
             pool.shutdown(wait=False, cancel_futures=True)
-    write_csv(path, read_arcs(dest), ARC_COLUMNS)       # finished out of order: sort
+    write_csv(path, read_arcs(dest, atmosphere), ARC_COLUMNS)   # finished out of order: sort
 
 
 def _write_arc_rows(path, rows, total, out):
@@ -262,9 +275,10 @@ def _write_arc_rows(path, rows, total, out):
         out(f"[{n + 1}/{total}] {m} {d}: {msg}")
 
 
-def read_arcs(dest=OUT):
-    """``dest``/arcs.csv in date order (then satellite), [] if there is none."""
-    path = dest / "arcs.csv"
+def read_arcs(dest=OUT, atmosphere="table"):
+    """``dest``/arcs.csv (or the ``atmosphere``'s file) in date order (then
+    satellite), [] if there is none."""
+    path = dest / arcs_file(atmosphere)
     rows = read_csv(path) if path.exists() else []
     return sorted(rows, key=lambda r: (r["start"], MISSIONS.index(r["mission"])))
 
@@ -520,18 +534,31 @@ def run_report(dest=OUT, figures=True) -> Path:
     return path
 
 
+def _mission_day(text):
+    m, _, d = text.partition(":")
+    try:
+        return m, date.fromisoformat(d)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r}: expected MISSION:YYYY-MM-DD") from None
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("command", choices=["series", "arcs", "report"])
     p.add_argument("--limit", type=int, help="arcs: run at most this many")
     p.add_argument("--degree", type=int, default=70, help="arcs: EGM2008 degree (default 70)")
     p.add_argument("--workers", type=int, default=1, help="arcs: processes at once (default 1)")
+    p.add_argument("--atmosphere", choices=["table", "msis"], default="table",
+                   help="arcs: the drag's atmosphere; msis writes arcs_msis.csv")
+    p.add_argument("--only", action="append", type=_mission_day, metavar="MISSION:DAY",
+                   help="arcs: just this arc, e.g. S1A:2026-01-20 (repeatable)")
     a = p.parse_args(argv)
     try:
         if a.command == "series":
             run_series()
         elif a.command == "arcs":
-            run_arcs(degree=a.degree, limit=a.limit, workers=a.workers)
+            run_arcs(degree=a.degree, limit=a.limit, workers=a.workers,
+                     atmosphere=a.atmosphere, only=a.only)
         else:
             print(run_report())
     except (poeorb.PoeorbError, eop.EopError, FileNotFoundError, ValueError) as exc:

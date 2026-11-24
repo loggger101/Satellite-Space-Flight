@@ -180,9 +180,10 @@ def _epoch_text(epoch: datetime) -> str:
 
 
 def unported_forces(forces) -> list[str]:
-    """The enabled force terms ``matlab_runtime.m`` cannot fly yet (none since
-    the EGM2008 field was ported; kept so a new term is refused, not dropped)."""
-    return []
+    """The enabled force terms ``matlab_runtime.m`` cannot fly yet: drag through
+    NRLMSIS (base MATLAB has no MSIS, and the runtime does not read the space
+    weather). A run using it is refused rather than flown with the table."""
+    return ["the NRLMSIS atmosphere"] if forces.msis_drag else []
 
 
 def _field_lines(F) -> list[str]:

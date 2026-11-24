@@ -175,7 +175,9 @@ def test_readstudy_columns_match_the_study_writer():
     finally:
         sys.path.remove(str(ROOT / "tools"))
     src = (PKG / "readStudy.m").read_text(encoding="utf-8")
-    calls = r"(?:dailyCols = |readOne\(fullfile[^\[]*)\[(.*?)\]"    # not its definition
+    # the named lists and the lists written straight into a readOne call (second
+    # argument); readOne's own definition and the text-column lists are neither
+    calls = r"(?:dailyCols = |arcCols = |readOne\(fullfile\([^()]*\), )\[(.*?)\]"
     lists = [_quoted(m) for m in re.findall(calls, src, re.S)]
     study = ROOT / "docs" / "analysis" / "sentinel1"
 

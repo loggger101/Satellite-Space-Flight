@@ -2,7 +2,7 @@ function S = readStudy(folder)
 %READSTUDY Read the Sentinel-1 year study's CSVs into tables.
 %   S = satflight.readStudy() reads docs/analysis/sentinel1 in this checkout;
 %   S = satflight.readStudy(folder) reads another folder that
-%   tools/sentinel1_study.py wrote. S has four tables:
+%   tools/sentinel1_study.py wrote. S has five tables:
 %
 %     daily     one row per satellite per day: mission, date, revs,
 %               burn_revs, gap_revs, revolution-mean a_km, e, argp_deg,
@@ -17,10 +17,12 @@ function S = readStudy(folder)
 %     arcs      one row per weekly accuracy arc: the one-day fit, the fitted
 %               drag, and the prediction error for three days (R/S/W, m);
 %               error says why an arc could not be run
+%     arcs_msis the same columns for the arcs fitted again with the NRLMSIS
+%               atmosphere (sentinel1_study.py arcs --atmosphere msis)
 %
 %   Dates and times are datetimes in UTC. A blank number is NaN and a blank
-%   note or error is "". The daily tables are required; phasing, burns and
-%   arcs are empty tables when the study has not written them yet. A file
+%   note or error is "". The daily tables are required; phasing, burns,
+%   arcs and arcs_msis are empty tables when the study has not written them yet. A file
 %   whose columns differ from the study's is refused, not guessed at.
 %
 %   save("study.mat", "-struct", "S") keeps the tables as a MAT file.
@@ -48,11 +50,13 @@ S.burns = readOne(fullfile(folder, "burns.csv"), ["mission", "kind", "start_utc"
     "end_utc", "windows", "da_m", "di_mdeg", "de_1e6", "dv_along_mm_s", "dv_cross_mm_s", ...
     "revs_before", "revs_after", "note"], ["start_utc", "end_utc"], "time", ...
     ["mission", "kind", "note"]);
-S.arcs = readOne(fullfile(folder, "arcs.csv"), ["mission", "start", "fit_rms_m", ...
+arcCols = ["mission", "start", "fit_rms_m", ...
     "fit_r_m", "fit_s_m", "fit_w_m", "cd_am", "density_scale", "burns_fit", ...
     "burns_check", "iterations", "fit_hours", "check_hours", "day1_r_m", "day1_s_m", ...
     "day1_w_m", "day2_r_m", "day2_s_m", "day2_w_m", "day3_r_m", "day3_s_m", "day3_w_m", ...
-    "at24h_s_m", "at48h_s_m", "at72h_s_m", "seconds", "error"], "start", "date", ...
+    "at24h_s_m", "at48h_s_m", "at72h_s_m", "seconds", "error"];
+S.arcs = readOne(fullfile(folder, "arcs.csv"), arcCols, "start", "date", ["mission", "error"]);
+S.arcs_msis = readOne(fullfile(folder, "arcs_msis.csv"), arcCols, "start", "date", ...
     ["mission", "error"]);
 end
 

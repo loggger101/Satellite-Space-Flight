@@ -214,6 +214,8 @@ ROWS = {
     "a_Sun": "The Sun's tidal pull: its pull on the satellite minus its pull on the Earth.",
     "a_Moon": "The Moon's tidal pull, about twice the Sun's.",
     "a_sunlight": "Sunlight pressure (Cr x area / mass), zero in the Earth's shadow.",
+    "a_albedo": "Sunlight the Earth reflects plus the heat it radiates, pushing the "
+                "satellite away from the Earth (same Cr x area / mass as sunlight).",
     "a_tides": "The pull of the bulge the Sun and Moon raise in the solid Earth (about "
                "30 cm high): a few 1e-7 m/s^2 for a low satellite.",
     "a_relativity": "General relativity's correction to the Earth's pull (the "

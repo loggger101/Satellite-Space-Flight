@@ -181,12 +181,11 @@ def _epoch_text(epoch: datetime) -> str:
 
 def unported_forces(forces) -> list[str]:
     """The enabled force terms ``matlab_runtime.m`` cannot fly yet, so a new
-    term is refused, not dropped. None today: NRLMSIS drag and the physical
-    drag coefficient (the runtime calls pymsis through MATLAB's Python), the
-    solid-Earth tides and relativity are ported; a term added to
-    :class:`ForceModel` goes here until it is."""
-    del forces
-    return []
+    term is refused, not dropped. NRLMSIS drag and the physical drag
+    coefficient (the runtime calls pymsis through MATLAB's Python), the
+    solid-Earth tides and relativity are ported; the Earth's albedo and
+    infrared (added 2026-11-25) are not yet."""
+    return ["Earth albedo and infrared"] if forces.albedo else []
 
 
 def _field_lines(F) -> list[str]:

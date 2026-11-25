@@ -649,6 +649,10 @@ FORCE_TIPS = {
     "tides": "The Sun and Moon stretch the solid Earth by about 30 cm; the bulge pulls on "
              "the satellite: at 700 km about 10 m along-track after a day and 50 m after "
              "three. IERS 2010, degree 2; ocean tides are not modelled.",
+    "albedo": "Sunlight the Earth reflects and the heat it radiates, pushing on the "
+              "satellite (Knocke's model: albedo and emissivity by latitude and season; same "
+              "Cr x area / mass as sunlight pressure). About a third of the Sun's own push at "
+              "700 km over the day side: 1 m along-track after a day, 4 m after three.",
     "relativity": "General relativity's correction to the Earth's pull (the Schwarzschild "
                   "term): at 700 km about 2.5 m along-track a day.",
 }
@@ -747,6 +751,8 @@ def physics_dialog(app):
         F("sun", "Sun's gravity", "bool", fm.sun, tip=FORCE_TIPS["sun"]),
         F("moon", "Moon's gravity", "bool", fm.moon, tip=FORCE_TIPS["moon"]),
         F("srp", "Sunlight pressure", "bool", fm.srp, tip=FORCE_TIPS["srp"]),
+        F("albedo", "Earth albedo and infrared", "bool", fm.albedo,
+          tip=FORCE_TIPS["albedo"] + " Not in MATLAB exports yet."),
         F("tides", "Solid-Earth tides", "bool", fm.tides,
           tip=FORCE_TIPS["tides"]),
         F("relativity", "Relativity", "bool", fm.relativity,
@@ -766,7 +772,7 @@ def physics_dialog(app):
                                 drag=v["drag"], density_scale=v["density_scale"],
                                 gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
                                 moon=v["moon"], srp=v["srp"], tides=v["tides"],
-                                relativity=v["relativity"],
+                                relativity=v["relativity"], albedo=v["albedo"],
                                 atmosphere=ATMOSPHERE_CHOICES[v["atmosphere"]],
                                 cd_model=CD_MODEL_CHOICES[v["cd_model"]])
         except ValueError as exc:     # physical Cd with the table

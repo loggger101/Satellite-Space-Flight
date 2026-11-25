@@ -120,6 +120,25 @@ Sitter, about 100 times smaller, are left out. The test integrates an
 eccentric orbit and finds the perigee turning 6 pi GM / (c^2 a (1 - e^2)) a
 revolution to 1e-3. For Sentinel-1 it is 2.5 m along-track a day.
 
+**Earth albedo and infrared** (`albedo`, off by default, added 2026-11-25;
+`satflight/earth_radiation.py`). Knocke's model (Knocke, Ries & Tapley
+1988): the ground's albedo `0.34 + a1 P1(sin lat) + 0.29 P2(sin lat)` and
+emissivity `0.68 + e1 P1 - 0.18 P2`, the P1 terms turning with the season
+(`a1 = 0.10 cos`, `e1 = -0.07 cos` of the year since 1981-12-22). Each patch
+is Lambertian: it reflects `a S cos(sun angle)` by day and radiates `e S / 4`
+always, so it looks `M / pi` bright from any direction. The sum runs over the
+directions the satellite sees the Earth in (10 Gauss-Legendre nodes in the
+cosine from straight down to the horizon, 16 steps round): each ray pushes
+back up itself with `M / pi` times its solid angle, over c, on the same
+cannonball `Cr A / m` as sunlight pressure. An evenly glowing Earth comes out
+as its closed form `M (R/r)^2` to 1e-12 at any height; a fully lit one far
+away reflects 2/3 of its albedo (a Lambertian sphere's geometric albedo).
+Over the subsolar point at 693 km, Sentinel-1 gets 0.16 of the Sun's direct
+push from the albedo and 0.16 from the infrared (4.4e-9 and 4.3e-9 m/s^2). Flown from
+one state, it moves the orbit 1.2 m along-track after a day and 4.2 m after
+three. The satellite's own shadow does not dim the Earth's light; the arc fits
+absorb a constant scale through Cr.
+
 **Geostationary slots.** A `geo` orbit sits where the equatorial pull
 `mu / r^2 (1 + 3/2 J2 (Re/r)^2)` matches the Earth's rotation when J2 acts,
 ~0.5 km above the two-body R_GEO; at R_GEO it drifted east 0.8 deg a month.
@@ -666,7 +685,8 @@ cross-section, not checked here; this is evidence, not a test.
   plus J2 (j2mean); a run that has other terms switched on logs a warning
   naming them.
 - Sun and Moon from low-precision series; sunlight pressure as a cannonball
-  (no attitude-dependent panels, no Earth albedo or infrared). Ocean tides,
+  (no attitude-dependent panels; the Earth's albedo and infrared are a
+  switch, Knocke's model). Ocean tides,
   polar motion in the simulator's Earth and relativity beyond the
   Schwarzschild term are not modelled; the degree-2 solid tide and that term
   are switches ([SCOPE.md](SCOPE.md)).

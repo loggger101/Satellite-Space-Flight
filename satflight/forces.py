@@ -11,6 +11,7 @@ All accelerations are in km/s^2 and vectorized over ``(N, 3)`` arrays.
 * solar radiation pressure (cannonball, Cr*A/m) dimmed in the Earth's shadow
 * the solid-Earth tide the Sun and Moon raise (degree 2, IERS 2010 ch. 6)
 * relativity: the Schwarzschild term of IERS 2010 eq. 10.12
+* the Earth's reflected sunlight and infrared (Knocke's model, earth_radiation)
 
 Every term is a per-scenario switch: the demos fly J2-J4 only, Sentinel-1
 the full set (docs/SCOPE.md).
@@ -26,7 +27,7 @@ from dataclasses import asdict, dataclass, fields
 
 import numpy as np
 
-from . import atmosphere, drag_coefficient, gravity
+from . import atmosphere, drag_coefficient, earth_radiation, gravity
 from .constants import (
     AU,
     C22,
@@ -277,9 +278,11 @@ class ForceModel:
     cd_model: str = "fixed"       # or "dria_sphere": Cd from the NRLMSIS air (see accel_drag)
     tides: bool = False           # the solid-Earth tide of the Sun and Moon (accel_tides)
     relativity: bool = False      # the Schwarzschild term (accel_relativity)
+    albedo: bool = False          # the Earth's reflected sunlight and infrared (earth_radiation)
 
-    TERMS = ("j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "tides", "relativity")
-    NEEDS_TIME = ("sun", "moon", "srp", "tides")   # where the Sun or Moon is
+    TERMS = ("j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "tides", "relativity",
+             "albedo")
+    NEEDS_TIME = ("sun", "moon", "srp", "tides", "albedo")   # where the Sun or Moon is
 
     def __post_init__(self):
         one_of(self.atmosphere, atmosphere.ATMOSPHERES, "atmosphere")
@@ -323,7 +326,7 @@ class ForceModel:
     def needs_time(self) -> bool:
         """True when a term needs the date (the Sun's or Moon's position, the
         space weather of NRLMSIS)."""
-        return self.sun or self.moon or self.srp or self.tides or self.msis_drag
+        return self.sun or self.moon or self.srp or self.tides or self.albedo or self.msis_drag
 
     @property
     def needs_gmst(self) -> bool:
@@ -338,7 +341,7 @@ class ForceModel:
         if self.drag:
             out.append("DRAG" if not self.msis_drag else
                        "DRAG(MSIS)" if self.cd_model == "fixed" else "DRAG(MSIS,Cd)")
-        out += [t.upper() for t in ("sun", "moon", "srp", "tides") if getattr(self, t)]
+        out += [t.upper() for t in ("sun", "moon", "srp", "albedo", "tides") if getattr(self, t)]
         return out + (["GR"] if self.relativity else [])
 
     def label(self) -> str:
@@ -366,11 +369,12 @@ class ForceModel:
         if self.drag:
             a += accel_drag(r, v, cd_a_over_m, self.density_scale, self.atmosphere, gmst, jd,
                             self.cd_model)
-        if self.sun or self.moon or self.srp or self.tides:
+        if self.sun or self.moon or self.srp or self.tides or self.albedo:
             if jd is None:
-                raise ValueError("the Sun, Moon, sunlight-pressure and tide terms need the "
-                                 "date (jd)")
-            rs = sun_position(jd) if (self.sun or self.srp or self.tides) else None
+                raise ValueError("the Sun, Moon, sunlight-pressure, albedo and tide terms "
+                                 "need the date (jd)")
+            rs = sun_position(jd) if (self.sun or self.srp or self.tides or self.albedo) \
+                else None
             rmn = moon_position(jd) if (self.moon or self.tides) else None
             if self.sun:
                 a += accel_third_body(r, rs, MU_SUN)
@@ -378,6 +382,11 @@ class ForceModel:
                 if cr_a_over_m is None:
                     raise ValueError("sunlight pressure needs Cr*A/m for each satellite")
                 a += accel_srp(r, rs, cr_a_over_m)
+            if self.albedo:
+                if cr_a_over_m is None:
+                    raise ValueError("the Earth's albedo and infrared need Cr*A/m for each "
+                                     "satellite")
+                a += earth_radiation.accel_earth_radiation(r, rs, cr_a_over_m, jd)
             if self.moon:
                 a += accel_third_body(r, rmn, MU_MOON)
             if self.tides:
@@ -417,6 +426,8 @@ class ForceModel:
             terms["Sun"] = (accel_third_body(r, rs, MU_SUN), self.sun)
             terms["Moon"] = (accel_third_body(r, moon_position(jd), MU_MOON), self.moon)
             terms["sunlight"] = (accel_srp(r, rs, cram), self.srp)
+            terms["albedo"] = (earth_radiation.accel_earth_radiation(r, rs, cram, jd),
+                               self.albedo)
             terms["tides"] = (accel_tides(r, rs, moon_position(jd)), self.tides)
         return {k: (float(np.linalg.norm(val[0])), bool(on)) for k, (val, on) in terms.items()}
 

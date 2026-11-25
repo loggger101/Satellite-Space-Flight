@@ -238,10 +238,6 @@ def export_live_script(sim: Simulation, path, start: str = "now", duration: floa
     else:
         scenario = sim.scenario.copy()
         origin = "the start of the scenario"
-    if sim.forces.drag and sim.forces.msis_drag and scenario.launches:
-        raise ValueError("the MATLAB runtime does not model NRLMSIS ascent air yet (its "
-                         "ascents fly the 1976 standard atmosphere); export once the "
-                         "launches are in orbit, or switch the atmosphere to the table")
     data = scenario.to_dict()
     data["epoch"] = _epoch_text(scenario.epoch)
     # the cross-check hands this to the simulator; it must read back (checked either way)

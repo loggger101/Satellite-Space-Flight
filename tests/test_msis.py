@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pymsis
@@ -419,13 +421,23 @@ def test_an_msis_run_flies_its_ascents_through_the_column_over_the_pad(table):
     assert asc_table.env.air is us76_density
 
 
-def test_an_msis_run_with_a_launch_is_not_exported_to_matlab_yet(table, tmp_path):
-    """MATLAB's ascents fly the 1976 standard; the NRLMSIS column over the pad is
-    not ported, so such a run is refused, not exported with other air."""
+def test_an_msis_run_with_a_launch_exports_to_matlab(table, tmp_path):
+    """MATLAB's ascents fly the NRLMSIS column over the pad too (its runtime's
+    msisColumn; matlab/tests/ExportTest nrlmsisAscent holds it to the simulator),
+    from the pad and in powered flight."""
     sim, _, _ = _launch_run("msis")
-    with pytest.raises(ValueError, match="NRLMSIS ascent air"):
-        export_live_script(sim, tmp_path / "up.m")
-    sim.advance(1500.0)                     # in orbit: no ascent left to fly
-    export_live_script(sim, tmp_path / "later.m", start="now")
-    table_sim, _, _ = _launch_run("table")
-    export_live_script(table_sim, tmp_path / "plain.m")
+    text = export_live_script(sim, tmp_path / "up.m").read_text(encoding="utf-8")
+    assert '"atmosphere", "msis"' in text and '"Up"' in text
+    sim.advance(1000.0)                     # 100 s into the ascent
+    export_live_script(sim, tmp_path / "flying.m", start="now")
+
+
+def test_the_matlab_column_heights_are_the_simulators():
+    """matlab_runtime.m's C.COLUMN_KM is launch.COLUMN_KM, so the two interpolate
+    the same NRLMSIS points."""
+    from satflight.launch import COLUMN_KM
+    src = (Path(__file__).parents[1] / "satflight" / "matlab_runtime.m").read_text(
+        encoding="utf-8")
+    m = re.search(r"^C\.COLUMN_KM = \[0:149, 150:10:1000\];", src, re.M)
+    assert m, "C.COLUMN_KM not found in matlab_runtime.m"
+    assert tuple(float(h) for h in (*range(0, 150), *range(150, 1001, 10))) == COLUMN_KM

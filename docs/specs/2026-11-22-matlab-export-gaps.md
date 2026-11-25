@@ -130,5 +130,8 @@ export loses nothing there.
 **NRLMSIS ascent air.** Under NRLMSIS, Python ascents fly the NRLMSIS
 column over the pad at liftoff (`launch.msis_column`, 2026-11-24); MATLAB
 ascents fly the 1976 standard density (ported with it). An NRLMSIS run with a
-launch still to fly is refused on export, naming "NRLMSIS ascent air". Port:
-the column from pymsis at liftoff in `matlab_runtime.m`, and an ExportTest.
+launch still to fly was refused on export until 2026-11-25, when the column
+was ported: `msisColumn` calls pymsis once over the pad at liftoff on
+`C.COLUMN_KM` (the simulator's grid, checked by test_msis) and `ascAir`
+interpolates it; `ExportTest/nrlmsisAscent` flies two storm-day launches
+against the simulator, from the pad and in powered flight.

@@ -280,6 +280,29 @@ def test_msis_arcs_go_to_their_own_file_and_can_be_picked(tmp_path, monkeypatch)
                       only=[("S1A", date(2025, 7, 16))])
 
 
+def test_physical_cd_arcs_go_to_their_own_file(tmp_path, monkeypatch):
+    """--cd-model dria_sphere (with --atmosphere msis) writes arcs_msis_dria.csv;
+    the table needs no Cd model and refuses one."""
+    seen = []
+
+    def accuracy_arc(m, d, model, mass, eop_table=None):
+        seen.append((model.atmosphere, model.cd_model))
+        return _fake_arc(m, d)
+    monkeypatch.setattr(tool.study, "accuracy_arc", accuracy_arc)
+    monkeypatch.setattr(tool.eop, "read", lambda: None)
+    monkeypatch.setattr(tool, "_WORKER", {})
+    tool.write_csv(tmp_path / "arcs_msis.csv", [], tool.ARC_COLUMNS)
+    before = (tmp_path / "arcs_msis.csv").read_bytes()
+    tool.run_arcs(date(2025, 7, 1), date(2025, 7, 20), out=lambda s: 0, dest=tmp_path,
+                  atmosphere="msis", cd_model="dria_sphere",
+                  only=[("S1A", date(2025, 7, 15)), ("S1C", date(2025, 7, 1))])
+    assert seen == [("msis", "dria_sphere")] * 2
+    assert len(tool.read_arcs(tmp_path, "msis", "dria_sphere")) == 2
+    assert (tmp_path / "arcs_msis_dria.csv").exists()
+    assert (tmp_path / "arcs_msis.csv").read_bytes() == before
+    assert tool.main(["arcs", "--cd-model", "dria_sphere"]) == 1     # the table: refused
+
+
 def test_the_arcs_come_out_in_date_order_whatever_order_they_finished_in(tmp_path):
     """Workers finish out of order and rows are appended as they do; the
     figures draw lines through the rows, so the file and its reader are sorted."""

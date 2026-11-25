@@ -151,6 +151,42 @@ five of the six:
 MSIS still runs light in the January 2026 storm: both satellites' fits want a
 scale of 1.36 there.
 
+**Physical drag coefficient** (opt-in; `"cd_model": "dria_sphere"` in the
+forces, Physics dialog: "Drag coefficient", needs MSIS). Cd is computed at
+each evaluation instead of held at the satellite's value: the Sentman
+free-molecular sphere (`satflight/drag_coefficient.py`) for every NRLMSIS
+species, mass-density weighted, with diffuse re-emission from a 300 K wall
+(the rms-speed form of Moe & Moe 2005) and the accommodation `alpha` from
+atomic oxygen (SESAM, `alpha = K P / (1 + K P)`, `P = n_O T`,
+`K = 7.5e-17 m^3/K`). It matches Moe & Moe's measured-alpha table within 0.035
+and their solar-maximum alpha within 0.03 at 250-450 km. The satellite's own Cd
+becomes a correction factor, `Cd / 2.2`, so a fitted or hand-set Cd still
+scales the result. At 693 km it gives Cd 3.0-3.2, moving -3% to +2.5% from
+day to day, against the density (lower in storms, when the oxygen rises).
+NRLMSIS species it does not model at a height count as zero; if the species
+then fail to add up to its total density within 1%, the step is refused.
+
+Against the same six arcs (rows in `arcs_msis_dria.csv`) it does not help, so
+the fixed Cd stays the default:
+
+| arc | weather | MSIS, fixed Cd | MSIS, physical Cd | fitted scale (fixed / physical) |
+|---|---|---|---|---|
+| 1A 2025-11-11 | storm | 508 m | 558 m | 0.98 / 0.69 |
+| 1A 2026-01-20 | storm | 1139 m | 1155 m | 1.36 / 0.97 |
+| 1C 2025-11-04 | storm | 226 m | 236 m | 0.78 / 0.54 |
+| 1C 2026-01-20 | storm | 130 m | 135 m | 1.36 / 0.98 |
+| 1A 2025-12-09 | quiet | 4.3 m | 4.5 m | 1.02 / 0.71 |
+| 1A 2025-08-05 | quiet | 22.4 m | 22.3 m | 1.00 / 0.69 |
+
+(Along-track RMS on the third predicted day.) Every arc stays within 10% of
+the fixed-Cd result, but the four storm arcs all get a little worse (median
+367 m to 397 m). The fitted scale drops by a near-constant 30% (the physical
+Cd is about 1.4 times the 2.2 it replaces) without spreading less (0.78-1.36
+against 0.54-0.98), so the day-to-day change in Cd is not what the fit was
+absorbing: the storm error is in the density. A panel model of the satellite,
+which this sphere is the base for, is the next drag item. MATLAB exports
+refuse a physical-Cd scenario until it is ported.
+
 **Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:
 `nu`, the visible fraction of the solar disc from the conical umbra /

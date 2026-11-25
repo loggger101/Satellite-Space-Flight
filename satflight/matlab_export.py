@@ -180,10 +180,10 @@ def _epoch_text(epoch: datetime) -> str:
 
 
 def unported_forces(forces) -> list[str]:
-    """The enabled force terms ``matlab_runtime.m`` cannot fly yet (none since
-    NRLMSIS drag was ported: the runtime calls pymsis through MATLAB's Python;
-    kept so a new term is refused, not dropped)."""
-    return []
+    """The enabled force terms ``matlab_runtime.m`` cannot fly yet, so a new
+    term is refused, not dropped: the physical drag coefficient (NRLMSIS drag
+    itself is ported; the runtime calls pymsis through MATLAB's Python)."""
+    return ["physical Cd"] if forces.drag and forces.cd_model != "fixed" else []
 
 
 def _field_lines(F) -> list[str]:

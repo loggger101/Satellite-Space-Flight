@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, fields
 
 import numpy as np
 
-from . import atmosphere, gravity
+from . import atmosphere, drag_coefficient, gravity
 from .constants import (
     AU,
     C22,
@@ -43,6 +43,9 @@ from .eclipse import shadow_fraction
 from .ephemeris import moon_position, sun_position
 from .frames import OMEGA_VEC, eci_to_geodetic, geodetic_height
 from .strict import check_keys, one_of
+
+CD_REF = 2.2      # the Cd a satellite's Cd*A/m is taken at under a physical Cd model
+CD_MODELS = ("fixed", "dria_sphere")   # forces "cd_model"
 
 # --- Individual terms --------------------------------------------------------------
 
@@ -138,20 +141,38 @@ def zonal_potential(r, j2=True, j3=False, j4=False, mu: float = MU_EARTH,
 
 
 def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0, atmosphere_model: str = "table",
-               gmst=None, jd=None):
+               gmst=None, jd=None, cd_model: str = "fixed"):
     """Drag. ``cd_a_over_m`` is Cd*A/m in m^2/kg, shape (N,). ``atmosphere_model``
     "table" (height only) or "msis" (NRLMSIS 2.1, which also needs ``gmst``, rad,
-    for the ground point under each satellite and ``jd``, UTC, for the time)."""
+    for the ground point under each satellite and ``jd``, UTC, for the time).
+
+    ``cd_model`` "dria_sphere" (NRLMSIS only): ``cd_a_over_m`` is taken at Cd
+    ``CD_REF`` and the drag uses the physical Cd of a sphere in the air at that
+    place and time (:func:`satflight.drag_coefficient.sphere_cd`) instead, so a
+    satellite's Cd other than 2.2 acts as a correction factor on the physics."""
     v_rel = v - np.cross(OMEGA_VEC, r)
+    speed = np.linalg.norm(v_rel, axis=-1)
     if atmosphere_model == "msis":
         if jd is None or gmst is None:
             raise ValueError("the NRLMSIS atmosphere needs the date (jd) and the Earth's "
                              "rotation angle (gmst)")
         lat, lon, h = eci_to_geodetic(r, gmst)
-        rho = atmosphere.msis_density(h, lat, lon, float(jd), density_scale)
+        if cd_model == "dria_sphere":
+            st = atmosphere.msis_state(h, lat, lon, float(jd))
+            rho = st.rho * density_scale
+            factor = np.ones_like(rho)
+            air = rho > 0.0
+            if air.any():
+                factor[air] = drag_coefficient.sphere_cd(
+                    speed[air] * 1e3, st.number_density[air], st.temperature[air]) / CD_REF
+            cd_a_over_m = cd_a_over_m * factor
+        else:
+            rho = atmosphere.msis_density(h, lat, lon, float(jd), density_scale)
+    elif cd_model != "fixed":
+        raise ValueError(f"the physical drag coefficient ({cd_model}) needs the NRLMSIS "
+                         "atmosphere")
     else:
         rho = atmosphere.density(geodetic_height(r), density_scale)   # kg/m^3
-    speed = np.linalg.norm(v_rel, axis=-1)
     # 0.5*rho*CdA/m*|v|v with v in m/s gives m/s^2; the km<->m factors net to 1e3
     k = -0.5e3 * rho * cd_a_over_m * speed
     return k[..., None] * v_rel
@@ -201,12 +222,18 @@ class ForceModel:
     moon: bool = False
     srp: bool = False
     atmosphere: str = "table"
+    cd_model: str = "fixed"       # or "dria_sphere": Cd from the NRLMSIS air (see accel_drag)
 
     TERMS = ("j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp")
     NEEDS_TIME = ("sun", "moon", "srp")          # where the Sun or Moon is
 
     def __post_init__(self):
         one_of(self.atmosphere, atmosphere.ATMOSPHERES, "atmosphere")
+        one_of(self.cd_model, CD_MODELS, "cd_model")
+        if self.cd_model != "fixed" and self.atmosphere != "msis":
+            raise ValueError(f"forces cd_model {self.cd_model!r} needs the NRLMSIS atmosphere "
+                             "(\"atmosphere\": \"msis\"): the table has no temperature or "
+                             "composition to work the drag coefficient out from")
         g = self.gravity_degree
         if isinstance(g, bool) or not isinstance(g, int) or not (
                 g == 0 or 2 <= g <= gravity.MAX_DEGREE):
@@ -254,7 +281,9 @@ class ForceModel:
         """The terms the acceleration actually includes, as labels."""
         out = [f"EGM{self.gravity_degree}"] if self.field else [
             t.upper() for t in ("j2", "j3", "j4", "c22") if getattr(self, t)]
-        out += ["DRAG(MSIS)" if self.msis_drag else "DRAG"] if self.drag else []
+        if self.drag:
+            out.append("DRAG" if not self.msis_drag else
+                       "DRAG(MSIS)" if self.cd_model == "fixed" else "DRAG(MSIS,Cd)")
         return out + [t.upper() for t in ("sun", "moon", "srp") if getattr(self, t)]
 
     def label(self) -> str:
@@ -280,7 +309,8 @@ class ForceModel:
             if self.c22:
                 a += accel_c22(r, gmst)
         if self.drag:
-            a += accel_drag(r, v, cd_a_over_m, self.density_scale, self.atmosphere, gmst, jd)
+            a += accel_drag(r, v, cd_a_over_m, self.density_scale, self.atmosphere, gmst, jd,
+                            self.cd_model)
         if self.sun or self.moon or self.srp:
             if jd is None:
                 raise ValueError("the Sun, Moon and sunlight-pressure terms need the date (jd)")
@@ -312,7 +342,8 @@ class ForceModel:
             # a switched-off drag is shown with the table: NRLMSIS needs measured
             # space weather the run itself does not
             "drag": (accel_drag(r, v, np.atleast_1d(cd_a_over_m), self.density_scale,
-                                self.atmosphere if self.drag else "table", gmst, jd),
+                                self.atmosphere if self.drag else "table", gmst, jd,
+                                self.cd_model if self.drag else "fixed"),
                      self.drag),
         }
         if self.field:

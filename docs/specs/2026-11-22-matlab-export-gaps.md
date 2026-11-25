@@ -119,3 +119,9 @@ export loses nothing there.
   before Python loads; R2026a warns that 3.14 is unsupported, so a 3.13 with
   pymsis is used here). `ExportTest/nrlmsisDrag` flies the 12 November 2025
   storm against the simulator; `nrlmsisPastTheMeasuredDays` checks the refusal.
+- Physical drag coefficient (forces "cd_model": "dria_sphere", added
+  2026-11-24, `satflight/drag_coefficient.py`). Not ported yet: an export with
+  it on is refused (`unported_forces` names "physical Cd"). Port as its own PR
+  after the Python one: `satflight.dragCoefficient` (Sentman sphere, SESAM
+  accommodation, the species mixture; pymsis already returns the species and
+  temperature it needs) and an ExportTest against the simulator.

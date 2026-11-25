@@ -29,7 +29,7 @@ compares it with theory).
 
 | function | what it adds |
 |---|---|
-| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`, `GravityDegree` for the EGM2008 field, `Atmosphere` "table" or "msis" for drag, `CdModel` "fixed" or "dria_sphere" for the physical Cd under "msis", `Tides` and `Relativity`), integrator settings |
+| `newScenario(name, ...)` | epoch, propagator, force terms (`J2`, `J3`, `J4`, `C22`, `Drag`, `Sun`, `Moon`, `Srp`, `GravityDegree` for the EGM2008 field, `Atmosphere` "table" or "msis" for drag, `CdModel` "fixed" or "dria_sphere" for the physical Cd under "msis", `Tides`, `Relativity` and `Albedo`), integrator settings |
 | `addSatellite(sc, name, orbit, ...)` | a satellite, or `Count` copies along one orbit; `Mass`, `Area`, `Cd`, `Cr`, `Color` |
 | `addConstellation(sc, name, ...)` | a Walker shell: `Altitude`, `Inclination`, `Total`, `Planes`, `Phasing`, `Pattern` |
 | `addStation(sc, name, lat, lon, ...)` | a ground station; `Alt`, `MinEl` |

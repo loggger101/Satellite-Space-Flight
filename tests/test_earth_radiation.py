@@ -9,6 +9,8 @@ held to their published coefficients (Knocke, Ries & Tapley 1988).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -111,7 +113,29 @@ def test_the_force_model_switch_adds_the_term_and_needs_cr():
     assert ForceModel.from_dict(on.to_dict()) == on
 
 
-def test_the_matlab_export_refuses_albedo_until_ported():
+def test_the_matlab_export_carries_the_albedo_switch(tmp_path):
     from satflight.forces import ForceModel
-    from satflight.matlab_export import unported_forces
-    assert unported_forces(ForceModel(albedo=True)) == ["Earth albedo and infrared"]
+    from satflight.matlab_export import export_live_script, unported_forces
+    from satflight.scenario import SatSpec, Scenario
+    from satflight.simulation import Simulation
+    assert unported_forces(ForceModel(albedo=True)) == []
+    sc = Scenario(name="Bright", forces=ForceModel(albedo=True),
+                  satellites=[SatSpec("S", {"type": "elements", "altitude": 700, "i": 98})])
+    text = export_live_script(Simulation(sc), tmp_path / "bright.m", "start", 60, 60).read_text(
+        encoding="utf-8")
+    assert '"albedo", true, ' in text
+
+
+def test_the_matlab_gauss_legendre_nodes_are_numpys():
+    """matlab_runtime.m builds its nodes (Golub-Welsch); this is the same
+    construction in numpy, held to leggauss, so a slip there shows here."""
+    for n in (10, 16):
+        k = np.arange(1, n)
+        beta = k / np.sqrt(4 * k * k - 1)
+        vals, vecs = np.linalg.eigh(np.diag(beta, 1) + np.diag(beta, -1))
+        x, w = np.polynomial.legendre.leggauss(n)
+        np.testing.assert_allclose(vals, x, atol=1e-14)
+        np.testing.assert_allclose(2 * vecs[0] ** 2, w, atol=1e-14)
+    src = Path(__file__).resolve().parents[1] / "satflight" / "matlab_runtime.m"
+    t = src.read_text(encoding="utf-8")
+    assert f"gaussLegendre({er.N_RINGS})" in t and f"C.ALB_SECTORS = {er.N_SECTORS};" in t

@@ -131,7 +131,7 @@ taking shape and the time to cutoff.
   Earth's shadow)
 - **Solid-Earth tides** of the Sun and Moon and the **relativity** (Schwarzschild)
   term, as IERS 2010 gives them, and the **Earth's albedo and infrared** pushing on the
-  satellite (Knocke's model) (switches; albedo not in MATLAB exports yet)
+  satellite (Knocke's model) (switches)
 - **Atmospheric drag** (piecewise-exponential atmosphere, or **NRLMSIS 2.1** driven by
   measured space weather; co-rotating with the Earth,
   solar-activity scale factor)

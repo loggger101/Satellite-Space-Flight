@@ -181,11 +181,12 @@ def _epoch_text(epoch: datetime) -> str:
 
 def unported_forces(forces) -> list[str]:
     """The enabled force terms ``matlab_runtime.m`` cannot fly yet, so a new
-    term is refused, not dropped. NRLMSIS drag and the physical drag
-    coefficient (the runtime calls pymsis through MATLAB's Python), the
-    solid-Earth tides and relativity are ported; the Earth's albedo and
-    infrared (added 2026-11-25) are not yet."""
-    return ["Earth albedo and infrared"] if forces.albedo else []
+    term is refused, not dropped. None today: NRLMSIS drag and the physical
+    drag coefficient (the runtime calls pymsis through MATLAB's Python), the
+    solid-Earth tides, relativity and the Earth's albedo and infrared are
+    ported; a term added to :class:`ForceModel` goes here until it is."""
+    del forces
+    return []
 
 
 def _field_lines(F) -> list[str]:
@@ -450,6 +451,7 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             f"\"densityScale\", {_num(F.density_scale)}, \"sun\", {_bool(F.sun)}, "
             f"\"moon\", {_bool(F.moon)}, \"srp\", {_bool(F.srp)}, "
             f"\"tides\", {_bool(F.tides)}, \"relativity\", {_bool(F.relativity)}, "
+            f"\"albedo\", {_bool(F.albedo)}, "
             f"\"gravityDegree\", {F.gravity_degree}, \"atmosphere\", {_str(F.atmosphere)}, "
             f"\"cdModel\", {_str(F.cd_model)});"
             "   % gravityDegree N > 0: the EGM2008 field to N in place of J2, J3, J4 and C22; "

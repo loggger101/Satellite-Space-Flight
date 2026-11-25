@@ -133,6 +133,13 @@ export loses nothing there.
   `ExportTest/tidesAndRelativity` holds a 693 km and a 500 x 20,000 km orbit
   to the simulator under 1 mm in 12 h; `newScenario` takes `Tides` and
   `Relativity`.
+- Earth albedo and infrared (forces "albedo", added 2026-11-25). Ported the
+  same day: `earthRadiation` sums the same rays as
+  `earth_radiation.accel_earth_radiation` (its Gauss-Legendre nodes built by
+  `gaussLegendre`, the construction test_earth_radiation holds to numpy's),
+  and the diagnostics gain `acc_albedo_ms2`. `ExportTest/earthAlbedo` holds a
+  Sentinel-like satellite and a light sail to the simulator under 1 mm in
+  12 h; `newScenario` takes `Albedo`.
 
 **NRLMSIS ascent air.** Under NRLMSIS, Python ascents fly the NRLMSIS
 column over the pad at liftoff (`launch.msis_column`, 2026-11-24); MATLAB

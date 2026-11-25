@@ -14,6 +14,8 @@ function sc = newScenario(name, opts)
 %     Srp           sunlight pressure, with each satellite's Cr (logical; default off)
 %     Tides         the solid-Earth tide of the Sun and Moon (logical; default off)
 %     Relativity    the Schwarzschild relativity term (logical; default off)
+%     Albedo        the Earth's reflected sunlight and infrared, Knocke's model, with
+%                   each satellite's Cr (logical; default off)
 %     GravityDegree the EGM2008 field to this degree and order (2..70) in place of
 %                   J2, J3, J4 and C22 (default 0: those terms)
 %     DensityScale  multiplies the atmosphere's density (default 1)
@@ -47,6 +49,7 @@ arguments
     opts.Srp (1,1) logical
     opts.Tides (1,1) logical
     opts.Relativity (1,1) logical
+    opts.Albedo (1,1) logical
     opts.GravityDegree (1,1) double
     opts.DensityScale (1,1) double
     opts.Atmosphere (1,1) string
@@ -73,7 +76,7 @@ end
 forces = copyOptions(struct(), opts, ["J2", "j2"; "J3", "j3"; "J4", "j4"; "C22", "c22"; ...
     "Drag", "drag"; "DensityScale", "density_scale"; "Sun", "sun"; "Moon", "moon"; ...
     "Srp", "srp"; "GravityDegree", "gravity_degree"; "Atmosphere", "atmosphere"; ...
-    "CdModel", "cd_model"; "Tides", "tides"; "Relativity", "relativity"]);
+    "CdModel", "cd_model"; "Tides", "tides"; "Relativity", "relativity"; "Albedo", "albedo"]);
 if ~isempty(fieldnames(forces))
     sc.forces = forces;
 end

@@ -580,7 +580,8 @@ def test_the_sun_moon_and_sunlight_pressure_export_with_each_satellites_cr(tmp_p
     text = export_live_script(Simulation(sc), tmp_path / "lit.m", "start", 600, 60).read_text(
         encoding="utf-8")
     assert re.search(r'^sim\.forces = struct\(.*"sun", true, "moon", true, "srp", true, '
-                     r'"gravityDegree", 0, "atmosphere", "table"\);', text, re.M)
+                     r'"gravityDegree", 0, "atmosphere", "table", "cdModel", "fixed"\);',
+                     text, re.M)
     props = [[float(x) for x in r.split()] for r in block(text, "props")]
     assert [p[3] for p in props] == [1.8, 1.3]
     assert "sim.cr = props(:, 4);" in text

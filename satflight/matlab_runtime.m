@@ -366,7 +366,9 @@ F = sim.forces;
 field = F.gravityDegree > 0;      % the field stands in for J2, J3, J4 and C22
 on = [~field & [F.j2, F.j3, F.j4, F.c22], field, F.drag, F.sun, F.moon, F.srp];
 drag = "DRAG";
-if msisDrag(F)
+if physicalCd(F)
+    drag = "DRAG(MSIS,Cd)";
+elseif msisDrag(F)
     drag = "DRAG(MSIS)";
 end
 terms = ["J2", "J3", "J4", "C22", "EGM" + F.gravityDegree, drag, "SUN", "MOON", "SRP"];
@@ -1647,7 +1649,20 @@ if F.drag
         % NRLMSIS 2.1 at each satellite's ground point and height, at the date
         c = cos(theta); s = sin(theta);
         [lat, lon, h] = ecefToGeodetic([c .* x + s .* y, -s .* x + c .* y, z], C);
-        rho = msisDensity(h, lat, lon, jd, F, C);
+        if physicalCd(F)
+            % a sphere's Cd in that air; cdam holds Cd A / m at C.CD_REF, so the
+            % satellite's own Cd is a correction factor on it (forces.accel_drag)
+            [rho, nd, temp] = msisState(h, lat, lon, jd, F, C);
+            air = rho > 0;
+            if any(air)
+                speed = vecnorm(vRel, 2, 2);
+                factor = ones(size(rho));
+                factor(air) = sphereCd(speed(air) * 1e3, nd(air, :), temp(air), C) / C.CD_REF;
+                cdam = cdam .* factor;
+            end
+        else
+            rho = msisDensity(h, lat, lon, jd, F, C);
+        end
     else
         rho = density(geodeticHeight(r, C), F.densityScale, C);
     end
@@ -1733,6 +1748,23 @@ function tf = msisDrag(F)
 tf = F.drag && isfield(F, "atmosphere") && F.atmosphere == "msis";
 end
 
+function tf = physicalCd(F)
+% whether drag takes a sphere's Cd in the NRLMSIS air (forces "cd_model": "dria_sphere");
+% any other model is refused, not flown as fixed
+tf = false;
+if ~isfield(F, "cdModel") || F.cdModel == "fixed"
+    return
+end
+if F.cdModel ~= "dria_sphere"
+    error("satflight:cdModel", "Unknown drag coefficient model ""%s"" (fixed or " + ...
+        "dria_sphere).", F.cdModel);
+end
+if F.drag && ~msisDrag(F)
+    error("satflight:cdModel", "The physical drag coefficient needs the NRLMSIS atmosphere.");
+end
+tf = F.drag;
+end
+
 function F = msisSetup(F, folder, C)
 % NRLMSIS's inputs, once per run: the measured space weather and pymsis
 F.sw = spaceWeatherLoad(folder, C);
@@ -1767,15 +1799,51 @@ function rho = msisDensity(h, lat, lon, jd, F, C)
 % NRLMSIS 2.1 total mass density (kg/m^3) at geodetic heights (km), latitudes and
 % longitudes (rad), all at the one UTC Julian date jd, times F.densityScale; zero above
 % 2500 km like the table (atmosphere.msis_density)
+rho = zeros(size(h));
+air = h <= C.ATM_TOP;
+if ~any(air)
+    return
+end
+out = msisCall(h(air), lat(air), lon(air), jd, F);
+rho(air) = out(:, 1) * F.densityScale;
+end
+
+function [rho, nd, temp] = msisState(h, lat, lon, jd, F, C)
+% msisDensity's air with pymsis's nine species (m^-3, in C.SPECIES_KG's order; none
+% where MSIS leaves one out) and its temperature (K); refused when the species do not
+% add up to the total density within C.SPECIES_SUM_TOL (atmosphere.msis_state)
+rho = zeros(size(h));
+nd = zeros(numel(h), numel(C.SPECIES_KG));
+temp = zeros(size(h));
+air = h <= C.ATM_TOP;
+if ~any(air)
+    return
+end
+out = msisCall(h(air), lat(air), lon(air), jd, F);
+if any(~isfinite(out(:, 1))) || any(~isfinite(out(:, 11)))
+    error("satflight:msis", "NRLMSIS returned a non-finite density or temperature.");
+end
+species = out(:, 2:10);
+species(isnan(species)) = 0;
+total = species * C.SPECIES_KG(:);
+off = abs(total ./ out(:, 1) - 1) > C.SPECIES_SUM_TOL;
+if any(off)
+    k = find(off, 1);
+    error("satflight:msis", "NRLMSIS species add up to %.4g kg/m^3 but its density " + ...
+        "is %.4g.", total(k), out(k, 1));
+end
+rho(air) = out(:, 1) * F.densityScale;
+nd(air, :) = species;
+temp(air) = out(:, 11);
+end
+
+function out = msisCall(h, lat, lon, jd, F)
+% pymsis's output (one row per point: density, nine species, temperature) at heights
+% (km), latitudes and longitudes (rad), all at the one UTC Julian date jd
 if ~isscalar(jd)
     error("satflight:internal", "NRLMSIS takes one date per call, got %d.", numel(jd));
 end
-rho = zeros(size(h));
-air = h <= C.ATM_TOP;
-n = nnz(air);
-if n == 0
-    return
-end
+n = numel(h);
 ms = msisMillis(jd);
 [f107, f107a, ap] = spaceWeatherIndices(F.sw, ms);
 whole = floor(ms / 86400000);
@@ -1788,11 +1856,34 @@ aps = cell(1, n);
 for k = 1:n
     aps{k} = py.list(num2cell(ap));
 end
-out = F.msis.calculate(py.list(repmat({char(utc)}, 1, n)), rad2deg(lon(air).'), ...
-    rad2deg(lat(air).'), max(h(air), 0).', repmat(f107, 1, n), repmat(f107a, 1, n), ...
+out = F.msis.calculate(py.list(repmat({char(utc)}, 1, n)), rad2deg(lon(:).'), ...
+    rad2deg(lat(:).'), max(h(:), 0).', repmat(f107, 1, n), repmat(f107a, 1, n), ...
     py.list(aps), pyargs("geomagnetic_activity", int32(-1)));
 out = double(out);
-rho(air) = out(:, 1) * F.densityScale;
+end
+
+function cd = sphereCd(v, nd, temp, C)
+% the drag coefficient of a sphere in free-molecular flow (drag_coefficient.sphere_cd):
+% Sentman's closed form for each species, diffuse reemission from a C.WALL_K wall (rms
+% form), SESAM accommodation from the atomic oxygen, weighted by mass density; v the
+% speed through the air (m/s, N x 1), nd the species (m^-3, N x 9), temp the air's (K)
+m = C.SPECIES_KG(:).';
+rhoJ = nd .* m;
+rho = sum(rhoJ, 2);
+if any(rho <= 0)
+    error("satflight:cd", "Drag coefficient: no air (every species density is zero).");
+end
+p = C.SESAM_K * nd(:, 3) .* temp;                   % column 3: atomic oxygen
+alpha = p ./ (1 + p);
+s = v ./ sqrt(2 * C.K_B * temp ./ m);
+if any(s(:) < C.MIN_SPEED_RATIO)
+    error("satflight:cd", "Drag coefficient: speed ratio below %g.", C.MIN_SPEED_RATIO);
+end
+vr = sqrt(1 + alpha .* (3 * (C.K_B ./ m) * C.WALL_K ./ v .^ 2 - 1));
+s2 = s .^ 2;
+cdJ = exp(-s2) .* (1 + 2 * s2) ./ (sqrt(pi) * s2 .* s) ...
+    + (4 * s2 .^ 2 + 4 * s2 - 1) ./ (2 * s2 .^ 2) .* erf(s) + 2 * sqrt(pi) / 3 * vr;
+cd = sum(rhoJ .* cdJ, 2) ./ rho;
 end
 
 function W = spaceWeatherLoad(folder, C)
@@ -4153,6 +4244,15 @@ C.MAX_BURN = 3600.0;          % s
 % satflight/atmosphere.py: base altitude km, density kg/m^3, scale height km
 C.TOP_KM = 2500.0;
 C.ATM_TOP = 2500;              % km: no air above it, in the table and NRLMSIS
+% satflight/drag_coefficient.py and atmosphere.py: the physical Cd
+C.CD_REF = 2.2;                % the Cd a satellite's Cd A / m is taken at (forces.CD_REF)
+C.K_B = 1.380649e-23;          % J/K
+C.SESAM_K = 7.50e-17;          % m^3/K
+C.WALL_K = 300.0;              % K
+C.MIN_SPEED_RATIO = 0.1;
+C.SPECIES_SUM_TOL = 0.01;      % species vs total density
+C.SPECIES_KG = [28.0134 31.9988 15.9994 4.002602 1.00794 39.948 14.0067 15.9994 ...
+    30.0061] * 1.66053907e-27;   % N2 O2 O He H Ar N anomalous-O NO
 % CelesTrak's SW-All.csv columns (spaceweather.HEADER)
 C.SW_HEADER = "DATE,BSRN,ND,KP1,KP2,KP3,KP4,KP5,KP6,KP7,KP8,KP_SUM,AP1,AP2,AP3,AP4,AP5," + ...
     "AP6,AP7,AP8,AP_AVG,CP,C9,ISN,F10.7_OBS,F10.7_ADJ,F10.7_DATA_TYPE," + ...
@@ -5682,6 +5782,9 @@ for q = 1:numel(present)
         end
         if terms(j) == "drag" && msisDrag(F)
             G.atmosphere = F.atmosphere;
+            if isfield(F, "cdModel")
+                G.cdModel = F.cdModel;
+            end
             G.sw = F.sw;
             G.msis = F.msis;
         end

@@ -67,6 +67,7 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("customLaunches",),                                       # 79
                 ("egm2008Field",),
                 ("nrlmsisDrag", "nrlmsisPastTheMeasuredDays"),
+                ("physicalCd",),
                 ("preciseOrbitReplay", "replayWithoutItsFiles"))
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
 BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in

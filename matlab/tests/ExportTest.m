@@ -161,6 +161,31 @@ classdef ExportTest < ExportCase
             tc.verifyTrue(all(out.diagnostics.acc_drag_ms2 > 0));
         end
 
+        function nrlmsisAscent(tc)
+            % under NRLMSIS an ascent flies the NRLMSIS column over its pad at liftoff
+            % (launch.msis_column), in the storm: two launches from far-apart pads, 15 and
+            % 40 minutes in, held to the simulator, the max-Q lines word for word; then
+            % exported again with the first one in powered flight
+            tc.assumeTrue(hasSpaceWeather(), "the space-weather table is not here");
+            sc = satflight.newScenario("Storm launches", Drag=true, Atmosphere="msis", ...
+                Epoch=datetime(2025, 11, 12, 0, 0, 0, TimeZone="UTC"));
+            sc = satflight.addLaunch(sc, "Up", Vehicle="Falcon 9 (approx.)", Lat=28.56, ...
+                Lon=-80.58, PerigeeAlt=400, ApogeeAlt=400, Inclination=51.6, ...
+                Direction="north", Timing="delay", Delay=900, PayloadMass=5000);
+            sc = satflight.addLaunch(sc, "South", Vehicle="Electron (approx.)", ...
+                Lat=-39.26, Lon=177.86, PerigeeAlt=200, ApogeeAlt=500, Inclination=97.4, ...
+                Direction="south", Timing="delay", Delay=2400, PayloadMass=150, ...
+                Circularize=true);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "storm_launches.json"));
+            [~, out] = tc.check(tc.export(file, "stormlaunches", ["--duration", "1h", ...
+                "--step", "60"]));
+            tc.verifyEqual([out.launches.outcome], [out.launches.plannedOutcome]);
+            tc.verifyEqual(nnz(contains(out.events.text, "max Q")), 2);
+            [~, out] = tc.check(tc.export(file, "stormlaunchesflying", ["--at", "1000", ...
+                "--duration", "1h", "--step", "60"]));
+            tc.verifyEqual(sum(arrayfun(@(L) ~isempty(L.state), out.sim.launches)), 1);
+        end
+
         function nrlmsisPastTheMeasuredDays(tc)
             % the 81-day mean F10.7 reaches predictions in the last 40 days of the
             % table: a run there stops with the reason, as the simulator does

@@ -47,6 +47,9 @@ if msisDrag(F)
     % NRLMSIS drag: the measured space weather (read here) and pymsis (MATLAB's Python)
     s.sim.forces = msisSetup(F, sim.dataFolder, C);
     spaceWeatherIndices(s.sim.forces.sw, msisMillis(sim.jd0));  % a start it cannot serve
+    % each ascent flies the NRLMSIS column over its pad at liftoff (ascAtPad), unscaled
+    s.env.msisForces = s.sim.forces;
+    s.env.msisForces.densityScale = 1;
 end
 n = numel(sim.names);
 s.names = reshape(string(sim.names), [], 1);
@@ -3096,7 +3099,7 @@ A = struct();
 A.spec = L;
 A.veh = V;
 A.res = res;
-A.env = env;
+A.env = ascAtPad(env, L, res.t0, C);
 A.kickDeg = kickDeg;
 A.kick = deg2rad(kickDeg);
 A.record = record;
@@ -3406,7 +3409,7 @@ w = [s(4) + C.OMEGA * s(2), s(5) - C.OMEGA * s(1), s(6)];
 sp = sqrt(dot3(w, w));
 rho = 0;
 if alt < C.TOP_KM
-    rho = ascDensity(alt, C) * A.env.densityScale;
+    rho = ascAir(alt, A.env, C) * A.env.densityScale;
 end
 A.q = 0.5 * rho * (sp * 1e3) ^ 2;
 g = ascGravity(s(1), s(2), s(3), A.env, C);
@@ -3718,6 +3721,54 @@ z = s(3) / rm;
 h = rm - C.RE * (1 - C.F * z * z);
 end
 
+function env = ascAtPad(env, L, t0, C)
+% the environment for an ascent from L's pad lifting off at run time t0: under NRLMSIS
+% with the column there and then (launch.AscentEnv.at_pad), else unchanged
+if ~isfield(env, "msisForces")
+    return
+end
+env.column = msisColumn(L.lat, L.lon, env.jd0 + t0 / 86400, env.msisForces, C);
+env = rmfield(env, "msisForces");
+end
+
+function col = msisColumn(latDeg, lonDeg, jd, F, C)
+% the NRLMSIS density over one place at one UTC Julian date, on C.COLUMN_KM, as logs
+% for ascAir (launch.msis_column); every height must have air
+hs = C.COLUMN_KM(:);
+rho = msisDensity(hs, repmat(deg2rad(latDeg), size(hs)), repmat(deg2rad(lonDeg), ...
+    size(hs)), jd, F, C);
+if ~all(rho > 0)
+    error("satflight:msis", "NRLMSIS gave no air at some height over (%g, %g) deg.", ...
+        latDeg, lonDeg);
+end
+col = struct("h", hs, "logRho", log(rho));
+end
+
+function rho = ascAir(h, env, C)
+% the air an ascent flies through (kg/m^3) at geometric height h km, unscaled: the
+% NRLMSIS column over its pad (log-linear between C.COLUMN_KM, the ground's below 0,
+% the last step's scale height above 1000 km, none above C.TOP_KM), else ascDensity
+if ~isfield(env, "column")
+    rho = ascDensity(h, C);
+    return
+end
+if h > C.TOP_KM
+    rho = 0;
+    return
+end
+hc = max(h, 0);
+if hc < 150
+    k = floor(hc) + 1;
+else
+    k = 151 + floor((hc - 150) / 10);
+end
+hs = env.column.h;
+lr = env.column.logRho;
+k = min(k, numel(hs) - 1);
+f = (hc - hs(k)) / (hs(k + 1) - hs(k));
+rho = exp(lr(k) + f * (lr(k + 1) - lr(k)));
+end
+
 function rho = ascDensity(h, C)
 % the air an ascent flies through (kg/m^3) at geometric height h km, unscaled: the US
 % Standard Atmosphere 1976, p / (R T), to 86 km, the orbit table above (launch.us76_density)
@@ -3783,7 +3834,7 @@ alt = ascAltitude(s, C);
 m = m0 - mdot * tau;
 sp = sqrt(w(1) * w(1) + w(2) * w(2) + w(3) * w(3));
 if cdA > 0 && alt < C.TOP_KM
-    rho = ascDensity(alt, C) * env.densityScale;
+    rho = ascAir(alt, env, C) * env.densityScale;
     g = g + (-0.5e3 * rho * cdA / m * sp) * w;
 end
 if mdot > 0
@@ -4244,6 +4295,7 @@ C.MAX_BURN = 3600.0;          % s
 % satflight/atmosphere.py: base altitude km, density kg/m^3, scale height km
 C.TOP_KM = 2500.0;
 C.ATM_TOP = 2500;              % km: no air above it, in the table and NRLMSIS
+C.COLUMN_KM = [0:149, 150:10:1000];   % km: an ascent's NRLMSIS column (launch.COLUMN_KM)
 % satflight/drag_coefficient.py and atmosphere.py: the physical Cd
 C.CD_REF = 2.2;                % the Cd a satellite's Cd A / m is taken at (forces.CD_REF)
 C.K_B = 1.380649e-23;          % J/K

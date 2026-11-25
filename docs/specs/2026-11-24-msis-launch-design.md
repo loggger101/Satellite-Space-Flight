@@ -79,5 +79,6 @@ see docs/specs/2026-11-24-electron-to-500-km.md.)
   own pad and liftoff time (tests/test_msis.py). Planted defects (the table
   in place of US76, the column at the run's start or with latitude and
   longitude swapped) each fail a test.
-- An NRLMSIS run with a launch still to fly is refused on MATLAB export
+- (2026-11-25: the MATLAB column is ported, `msisColumn`; the refusal below
+  is gone.) An NRLMSIS run with a launch still to fly is refused on MATLAB export
   until the column is ported (matlab-export-gaps).

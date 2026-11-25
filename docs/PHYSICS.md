@@ -451,8 +451,9 @@ its pad at liftoff instead: one call on a height grid (1 km steps to 150 km,
 tested between grid points).
 The Sun hardly matters for an ascent (NRLMSIS at solar minimum and maximum
 agree within 10 % below 100 km); the column brings the season, the latitude
-and the weather of the day. MATLAB exports fly the 1976 standard; an NRLMSIS
-run with a launch still to fly is not exported yet. An
+and the weather of the day. MATLAB exports fly the same: the 1976 standard,
+or the NRLMSIS column on the same grid (`msisColumn`, held to the simulator by
+`ExportTest/nrlmsisAscent`). An
 acceleration limit, if set, throttles between 40 and 100 %; where even 40 %
 exceeds it the log says so once per stage. The liftoff thrust-to-weight is
 measured against the weight along the plumb line, gravity less the Earth's

@@ -14,6 +14,7 @@ for the selected satellite.
 from __future__ import annotations
 
 import math
+from typing import NamedTuple
 
 import numpy as np
 import pygame
@@ -22,7 +23,7 @@ from ..constants import R_EARTH
 from ..eclipse import shadow_fraction
 from ..elements import perifocal_axes
 from ..ephemeris import sun_position
-from ..lifetime import YEAR, rule_check
+from ..lifetime import MAX_YEARS, MSIS_MAX_YEARS, YEAR, rule_check
 from ..orbitinfo import OrbitInfo
 from ..simulation import dv_left
 from . import glossary, theme, tips
@@ -574,10 +575,11 @@ def draw_section(surf, fonts, x, y, w, title, rows) -> int:
     return y + px(6)
 
 
-def span(seconds: float) -> str:
-    """A long time span, in the unit that reads best: hours, days or years."""
+def span(seconds: float, horizon: float = MAX_YEARS) -> str:
+    """A long time span, in the unit that reads best: hours, days or years;
+    ``inf`` is "over ``horizon`` years"."""
     if seconds == math.inf:
-        return "over 1,000 years"
+        return f"over {horizon:,.0f} years"
     if seconds < 2 * 86400:
         return f"{seconds / 3600:.0f} hours"
     if seconds < 120 * 86400:
@@ -586,17 +588,31 @@ def span(seconds: float) -> str:
     return f"{years:.1f} years" if years < 10 else f"{years:,.0f} years"
 
 
+class ForecastLife(NamedTuple):
+    """The NRLMSIS lifetime (seconds left) under the forecast Sun's mean, high
+    ("busy") and low ("quiet") levels, and the forecast's last month (after it,
+    the mean of the measured cycles)."""
+    mean: float
+    busy: float
+    quiet: float
+    until: str
+
+
 def lifetime_rows(life, density_scale: float, atmosphere: str = "table"):
     """Rows for the estimated lifetime: ``life`` is seconds left under the
-    run's air (see App.lifetime), or a phrase saying why there is none. The
-    estimate always uses the mean-Sun table; under NRLMSIS (``atmosphere``
-    "msis") the row says so."""
+    run's air (see App.lifetime), a :class:`ForecastLife` under NRLMSIS, or a
+    phrase saying why there is none."""
     if life is None:
         return []
-    name = "Lifetime (table)" if atmosphere == "msis" else "Lifetime"
     if isinstance(life, str):
-        return [(name, life)]
-    rows = [(name, span(life))]
+        return [("Lifetime", life)]
+    if isinstance(life, ForecastLife):
+        h = MSIS_MAX_YEARS
+        return [("Lifetime", span(life.mean, h)),
+                ("Busy / quiet Sun", f"{span(life.busy, h)} / {span(life.quiet, h)}"),
+                ("Future Sun", f"SWPC to {life.until}, then mean cycles"),
+                ("Deorbit rules", rule_check(life.mean))]
+    rows = [("Lifetime", span(life))]
     if 0 < life < math.inf and density_scale > 0:
         mean = life * density_scale            # the lifetime goes as 1 / density
         rows.append(("At solar max / min", f"{span(mean / 3.0)} / {span(mean / 0.3)}"))
@@ -607,9 +623,9 @@ def lifetime_rows(life, density_scale: float, atmosphere: str = "table"):
 def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf,
                       life=None, density_scale: float = 1.0, atmosphere: str = "table"):
     """The Orbit tab's property sheet: [(section title, [(label, value)])].
-    ``life``, ``density_scale`` and ``atmosphere``: see :func:`lifetime_rows`;
-    the perigee air is the table's too, marked so under NRLMSIS."""
-    table = " (table)" if atmosphere == "msis" else ""
+    ``life``, ``density_scale`` and ``atmosphere``: see :func:`lifetime_rows`.
+    The perigee air is the run's own (``info``, from :func:`orbit_info` with
+    the run's atmosphere)."""
     el = info.el
     D = math.degrees
     closed = info.closed
@@ -676,10 +692,10 @@ def property_sections(info: OrbitInfo, dv_used: float, dv_left: float = math.inf
         ("Area / Cd", f"{info.area:g} m^2 / {info.cd:g}"),
         ("Area-to-mass", num(info.area_to_mass, "m^2/kg", 4)),
         ("Ballistic coeff m/CdA", num(info.ballistic, "kg/m^2", 1)),
-        ("Perigee density" + table, unless_arc(
+        ("Perigee density", unless_arc(
             f"{info.rho_perigee:.2e} kg/m^3, {info.perigee_height:,.0f} km"
             if info.rho_perigee else "none")),
-        ("Drag at perigee" + table, unless_arc(f"{info.drag_perigee:.3e} m/s^2"
+        ("Drag at perigee", unless_arc(f"{info.drag_perigee:.3e} m/s^2"
                                        if info.rho_perigee else "none")),
         *lifetime_rows(life, density_scale, atmosphere),
         ("Delta-v spent", num(dv_used * 1000, "m/s", 2)),

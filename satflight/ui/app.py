@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pygame
 
-from .. import lifetime
+from .. import lifetime, solarforecast
 from ..constants import R_EARTH
 from ..frames import geodetic_height
 from ..orbitinfo import orbit_info
@@ -22,6 +22,7 @@ from ..tle import split_tles
 from . import background, burnnode, dialogs, launchui, theme, tips, welcome
 from .camera import Camera
 from .groundtrack import GroundTrackView
+from .orbitpanel import ForecastLife
 from .orbitviz import MODES as GEOMETRY_MODES
 from .panels import (
     GAP,
@@ -318,11 +319,14 @@ class App:
         if asc is not None and asc.phase == "pad":
             return None                 # a rocket on its pad has no orbit to inspect
         s = self.sim.sats[i]
+        msis = self.sim.forces.msis_drag
         key = (i, self.sim.t, self.sim.n, self.sim.y[i].tobytes(), id(self.sim),
-               s.mass, s.area, s.cd, self.sim.forces.density_scale)
+               s.mass, s.area, s.cd, self.sim.forces.density_scale, msis)
         if key != self._info_key:
             self._info = orbit_info(self.sim.y[i, :3], self.sim.y[i, 3:], self.sim.jd(), s,
-                                    self.sim.forces.density_scale)
+                                    self.sim.forces.density_scale,
+                                    "msis" if msis else "table",
+                                    self.sim.gmst() if msis else None)
             self._info_key = key
         return self._info
 
@@ -330,8 +334,12 @@ class App:
         """Estimated time left before the selected satellite comes down:
         seconds under the run's air, or a phrase saying why there is none (no
         drag in the run, an open orbit). ``None`` when there is no orbit.
+        Under NRLMSIS, a :class:`ForecastLife`: the lifetime from the run's date
+        under the forecast Sun (:mod:`satflight.solarforecast`) at its mean,
+        high and low levels.
 
-        The estimate takes 0.1-0.5 s, so it runs in the background, and is
+        The table's estimate takes 0.1-0.5 s, NRLMSIS's up to ~20 s for the
+        three levels, so it runs in the background, and is
         redone only when the orbit has shrunk by ~2 % (or the satellite, its
         Cd*A/m or the run's air changes). Until a new one arrives, the last
         one for this satellite is shown with the time flown since taken off
@@ -351,8 +359,9 @@ class App:
         j2 = j2_acts(sim.propagator, sim.forces)
         size = (max(info.rp_alt - lifetime.END_KM, 1.0), max(info.ra_alt - lifetime.END_KM, 1.0))
         who = (self.selected, id(sim))
+        msis = sim.forces.msis_drag
         key = (*who, *(round(50 * math.log(x)) for x in size), round(math.degrees(info.el.i)),
-               cda_m, sim.forces.density_scale, j2)
+               cda_m, sim.forces.density_scale, j2, msis)
         done = self._life_worker.poll()
         if done is not None:
             if done[2] is not None and not isinstance(done[2], ValueError):
@@ -361,7 +370,17 @@ class App:
         if key not in (self._life_key, self._life_pending):
             args = (info.a_mean, info.el.e, info.el.i, cda_m, sim.forces.density_scale, j2)
             t0 = sim.t
-            self._life_worker.submit(key, lambda: (t0, lifetime.lifetime(*args)))
+            if msis:
+                jd, raan = sim.jd(), info.el.raan
+
+                def job():
+                    sun = solarforecast.load()
+                    lives = [lifetime.lifetime(*args, sun=sun.at_level(level), jd=jd, raan=raan)
+                             for level in ("mean", "high", "low")]
+                    return t0, ForecastLife(*lives, str(sun.swpc.month[-1]))
+                self._life_worker.submit(key, job)
+            else:
+                self._life_worker.submit(key, lambda: (t0, lifetime.lifetime(*args)))
             self._life_pending = key
         if self._life is not None and self._life[0] == self._life_pending:
             self._life_key, self._life_pending = self._life_pending, None
@@ -371,6 +390,9 @@ class App:
         if isinstance(result, str):
             return result
         t0, life = result
+        if isinstance(life, ForecastLife):
+            return life._replace(**{k: max(getattr(life, k) - (sim.t - t0), 0.0)
+                                    for k in ("mean", "busy", "quiet")})
         return max(life - (sim.t - t0), 0.0)
 
     def cycle_orbits(self):

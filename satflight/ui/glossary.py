@@ -161,9 +161,10 @@ ROWS = {
     "Ballistic coeff m/CdA": "Mass over drag area. The higher it is, the longer the "
                              "spacecraft resists drag.",
     "Perigee density": "Density of the thin upper atmosphere at the orbit's lowest "
-                       "point, from the exponential model with the chosen solar "
-                       "activity scale, at that point's real height above the "
-                       "ground (shown after it).",
+                       "point, at that point's real height above the ground (shown "
+                       "after it), from this run's atmosphere: the exponential model "
+                       "with the chosen solar activity scale, or NRLMSIS with the "
+                       "measured Sun of the run's date at that place.",
     "Drag at perigee": "Deceleration from air drag at perigee, from the speed through the "
                        "air, which turns with the Earth.",
     "Lifetime": "Roughly how long until drag brings the satellite down, from its orbit "
@@ -172,6 +173,14 @@ ROWS = {
                 "thicker or thinner with the Sun's activity, so treat it as a guide.",
     "At solar max / min": "The estimated lifetime with the air of a busy Sun (three times "
                           "the mean density) and of a quiet one (three tenths of it).",
+    "Busy / quiet Sun": "The NRLMSIS lifetime with the forecast's high and low solar "
+                        "activity: NOAA SWPC's high and low bands to the end of its "
+                        "forecast, then the busiest and quietest of the measured "
+                        "solar cycles.",
+    "Future Sun": "The solar activity the NRLMSIS lifetime assumes ahead of the measured "
+                  "days: NOAA SWPC's predicted solar cycle to the month shown, then the "
+                  "mean of the measured cycles (1964-2019), repeated; ap at its long-term "
+                  "mean, so no storms.",
     "Deorbit rules": "Whether the estimated lifetime meets the rules for clearing low Earth "
                      "orbit: the FCC's 5 years for US-licensed satellites and the IADC's "
                      "25-year guideline.",

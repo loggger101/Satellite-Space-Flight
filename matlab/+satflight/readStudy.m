@@ -19,10 +19,12 @@ function S = readStudy(folder)
 %               error says why an arc could not be run
 %     arcs_msis the same columns for the arcs fitted again with the NRLMSIS
 %               atmosphere (sentinel1_study.py arcs --atmosphere msis)
+%     arcs_msis_dria  the same again with NRLMSIS and the physical drag
+%               coefficient (--cd-model dria_sphere)
 %
 %   Dates and times are datetimes in UTC. A blank number is NaN and a blank
 %   note or error is "". The daily tables are required; phasing, burns,
-%   arcs and arcs_msis are empty tables when the study has not written them yet. A file
+%   and the arcs tables are empty when the study has not written them yet. A file
 %   whose columns differ from the study's is refused, not guessed at.
 %
 %   save("study.mat", "-struct", "S") keeps the tables as a MAT file.
@@ -58,6 +60,8 @@ arcCols = ["mission", "start", "fit_rms_m", ...
 S.arcs = readOne(fullfile(folder, "arcs.csv"), arcCols, "start", "date", ["mission", "error"]);
 S.arcs_msis = readOne(fullfile(folder, "arcs_msis.csv"), arcCols, "start", "date", ...
     ["mission", "error"]);
+S.arcs_msis_dria = readOne(fullfile(folder, "arcs_msis_dria.csv"), arcCols, "start", ...
+    "date", ["mission", "error"]);
 end
 
 function T = readOne(file, expected, times, timeKind, texts)

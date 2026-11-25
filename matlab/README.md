@@ -89,9 +89,9 @@ satellite with `T(T.name == "ISS", :)`.
 manoeuvre window (`kind` `"burn"`) and every control window between them
 (`"placebo"`), sized from the jump in the mean elements; `S.arcs` one row per
 weekly accuracy arc, with the fitted drag and the R/S/W prediction error for
-three days, and `S.arcs_msis` the same for the arcs fitted again with NRLMSIS
-drag. Dates are UTC datetimes, a blank number is NaN, and `note` and
-`error` say why a window or arc has none. The tables come from
+three days, `S.arcs_msis` the same for the arcs fitted again with NRLMSIS
+drag, and `S.arcs_msis_dria` with NRLMSIS and the physical drag coefficient.
+Dates are UTC datetimes, a blank number is NaN, and `note` and `error` say why a window or arc has none. The tables come from
 `tools/sentinel1_study.py`; `save("study.mat", "-struct", "S")` keeps them as a
 MAT file.
 

@@ -141,7 +141,7 @@ def zonal_potential(r, j2=True, j3=False, j4=False, mu: float = MU_EARTH,
 
 
 def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0, atmosphere_model: str = "table",
-               gmst=None, jd=None, cd_model: str = "fixed"):
+               gmst=None, jd=None, cd_model: str = "fixed", table=None):
     """Drag. ``cd_a_over_m`` is Cd*A/m in m^2/kg, shape (N,). ``atmosphere_model``
     "table" (height only) or "msis" (NRLMSIS 2.1, which also needs ``gmst``, rad,
     for the ground point under each satellite and ``jd``, UTC, for the time).
@@ -149,7 +149,10 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0, atmosphere_model: 
     ``cd_model`` "dria_sphere" (NRLMSIS only): ``cd_a_over_m`` is taken at Cd
     ``CD_REF`` and the drag uses the physical Cd of a sphere in the air at that
     place and time (:func:`satflight.drag_coefficient.sphere_cd`) instead, so a
-    satellite's Cd other than 2.2 acts as a correction factor on the physics."""
+    satellite's Cd other than 2.2 acts as a correction factor on the physics.
+    ``table``: NRLMSIS's space weather (default the measured table; anything
+    with :meth:`satflight.spaceweather.Table.indices`, such as a
+    :class:`satflight.solarforecast.SolarForecast`)."""
     v_rel = v - np.cross(OMEGA_VEC, r)
     speed = np.linalg.norm(v_rel, axis=-1)
     if atmosphere_model == "msis":
@@ -158,7 +161,7 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0, atmosphere_model: 
                              "rotation angle (gmst)")
         lat, lon, h = eci_to_geodetic(r, gmst)
         if cd_model == "dria_sphere":
-            st = atmosphere.msis_state(h, lat, lon, float(jd))
+            st = atmosphere.msis_state(h, lat, lon, float(jd), table)
             rho = st.rho * density_scale
             factor = np.ones_like(rho)
             air = rho > 0.0
@@ -167,7 +170,7 @@ def accel_drag(r, v, cd_a_over_m, density_scale: float = 1.0, atmosphere_model: 
                     speed[air] * 1e3, st.number_density[air], st.temperature[air]) / CD_REF
             cd_a_over_m = cd_a_over_m * factor
         else:
-            rho = atmosphere.msis_density(h, lat, lon, float(jd), density_scale)
+            rho = atmosphere.msis_density(h, lat, lon, float(jd), density_scale, table)
     elif cd_model != "fixed":
         raise ValueError(f"the physical drag coefficient ({cd_model}) needs the NRLMSIS "
                          "atmosphere")

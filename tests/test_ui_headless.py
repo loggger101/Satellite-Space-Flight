@@ -18,6 +18,7 @@ import pytest
 from satflight.analysis import osculating_to_mean_a
 from satflight.constants import CR_DEFAULT, R_EARTH
 from satflight.elements import rv2coe
+from satflight.orbitinfo import orbit_info
 from satflight.scenario import Scenario
 from satflight.simulation import Simulation
 from satflight.ui import glossary, panels, theme, tips
@@ -286,8 +287,61 @@ def test_physics_dialog_picks_the_msis_atmosphere(app, tmp_path, monkeypatch):
     assert not app.dialogs, dlg.error
     assert app.sim.forces.atmosphere == "msis" and app.sim.forces.label().endswith("DRAG(MSIS)")
     frame(app, 3)
+    # the Orbit tab's perigee air now comes from NRLMSIS at the run's time
+    app.select(0)
+    sim, info = app.sim, app.orbit_info()
+    want = orbit_info(sim.y[0, :3], sim.y[0, 3:], sim.jd(), sim.sats[0],
+                      sim.forces.density_scale, "msis", sim.gmst())
+    assert info.rho_perigee == want.rho_perigee > 0
     app.open("physics")
     assert app.dialogs[-1].widgets["atmosphere"].value == MSIS_LABEL
+
+
+def _forecast_from(root, day, months=60):
+    """A measured table from 1960 to 60 days past ``day`` (as above) and an SWPC forecast from
+    six months before it, falling from 120 to 70 sfu."""
+    import json
+
+    from satflight import solarforecast
+    _space_weather_around(root, day, before=int((day - np.datetime64("1960-01-01")).astype(int)),
+                          after=60)
+    m0 = day.astype("datetime64[M]") - np.timedelta64(6, "M")
+    rows = [{"time-tag": str(m0 + np.timedelta64(k, "M")),
+             "predicted_f10.7": 120 - 50 * k / (months - 1),
+             "high_f10.7": 130 - 50 * k / (months - 1),
+             "low_f10.7": 110 - 40 * k / (months - 1)} for k in range(months)]
+    solarforecast.forecast_path(root).write_text(json.dumps(rows), encoding="ascii")
+    return str(m0 + np.timedelta64(months - 1, "M"))
+
+
+def test_the_orbit_tab_estimates_the_lifetime_with_the_forecast_under_msis(
+        app, tmp_path, monkeypatch):
+    from satflight import lifetime as lt
+    from satflight import solarforecast
+    from satflight.ui.orbitpanel import ForecastLife
+    monkeypatch.setenv("SATFLIGHT_DATA", str(tmp_path / "data"))
+    until = _forecast_from(tmp_path / "data", _today(app))
+    app.open("physics")
+    dlg = app.dialogs[-1]
+    dlg.set("drag", True)
+    dlg.set("atmosphere", MSIS_LABEL)
+    dlg.submit()
+    assert not app.dialogs, dlg.error
+    app.select(0)
+    life = app.lifetime()
+    for _ in range(6000):
+        if not (isinstance(life, str) and life.startswith("estimating")):
+            break
+        time.sleep(0.02)
+        life = app.lifetime()
+    assert isinstance(life, ForecastLife), life
+    assert life.until == until and life.busy <= life.mean <= life.quiet
+    sim, info = app.sim, app.orbit_info()
+    s = sim.sats[0]
+    want = lt.lifetime(info.a_mean, info.el.e, info.el.i, s.cd * s.area / s.mass,
+                       sim.forces.density_scale, sun=solarforecast.load("mean"),
+                       jd=sim.jd(), raan=info.el.raan)
+    assert life.mean == pytest.approx(want, rel=1e-9)
 
 
 PHYSICAL_CD_LABEL = "Physical, sphere (needs NRLMSIS)"

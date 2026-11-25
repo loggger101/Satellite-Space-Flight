@@ -130,7 +130,7 @@ taking shape and the time to cutoff.
 - **Sun and Moon gravity** and **sunlight pressure** (cannonball `Cr`, off in the
   Earth's shadow)
 - **Solid-Earth tides** of the Sun and Moon and the **relativity** (Schwarzschild)
-  term, as IERS 2010 gives them (switches; not in MATLAB exports yet)
+  term, as IERS 2010 gives them (switches)
 - **Atmospheric drag** (piecewise-exponential atmosphere, or **NRLMSIS 2.1** driven by
   measured space weather; co-rotating with the Earth,
   solar-activity scale factor)

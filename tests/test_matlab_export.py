@@ -580,6 +580,7 @@ def test_the_sun_moon_and_sunlight_pressure_export_with_each_satellites_cr(tmp_p
     text = export_live_script(Simulation(sc), tmp_path / "lit.m", "start", 600, 60).read_text(
         encoding="utf-8")
     assert re.search(r'^sim\.forces = struct\(.*"sun", true, "moon", true, "srp", true, '
+                     r'"tides", false, "relativity", false, '
                      r'"gravityDegree", 0, "atmosphere", "table", "cdModel", "fixed"\);',
                      text, re.M)
     props = [[float(x) for x in r.split()] for r in block(text, "props")]
@@ -591,7 +592,7 @@ def test_every_force_model_term_exports(tmp_path):
     from satflight.forces import ForceModel
     from satflight.matlab_export import unported_forces
     assert unported_forces(ForceModel(gravity_degree=70, drag=True, sun=True, moon=True,
-                                      srp=True)) == []
+                                      srp=True, tides=True, relativity=True)) == []
 
 
 def _field_rows(text, name):

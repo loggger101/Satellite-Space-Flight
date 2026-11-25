@@ -259,11 +259,20 @@ def test_physical_cd_flows_through_the_force_model(table):
         np.linalg.norm(want), rel=1e-12)
 
 
-def test_physical_cd_is_not_exported_to_matlab_yet(table, tmp_path):
+def test_the_matlab_export_carries_the_drag_coefficient_model(table, tmp_path):
+    """MATLAB flies the physical Cd too (matlab/tests/ExportTest physicalCd): the
+    script's forces name the model, fixed or the sphere."""
     assert unported_forces(ForceModel(drag=True, atmosphere="msis",
-                                      cd_model="dria_sphere")) == ["physical Cd"]
-    assert unported_forces(ForceModel(drag=False, atmosphere="msis",
                                       cd_model="dria_sphere")) == []
+    for model in ("dria_sphere", "fixed"):
+        sim = Simulation(Scenario(
+            name="x", epoch=datetime(2025, 4, 11, tzinfo=UTC),
+            forces=ForceModel(drag=True, atmosphere="msis", cd_model=model),
+            satellites=[SatSpec("S1", {"type": "elements", "altitude": 400, "i": 51.6},
+                                mass=500, area=10)]))
+        text = export_live_script(sim, tmp_path / f"cd_{model}.m",
+                                  duration=600.0).read_text(encoding="utf-8")
+        assert f'"cdModel", "{model}"' in text
 
 
 def test_the_orbit_tab_reads_the_perigee_air_from_msis(table):

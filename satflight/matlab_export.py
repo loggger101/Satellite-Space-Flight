@@ -181,9 +181,11 @@ def _epoch_text(epoch: datetime) -> str:
 
 def unported_forces(forces) -> list[str]:
     """The enabled force terms ``matlab_runtime.m`` cannot fly yet, so a new
-    term is refused, not dropped: the physical drag coefficient (NRLMSIS drag
-    itself is ported; the runtime calls pymsis through MATLAB's Python)."""
-    return ["physical Cd"] if forces.drag and forces.cd_model != "fixed" else []
+    term is refused, not dropped. None today: NRLMSIS drag and the physical
+    drag coefficient are ported (the runtime calls pymsis through MATLAB's
+    Python); a term added to :class:`ForceModel` goes here until it is."""
+    del forces
+    return []
 
 
 def _field_lines(F) -> list[str]:
@@ -451,9 +453,11 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
             f"\"j4\", {_bool(F.j4)}, \"c22\", {_bool(F.c22)}, \"drag\", {_bool(F.drag)}, "
             f"\"densityScale\", {_num(F.density_scale)}, \"sun\", {_bool(F.sun)}, "
             f"\"moon\", {_bool(F.moon)}, \"srp\", {_bool(F.srp)}, "
-            f"\"gravityDegree\", {F.gravity_degree}, \"atmosphere\", {_str(F.atmosphere)});"
+            f"\"gravityDegree\", {F.gravity_degree}, \"atmosphere\", {_str(F.atmosphere)}, "
+            f"\"cdModel\", {_str(F.cd_model)});"
             "   % gravityDegree N > 0: the EGM2008 field to N in place of J2, J3, J4 and C22; "
-            'atmosphere "msis": NRLMSIS 2.1 for drag',
+            'atmosphere "msis": NRLMSIS 2.1 for drag; cdModel "dria_sphere": a sphere\'s Cd '
+            "in that air, the satellite's Cd / 2.2 a correction on it",
             *_field_lines(F),
             f"sim.integrator = struct(\"method\", {_str(method)}, \"rtol\", {_num(it.rtol)}, "
             f"\"atol\", {_num(it.atol)}, \"hMax\", {_num(it.h_max)}, "

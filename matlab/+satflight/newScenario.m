@@ -19,6 +19,9 @@ function sc = newScenario(name, opts)
 %                   Sun; default) or "msis" (NRLMSIS 2.1 with the measured space
 %                   weather; exported scripts run it through pymsis in MATLAB's
 %                   Python and read tools/fetch_space_weather.py's table)
+%     CdModel       the drag coefficient: "fixed" (each satellite's Cd; default) or
+%                   "dria_sphere" (a sphere's Cd in the NRLMSIS air at each step,
+%                   the satellite's Cd / 2.2 a correction on it; needs "msis")
 %     Integrator    "dopri5" (default), "rk4", "wh" or "leapfrog"
 %     Rtol, Atol, HMax, HFixed   integrator tolerances and step limits
 %     RecordDt      seconds between recorded samples (default 20)
@@ -43,6 +46,7 @@ arguments
     opts.GravityDegree (1,1) double
     opts.DensityScale (1,1) double
     opts.Atmosphere (1,1) string
+    opts.CdModel (1,1) string
     opts.Integrator (1,1) string
     opts.Rtol (1,1) double
     opts.Atol (1,1) double
@@ -64,7 +68,8 @@ if ~isempty(fieldnames(integrator))
 end
 forces = copyOptions(struct(), opts, ["J2", "j2"; "J3", "j3"; "J4", "j4"; "C22", "c22"; ...
     "Drag", "drag"; "DensityScale", "density_scale"; "Sun", "sun"; "Moon", "moon"; ...
-    "Srp", "srp"; "GravityDegree", "gravity_degree"; "Atmosphere", "atmosphere"]);
+    "Srp", "srp"; "GravityDegree", "gravity_degree"; "Atmosphere", "atmosphere"; ...
+    "CdModel", "cd_model"]);
 if ~isempty(fieldnames(forces))
     sc.forces = forces;
 end

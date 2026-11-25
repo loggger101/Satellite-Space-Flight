@@ -166,6 +166,8 @@ scales the result. At 693 km it gives Cd 3.0-3.2, moving -3% to +2.5% from
 day to day, against the density (lower in storms, when the oxygen rises).
 NRLMSIS species it does not model at a height count as zero; if the species
 then fail to add up to its total density within 1%, the step is refused.
+MATLAB exports fly it too (`sphereCd` in `matlab_runtime.m`, held to the
+simulator by `ExportTest/physicalCd`).
 
 Against the same six arcs (rows in `arcs_msis_dria.csv`) it does not help, so
 the fixed Cd stays the default:
@@ -185,8 +187,8 @@ the fixed-Cd result, but the four storm arcs all get a little worse (median
 Cd is about 1.4 times the 2.2 it replaces) without spreading less (0.78-1.36
 against 0.54-0.98), so the day-to-day change in Cd is not what the fit was
 absorbing: the storm error is in the density. A panel model of the satellite,
-which this sphere is the base for, is the next drag item. MATLAB exports
-refuse a physical-Cd scenario until it is ported.
+which this sphere is the base for, was probed and not built: it varies from
+day to day like the sphere (docs/specs/2026-11-24-s1-panel-model-design.md).
 
 **Sun position** - Astronomical Almanac series (~0.01 deg,
 Vallado Algorithm 29). It drives the Earth's lighting and the eclipse model:

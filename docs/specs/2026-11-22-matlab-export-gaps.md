@@ -120,11 +120,12 @@ export loses nothing there.
   pymsis is used here). `ExportTest/nrlmsisDrag` flies the 12 November 2025
   storm against the simulator; `nrlmsisPastTheMeasuredDays` checks the refusal.
 - Physical drag coefficient (forces "cd_model": "dria_sphere", added
-  2026-11-24, `satflight/drag_coefficient.py`). Not ported yet: an export with
-  it on is refused (`unported_forces` names "physical Cd"). Port as its own PR
-  after the Python one: `satflight.dragCoefficient` (Sentman sphere, SESAM
-  accommodation, the species mixture; pymsis already returns the species and
-  temperature it needs) and an ExportTest against the simulator.
+  2026-11-24, `satflight/drag_coefficient.py`). Ported 2026-11-25: the script's
+  forces carry `cdModel`; the runtime's `msisState` keeps pymsis's species and
+  temperature (with the simulator's check that they add up) and `sphereCd` is
+  `drag_coefficient.sphere_cd`. `ExportTest/physicalCd` flies the 12 November
+  2025 storm against the simulator (a Cube with Cd 2.5, so the correction
+  factor counts too). `unported_forces` names nothing now.
 
 **NRLMSIS ascent air.** Under NRLMSIS, Python ascents fly the NRLMSIS
 column over the pad at liftoff (`launch.msis_column`, 2026-11-24); MATLAB

@@ -140,6 +140,27 @@ classdef ExportTest < ExportCase
             tc.verifyGreaterThan(median(cube.acc_drag_ms2), 1.2 * table);
         end
 
+        function physicalCd(tc)
+            % the drag coefficient of a sphere in the NRLMSIS air at each step (forces
+            % "cd_model": "dria_sphere"), through the same storm: held to the simulator.
+            % A runtime that kept Cd at 2.2 was 175 m off on the Cube in 6 h (12 m on
+            % Low), checked 2026-11-25.
+            tc.assumeTrue(hasSpaceWeather(), "the space-weather table is not here");
+            sc = satflight.newScenario("Storm Cd", Drag=true, Atmosphere="msis", ...
+                CdModel="dria_sphere", DensityScale=1.3, ...
+                Epoch=datetime(2025, 11, 12, 0, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
+                I=98.18, Raan=278, Nu=30), Mass=2164, Area=10);
+            sc = satflight.addSatellite(sc, "Cube", satflight.orbitElements(Altitude=400, ...
+                I=51.6, Raan=10, Nu=200), Mass=4, Area=0.03, Cd=2.5);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "storm_cd.json"));
+            script = tc.export(file, "storm_cd", ["--duration", "6h", "--step", "60"]);
+            tc.verifyTrue(any(contains(readlines(script), """cdModel"", ""dria_sphere""")));
+            [diffs, out] = tc.check(script);
+            tc.verifyLessThan(diffs.max_diff_km, 0.001);
+            tc.verifyTrue(all(out.diagnostics.acc_drag_ms2 > 0));
+        end
+
         function nrlmsisPastTheMeasuredDays(tc)
             % the 81-day mean F10.7 reaches predictions in the last 40 days of the
             % table: a run there stops with the reason, as the simulator does

@@ -264,3 +264,103 @@ def test_physical_cd_is_not_exported_to_matlab_yet(table, tmp_path):
                                       cd_model="dria_sphere")) == ["physical Cd"]
     assert unported_forces(ForceModel(drag=False, atmosphere="msis",
                                       cd_model="dria_sphere")) == []
+
+
+def test_the_orbit_tab_reads_the_perigee_air_from_msis(table):
+    """Under NRLMSIS the perigee density is MSIS's at the perigee point, at the
+    run's time, where the Earth has turned by ``gmst``; the drag there follows."""
+    from satflight.atmosphere import msis_density
+    from satflight.elements import coe2rv
+    from satflight.frames import eci_to_geodetic
+    from satflight.orbitinfo import orbit_info
+
+    jd, gmst = _jd(np.datetime64("2025-04-11T13:40", "m")), 2.0     # the storm day
+    sat = type("S", (), {"mass": 100.0, "area": 1.0, "cd": 2.2})()
+    rp, ra = 6378.137 + 400.0, 6378.137 + 900.0
+    a, e = (rp + ra) / 2, (ra - rp) / (ra + rp)
+    r, v = coe2rv(a, e, math.radians(97), 0.4, math.radians(60), 2.0)
+    table_info = orbit_info(r, v, jd, sat)
+    info = orbit_info(r, v, jd, sat, 1.5, atmosphere="msis", gmst=gmst)
+    rpv, _ = coe2rv(a, e, math.radians(97), 0.4, math.radians(60), 0.0)
+    lat, lon, h = eci_to_geodetic(rpv, gmst)
+    want = float(msis_density(np.atleast_1d(h), np.atleast_1d(lat), np.atleast_1d(lon), jd, 1.5)[0])
+    assert info.rho_perigee == pytest.approx(want, rel=1e-12)
+    assert info.rho_perigee != pytest.approx(table_info.rho_perigee * 1.5, rel=0.01)
+    assert info.drag_perigee / table_info.drag_perigee == pytest.approx(
+        info.rho_perigee / table_info.rho_perigee, rel=1e-9)
+    with pytest.raises(ValueError, match="gmst"):
+        orbit_info(r, v, jd, sat, atmosphere="msis")
+
+
+def _msis_estimate_and_flight(epoch, orbit, mass, area):
+    """(estimated, flown) seconds to re-entry under NRLMSIS with J2, both driven
+    by the same measured table (the fixture's)."""
+    from satflight import lifetime as lt
+    from satflight import spaceweather
+    from satflight.analysis import osculating_to_mean_a
+    from satflight.elements import rv2coe
+    from satflight.simulation import ACTIVE
+    sim = Simulation(Scenario(name="t", epoch=epoch,
+                              satellites=[SatSpec("x", orbit, mass=mass, area=area)],
+                              forces=ForceModel(j2=True, drag=True, atmosphere="msis")))
+    s = sim.sats[0]
+    el = rv2coe(sim.y[0, :3], sim.y[0, 3:])
+    a_mean = float(osculating_to_mean_a(el.a, el.e, el.i, el.argp, el.nu))
+    est = lt.lifetime(a_mean, el.e, el.i, s.cd * s.area / s.mass,
+                      sun=spaceweather.load(), jd=sim.jd(), raan=el.raan)
+    while s.status == ACTIVE and sim.t < 2 * est:
+        sim.advance(6 * 3600)
+    down = [e.t for e in sim.events if "re-entered" in e.text]
+    assert down, f"still up after {sim.t / 86400:.1f} days (estimate {est / 86400:.2f})"
+    return est, down[0]
+
+
+@pytest.mark.parametrize("epoch, orbit, mass, area", [
+    # down in about six days, through the fixture's storm on day 3: a date held at
+    # the start would make it last 17 % longer
+    (datetime(2025, 4, 8, tzinfo=UTC), {"type": "elements", "altitude": 350, "i": 97}, 10, 1),
+    (datetime(2025, 2, 20, tzinfo=UTC),
+     {"type": "elements", "perigee_alt": 200, "apogee_alt": 500, "i": 51.6}, 30, 6),
+], ids=["polar-through-the-storm", "eccentric"])
+def test_the_msis_lifetime_matches_a_run_flown_to_reentry(table, epoch, orbit, mass, area):
+    est, flown = _msis_estimate_and_flight(epoch, orbit, mass, area)
+    assert est == pytest.approx(flown, rel=0.08), (est / 86400, flown / 86400)
+
+
+def test_the_msis_lifetime_follows_the_density_scale_and_needs_the_date(table):
+    """Not exactly 1 / scale as under the table: denser air brings it down
+    sooner, through other days' weather."""
+    from satflight import lifetime as lt
+    jd = _jd(np.datetime64("2025-02-10T00:00", "m"))
+    args = (6378.137 + 280.0, 0.001, math.radians(97), 0.01)
+    one = lt.lifetime(*args, sun=sw.load(), jd=jd, raan=1.0)
+    two = lt.lifetime(*args, density_scale=2.0, sun=sw.load(), jd=jd, raan=1.0)
+    assert 0 < two < one < math.inf
+    assert two == pytest.approx(one / 2, rel=0.1)
+    assert one != pytest.approx(lt.lifetime(*args), rel=1e-3)      # not the table's
+    with pytest.raises(ValueError, match="date"):
+        lt.lifetime(*args, sun=sw.load())
+
+
+def test_the_msis_lifetime_turns_the_node_with_j2(table, monkeypatch):
+    """The local solar time follows the node: the RAAN each step samples
+    advances at J2's rate (sun-synchronous orbits keep their local time)."""
+    from satflight import lifetime as lt
+    from satflight.analysis import j2_secular_rates
+    seen = []
+    real = lt.decay_rates
+
+    def spy(*args, **kw):
+        seen.append((kw["jd"], kw["raan"]))
+        return real(*args, **kw)
+    monkeypatch.setattr(lt, "decay_rates", spy)
+    jd = _jd(np.datetime64("2025-02-10T00:00", "m"))
+    a, i = 6378.137 + 320.0, math.radians(97)
+    lt.lifetime(a, 0.0005, i, 0.05, sun=sw.load(), jd=jd, raan=0.5)
+    days = np.array([s[0] for s in seen]) - jd
+    raan = np.array([s[1] for s in seen])
+    rate = float(j2_secular_rates(a, 0.0005, i)[0]) * 86400.0        # rad/day at the start
+    assert days[-1] > 5 and np.ptp(raan) > 0.05
+    early = days < 3                       # before the sinking orbit speeds the node up
+    np.testing.assert_allclose(raan[early] - 0.5, rate * days[early], rtol=0.01, atol=1e-4)
+    assert np.all(np.diff(raan[np.argsort(days)]) >= 0)

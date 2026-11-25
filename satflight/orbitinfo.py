@@ -23,14 +23,14 @@ from .analysis import (
     osculating_to_mean_a,
     osculating_to_mean_i,
 )
-from .atmosphere import density
+from .atmosphere import density, msis_density
 from .constants import MU_EARTH, OMEGA_EARTH, R_EARTH
 from .eclipse import shadow_fraction
 from .elements import Elements, coe2rv, mean_to_true, rv2coe, time_to_true_anomaly
 from .ephemeris import sun_position
-from .frames import OMEGA_VEC, geodetic_height
+from .frames import OMEGA_VEC, eci_to_geodetic, geodetic_height
 from .maneuvers import sun_synchronous_inclination
-from .timeutil import gmst
+from .timeutil import gmst as gmst_of
 
 CIRCULAR_E = 1e-3        # below this, apsides are not meaningful for display
 EQUATORIAL_SIN_I = 1e-3  # below this, nodes are not meaningful
@@ -136,12 +136,18 @@ def local_time_of_node(raan: float, jd: float) -> float:
     0.9856 deg/day; the true Sun runs up to 16 min ahead or behind it over the
     year (the equation of time)."""
     ut = ((jd - 0.5) % 1.0) * 24.0
-    return (ut + math.degrees(raan - gmst(jd)) / 15.0) % 24.0
+    return (ut + math.degrees(raan - gmst_of(jd)) / 15.0) % 24.0
 
 
-def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitInfo:
+def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0,
+               atmosphere: str = "table", gmst: float | None = None) -> OrbitInfo:
     """Everything the orbit inspector shows for one ECI state at ``jd``.
-    ``sat`` supplies the physical properties (mass, area, cd)."""
+    ``sat`` supplies the physical properties (mass, area, cd). ``atmosphere``
+    is the run's: under "msis" the perigee air is NRLMSIS's at the perigee
+    point at ``jd``, which needs ``gmst`` (rad), the Earth's turn then."""
+    if atmosphere == "msis" and gmst is None:
+        raise ValueError("orbit_info: the NRLMSIS perigee density needs gmst, the "
+                         "Earth's rotation angle")
     r = np.asarray(r, dtype=float)
     v = np.asarray(v, dtype=float)
     el = rv2coe(r, v)
@@ -191,7 +197,12 @@ def orbit_info(r, v, jd: float, sat=None, density_scale: float = 1.0) -> OrbitIn
     rpv, vpv = coe2rv(el.a, el.e, el.i, el.raan, el.argp, 0.0, p=el.p)
     hp = float(geodetic_height(rpv))
     v_air = float(np.linalg.norm(vpv - np.cross(OMEGA_VEC, rpv)))
-    rho_p = float(density(hp, density_scale))
+    if atmosphere == "msis":
+        lat, lon, h = eci_to_geodetic(rpv, gmst)
+        rho_p = float(msis_density(np.atleast_1d(h), np.atleast_1d(lat), np.atleast_1d(lon),
+                                   jd, density_scale)[0])
+    else:
+        rho_p = float(density(hp, density_scale))
     alt = float(geodetic_height(r))
     return OrbitInfo(
         el=el, regime=classify(el), closed=closed, circular=circular, equatorial=equatorial,

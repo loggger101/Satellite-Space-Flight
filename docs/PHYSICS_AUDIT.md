@@ -732,9 +732,12 @@ table staying the default; the day/night bulge comes with it. Measured against
 Sentinel-1 in PHYSICS.md. 2026-11-24: a physical Cd (free-molecular sphere,
 SESAM accommodation, from the MSIS species) is an opt-in `cd_model`; on the six
 Sentinel-1 arcs it held every arc within 10% but made the storm arcs slightly
-worse, so the constant Cd stays the default (PHYSICS.md). Still open: a panel
-model of the satellite, thermospheric winds, and ascents, lifetime and the
-Orbit tab stay on the table.
+worse, so the constant Cd stays the default (PHYSICS.md). Probed and not
+built (docs/specs, 2026-11-24): a drag panel model of Sentinel-1 (it varies
+day to day like the sphere) and thermospheric winds (HWM14 does not install
+here; super-rotation and typical winds change Sentinel-1's drag by a constant
+under 1 %). Under MSIS the Orbit tab's perigee air and the lifetime estimate
+are MSIS's (B18, D37). Still open: ascents stay on the table.
 
 **Why:** The density is the Vallado Table 8-4 piecewise exponential, a
 function of altitude only, times a constant `density_scale`. It is the
@@ -1060,8 +1063,10 @@ have to be worked out by hand.
 lifetime"). The Orbit tab shows the estimate, the range from solar maximum to
 minimum as x3 and x0.3 of the density, and the FCC 5-year and IADC 25-year
 check. Measured against runs flown to re-entry: within 2 % (circular) and 8 %
-(eccentric). A solar-cycle forecast (D37) and a better atmosphere (B2) are
-still open.
+(eccentric). 2026-11-24: under NRLMSIS the estimate runs from the run's date
+through measured space weather, then the D37 forecast, and the tab shows the
+forecast's busy and quiet bands; within 8 % of runs flown to re-entry under
+NRLMSIS (PHYSICS.md "Orbital lifetime").
 
 **Why:** Decay is visible only by running the simulation for months or years
 at high warp.
@@ -2477,6 +2482,12 @@ that rise and fall with the solar cycle.
 **Sources:** space-datasets' TLE history; pymc for the Bayesian version.
 
 ### D37. Solar-activity forecast
+
+**Status (2026-11-24):** Done as satflight/solarforecast.py: NOAA SWPC's
+predicted solar cycle with its high/low bands, then the mean of the measured
+cycles 20-24 (by phase, between SILSO minima) repeated; ap at its long-term
+mean. Fetched with the space-weather table (`tools/fetch_space_weather.py`).
+The Hathaway cycle-shape fit was not needed.
 
 **Serves:** [B2](#b2-a-better-atmosphere-in-the-drag-force), [B18](#b18-orbital-lifetime-readout).
 

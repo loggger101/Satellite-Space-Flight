@@ -118,13 +118,16 @@ def test_the_orbit_tab_shows_the_lifetime(tmp_path):
         info = app.orbit_info()
         sheet = [r for _, rs in property_sections(info, 0.0, life=later) for r in rs]
         assert all(glossary.row(label) for label, _ in sheet)
-        # under NRLMSIS these rows still come from the table, and say so
-        assert lifetime_rows(later, 1.0, "msis")[0][0] == "Lifetime (table)"
-        sheet = [r for _, rs in property_sections(info, 0.0, life=later, atmosphere="msis")
+        # under NRLMSIS the perigee air (orbit_info) and the lifetime (a forecast)
+        # are MSIS's, and none of the rows is marked as the table's
+        from satflight.ui.orbitpanel import ForecastLife
+        forecast = ForecastLife(later, later / 2, later * 2, "2030-12")
+        sheet = [r for _, rs in property_sections(info, 0.0, life=forecast, atmosphere="msis")
                  for r in rs]
         labels = {label for label, _ in sheet}
-        assert {"Perigee density (table)", "Drag at perigee (table)",
-                "Lifetime (table)"} <= labels and "Lifetime" not in labels
+        assert {"Perigee density", "Drag at perigee", "Lifetime", "Busy / quiet Sun",
+                "Future Sun"} <= labels
+        assert not any("(table)" in label for label in labels)
         assert all(glossary.row(label) for label in labels)
 
         app.load_scenario(ROOT / "scenarios" / "orbit_tour.json")
@@ -132,3 +135,21 @@ def test_the_orbit_tab_shows_the_lifetime(tmp_path):
         assert app.lifetime() == "no drag in this run"
     finally:
         pygame.quit()
+
+
+def test_the_forecast_lifetime_rows():
+    """Under NRLMSIS the tab shows the forecast's lifetime, its busy and quiet
+    bands and which Sun it assumed; past the horizon, 'over 200 years'."""
+    from satflight.ui import glossary
+    from satflight.ui.orbitpanel import ForecastLife, lifetime_rows
+    life = ForecastLife(40 * lt.YEAR, 22 * lt.YEAR, 75 * lt.YEAR, "2030-12")
+    rows = lifetime_rows(life, 1.0, "msis")
+    assert [r[0] for r in rows] == ["Lifetime", "Busy / quiet Sun", "Future Sun",
+                                    "Deorbit rules"]
+    assert rows[0][1] == "40 years" and rows[1][1] == "22 years / 75 years"
+    assert "2030-12" in rows[2][1] and rows[3][1] == "meets neither rule"
+    assert all(glossary.row(label) for label, _ in rows)
+    far = lifetime_rows(ForecastLife(math.inf, 90 * lt.YEAR, math.inf, "2030-12"), 1.0, "msis")
+    assert far[0][1] == "over 200 years" and far[1][1] == "90 years / over 200 years"
+    # a reason instead of an estimate (no forecast downloaded, say) is shown as it is
+    assert lifetime_rows("no forecast", 1.0, "msis") == [("Lifetime", "no forecast")]

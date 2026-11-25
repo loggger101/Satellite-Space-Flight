@@ -128,9 +128,10 @@ the last 40 days), or the F10.7 of a solar radio burst (over 400 sfu), is
 refused, and the app pauses saying why. `density_scale` still multiplies the
 result, as a correction (1 = as modelled). A storm with ap 300 makes the air
 at 700 km about 7 times denser. MSIS runs in single precision, about 0.1 ms
-per satellite per evaluation. The lifetime estimate and the Orbit tab's
-perigee density stay on the table and are marked "(table)". MATLAB exports
-call pymsis through MATLAB's Python for it (matlab/README.md, "Which Python").
+per satellite per evaluation. The Orbit tab's perigee density and drag are
+MSIS's too, at the perigee point at the run's time, and so is the lifetime
+estimate, under a forecast of the Sun (Orbital lifetime, below). MATLAB
+exports call pymsis through MATLAB's Python for it (matlab/README.md, "Which Python").
 
 Against Sentinel-1's precise orbits, six of the study's arcs were fitted again
 with MSIS (`tools/sentinel1_study.py arcs --atmosphere msis`, rows in
@@ -556,6 +557,63 @@ down, without flying the run forward (satflight/lifetime.py):
   the lifetime goes as exactly 1 / density, so the tab also shows both. The
   deorbit-rule check compares the estimate with the FCC's 5 years and the
   IADC's 25 years.
+
+**Under NRLMSIS** the estimate starts from the run's date and needs the Sun
+for every day ahead (satflight/solarforecast.py; data from
+`tools/fetch_space_weather.py`):
+
+- Measured F10.7 and ap while the measured table serves (to 40 days before
+  its last day, where the 81-day mean runs out).
+- Then NOAA SWPC's predicted solar cycle, monthly to the end of cycle 25
+  (2030-12 in the forecast fetched 2026-11-24), interpolated between
+  mid-months.
+- Then the mean of the five measured cycles between the SILSO minima of
+  1964-10 and 2019-12 (81-day mean F10.7 averaged by phase), repeated every
+  11.03 years from the end of the SWPC forecast. It runs 71 sfu at minimum
+  and peaks near 170 (the measured cycles range 112-213 there).
+- ap is held at its 1964-2019 mean daily Ap, 12.7: a forecast has no storms.
+
+The tab shows the lifetime at the mean level and, as "Busy / quiet Sun", at
+SWPC's high and low bands followed by the busiest and quietest measured
+cycle. The ring of sample points sits at the orbit's RAAN, which J2 turns, so
+the day/night bulge is seen at the right local time (a sun-synchronous orbit
+keeps its local time). Steps are capped at 30 days. Past 200 years the
+answer is "over 200 years": repeated mean cycles say nothing that far out.
+Denser air no longer scales the lifetime exactly (it comes down through
+other days' weather). Against runs flown to re-entry under NRLMSIS through
+the same measured days, including a storm three days in, the estimate lands
+within 8 % (tests/test_msis.py).
+
+Sentinel-1's orbit (693 km, e 0.00013, Cd 2.2 on 10 m^2, 2164 kg) from
+2026-11-01:
+
+| | mean Sun | busy | quiet | table (mean Sun) |
+|---|---|---|---|---|
+| 500 km | 9.5 yr | 8.2 yr | 16.4 yr | 6.3 yr |
+| 693 km | 131 yr | 73 yr | over 200 yr | 124 yr |
+
+The three levels take about 17 s together for Sentinel-1, run in the
+background.
+
+**A real decay: ERS-2.** ESA lowered ERS-2's average altitude to about
+573 km, ending the mission on 5 September 2011 with 2294 kg left; it
+re-entered at 17:17 UTC on 21 February 2024, 12.46 years later (ESA, "ERS
+satellite missions complete after 20 years", 2011; ERS-2 reentry FAQ and
+reentry report, 2024). ESA gives no area, and ERS-2 was tumbling, so this is
+a hindcast for the Cd*A each atmosphere needs (circular 573 km, i = 98.5 deg,
+measured space weather throughout, `ers2.py` in the session scratchpad):
+
+| atmosphere | Cd*A for the observed date | at Cd 2.2 | lifetime at Cd*A x0.8 / x1.25 |
+|---|---|---|---|
+| NRLMSIS, measured Sun | 79 m^2 | 36 m^2 | 13.3 / 11.3 yr |
+| table, mean Sun | 39 m^2 | 18 m^2 | 15.6 / 10.0 yr |
+
+NRLMSIS needs twice the table's drag area because 2011-2024 was the weak
+cycle 24 and the deep 2019 minimum: thinner air than the table's mean Sun.
+Under NRLMSIS the answer is firm against the area (x1.25 moves it 9 %), since
+the end came on cycle 25's rise, and the node's starting place changes it
+under 0.5 %. Which Cd*A is right depends on ERS-2's real tumbling
+cross-section, not checked here; this is evidence, not a test.
 
 ## Known simplifications
 

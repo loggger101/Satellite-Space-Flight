@@ -49,7 +49,7 @@ import bisect
 import copy
 import math
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 
 import numpy as np
 
@@ -360,19 +360,39 @@ def validate(spec: LaunchSpec):
 
 @dataclass
 class AscentEnv:
-    """The Earth an ascent flies in: enabled zonals, air density and Earth rotation."""
+    """The Earth an ascent flies in: enabled zonals, air density and Earth rotation.
+
+    ``air(h)`` is the density (kg/m^3, before ``density_scale``) at height
+    ``h`` km: :func:`us76_density` unless given. Under NRLMSIS, ``jd`` (the
+    UTC Julian date at run time t) is set and each ascent flies through the
+    NRLMSIS column over its pad at liftoff instead (:meth:`at_pad`)."""
 
     j2: bool = True
     j3: bool = False
     j4: bool = False
     density_scale: float = 1.0
     gmst: Callable[[float], float] = lambda t: OMEGA_EARTH * t
+    air: Callable[[float], float] | None = None
+    jd: Callable[[float], float] | None = None
+
+    def __post_init__(self):
+        if self.air is None:
+            self.air = us76_density
+
+    def at_pad(self, lat: float, lon: float, t0: float) -> AscentEnv:
+        """This environment for an ascent from (``lat``, ``lon``) deg lifting off
+        at run time ``t0``: with the NRLMSIS column there and then when ``jd``
+        is set, else unchanged."""
+        if self.jd is None:
+            return self
+        return replace(self, air=msis_column(lat, lon, self.jd(t0)), jd=None)
 
     @classmethod
     def from_sim(cls, forces, clock):
         """The environment matching a simulation's force model and clock."""
         return cls(forces.j2, forces.j3, forces.j4, forces.density_scale,
-                   lambda t: float(clock.gmst(t)))
+                   lambda t: float(clock.gmst(t)),
+                   jd=(lambda t: float(clock.jd(t))) if forces.msis_drag else None)
 
 
 def _density(h: float) -> float:
@@ -419,6 +439,57 @@ def _pressure(h: float) -> float:
     while _US76[k][0] > hg:
         k -= 1
     return _US76_P[k] * _us76_layer(k, hg - _US76[k][0])
+
+
+R_AIR = 287.053           # J/(kg K): US76's gas constant for air, R* / M0
+P0 = 101325.0             # Pa, sea-level pressure
+US76_TOP_KM = 86.0        # geometric: above it the orbit table takes over
+
+
+def us76_density(h: float) -> float:
+    """Air density (kg/m^3) for an ascent at geometric height ``h`` km: the US
+    Standard Atmosphere 1976, p / (R T), from the same layers as
+    :func:`_pressure`, up to ``US76_TOP_KM``; above it the orbit table
+    (:func:`satflight.atmosphere.density`). The two differ by about 2 % where
+    they meet. The orbit table alone is a third too thin at 10 km, where max Q
+    falls."""
+    if h > US76_TOP_KM:
+        return _density(h)
+    hc = h if h > 0.0 else 0.0
+    hg = _R0_GEOPOT * hc / (_R0_GEOPOT + hc)
+    k = len(_US76) - 1
+    while _US76[k][0] > hg:
+        k -= 1
+    base, tb, lapse = _US76[k]
+    return _pressure(h) * P0 / (R_AIR * (tb + lapse * (hg - base)))
+
+
+COLUMN_KM = tuple(float(h) for h in (*range(0, 150), *range(150, 1001, 10)))
+
+
+def msis_column(lat: float, lon: float, jd: float, table=None) -> Callable[[float], float]:
+    """The NRLMSIS density (kg/m^3) over one place, (``lat``, ``lon``) deg, at
+    UTC Julian date ``jd``, as a float function of height km for the ascent's
+    hot path: one NRLMSIS call on ``COLUMN_KM`` (1 km steps to 150 km, then
+    10 km), log-linear between. Below 0 km the ground's; above 1000 km the last
+    step's scale height continued; zero above ``TOP_KM``. ``table``: the space
+    weather (see :func:`satflight.atmosphere.msis_state`)."""
+    from .atmosphere import msis_density
+    hs = list(COLUMN_KM)
+    rho = msis_density(np.array(hs), math.radians(lat), math.radians(lon), jd, table=table)
+    if not np.all(rho > 0.0):
+        raise ValueError(f"NRLMSIS gave no air at some height over ({lat}, {lon}) deg")
+    logs = [math.log(float(r)) for r in rho]
+    last = len(hs) - 2
+
+    def air(h: float) -> float:
+        if h > TOP_KM:
+            return 0.0
+        hc = h if h > 0.0 else 0.0
+        k = min(bisect.bisect_right(hs, hc) - 1, last)
+        t = (hc - hs[k]) / (hs[k + 1] - hs[k])
+        return math.exp(logs[k] + t * (logs[k + 1] - logs[k]))
+    return air
 
 
 def _altitude(x, y, z) -> float:
@@ -468,7 +539,7 @@ def _deriv(s, tau, m0, mdot, stage, mode, fixed, cd_a, env):
     m = m0 - mdot * tau
     sp = math.sqrt(wx * wx + wy * wy + wz * wz)
     if cd_a > 0.0 and alt < TOP_KM:
-        rho = _density(alt) * env.density_scale
+        rho = env.air(alt) * env.density_scale
         k = -0.5e3 * rho * cd_a / m * sp
         ax += k * wx
         ay += k * wy
@@ -722,7 +793,7 @@ class Ascent:
         self.spec = spec
         self.veh = spec.vehicle
         self.res = res
-        self.env = env
+        self.env = env.at_pad(spec.lat, spec.lon, res.t0)
         k = kick if kick is not None else (spec.kick if spec.kick is not None else 0.0)
         self.kick_deg = float(k)
         self.kick = math.radians(k)
@@ -947,7 +1018,7 @@ class Ascent:
         vh = (vx / v, vy / v, vz / v) if v > 0 else (0.0, 0.0, 0.0)
         wx, wy, wz = vx + OMEGA_EARTH * y, vy - OMEGA_EARTH * x, vz
         sp = math.sqrt(wx * wx + wy * wy + wz * wz)
-        rho = _density(alt) * self.env.density_scale if alt < TOP_KM else 0.0
+        rho = self.env.air(alt) * self.env.density_scale if alt < TOP_KM else 0.0
         self.q = 0.5 * rho * (sp * 1e3) ** 2
         g = _gravity(x, y, z, self.env)
         self.losses["gravity"] -= _dot(g, vh) * h
@@ -1355,6 +1426,7 @@ def plan_launch(spec: LaunchSpec, env: AscentEnv, t_now: float, plane_of=None,
     return LaunchPlan(res, kick, flight, sorted(tried.items()))
 
 
-__all__ = ["Stage", "Vehicle", "LaunchSpec", "VEHICLES", "LAUNCH_SITES", "AscentEnv", "Ascent",
+__all__ = ["us76_density", "msis_column", "COLUMN_KM", "Stage", "Vehicle", "LaunchSpec",
+           "VEHICLES", "LAUNCH_SITES", "AscentEnv", "Ascent",
            "Resolved", "LaunchPlan", "resolve", "plan_launch", "fly", "vehicle_preset", "validate",
            "next_window", "pad_state", "plane_normal", "coast"]

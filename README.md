@@ -210,7 +210,8 @@ between integration steps, not at their ends).
     shape, orientation, timing, speeds, J2 drift, sun-synchronous inclination, beta angle,
     shadow fraction, the spacecraft's mass and drag figures, and its estimated
     orbital lifetime (with solar maximum and minimum, and the 5- and 25-year
-    deorbit rules)
+    deorbit rules; under NRLMSIS from the run's date through NOAA's solar-cycle
+    forecast, with its busy and quiet bands)
 - Telemetry tab: geodetic position, osculating elements, J2 drift rates, beta angle,
   illumination, **acceleration budget per force**, energy conservation check, propellant
   and delta-v, station look angles
@@ -397,7 +398,8 @@ repository (about half a GB for a year):
 ```bash
 python tools/fetch_poeorb.py            # S1A and S1C, 2025-07-01 to 2026-06-30
 python tools/fetch_eop.py               # IERS polar motion and UT1-UTC (~4 MB)
-python tools/fetch_space_weather.py     # CelesTrak F10.7 and ap, for NRLMSIS (~3 MB)
+python tools/fetch_space_weather.py     # CelesTrak F10.7 and ap, and NOAA's solar-cycle
+                                        # forecast, for NRLMSIS (~3 MB)
 python tools/fit_arc.py S1A 2025-07-03 --check 24   # fit a day, fly one more
 ```
 
@@ -477,7 +479,10 @@ satflight/            physics engine (numpy only)
   elements.py         elements <-> state, anomalies, universal Kepler, conics
   forces.py           gravity, J2-J4, C22/S22, drag, Sun, Moon, sunlight pressure
   gravity.py          EGM2008 spherical harmonics to 70x70 (data/egm2008_70.gfc)
-  atmosphere.py       exponential atmosphere
+  atmosphere.py       exponential table and NRLMSIS 2.1 (pymsis)
+  spaceweather.py     CelesTrak's measured F10.7 and ap, for NRLMSIS
+  solarforecast.py    the future Sun for NRLMSIS lifetimes: SWPC forecast, then mean cycles
+  drag_coefficient.py physical (free-molecular) drag coefficient from NRLMSIS's species
   ephemeris.py        Sun and Moon positions
   eclipse.py          umbra / penumbra
   integrators.py      DOPRI5, RK4, Wisdom-Holman, leapfrog

@@ -125,3 +125,9 @@ export loses nothing there.
   after the Python one: `satflight.dragCoefficient` (Sentman sphere, SESAM
   accommodation, the species mixture; pymsis already returns the species and
   temperature it needs) and an ExportTest against the simulator.
+
+**NRLMSIS ascent air.** Under NRLMSIS, Python ascents fly the NRLMSIS
+column over the pad at liftoff (`launch.msis_column`, 2026-11-24); MATLAB
+ascents fly the 1976 standard density (ported with it). An NRLMSIS run with a
+launch still to fly is refused on export, naming "NRLMSIS ascent air". Port:
+the column from pymsis at liftoff in `matlab_runtime.m`, and an ExportTest.

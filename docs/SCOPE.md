@@ -21,7 +21,11 @@ removed" below stay out. The last commit that had all of them is `c079ded`.
     terms in the motion, while the J switches still drive the analytic
     helpers. The coefficients are in `satflight/data/egm2008_70.gfc`
     (`tools/make_gravity.py` makes them).
-- **Atmospheric drag:** the atmosphere co-rotates with the Earth.
+- **Atmospheric drag:** the atmosphere co-rotates with the Earth. Its density
+  is the mean-Sun table (default) or NRLMSIS 2.1 driven by measured space
+  weather (`"atmosphere": "msis"`), optionally with a physical drag
+  coefficient (`"cd_model": "dria_sphere"`). Ascents fly the 1976 standard
+  atmosphere, or NRLMSIS over the pad.
 - **Third-body gravity** of the Sun and the Moon (`sun`, `moon`), from the
   low-precision almanac series in `ephemeris.py`.
 - **Solar radiation pressure** (`srp`): a cannonball model with `Cr` per
@@ -41,8 +45,11 @@ Not modelled, and named in the Sentinel-1 report as what is left:
 - solid-Earth and ocean tides;
 - relativity;
 - Earth albedo and infrared pressure;
-- a space-weather-driven atmosphere (the table's density scale is fitted
-  instead).
+- thermospheric winds (probed 2026-11-24: for Sentinel-1 they change drag
+  by a near-constant under 1 %, which the arc fits absorb; HWM14 does not
+  install here);
+- attitude and a panel model of the satellite (probed 2026-11-24: its drag
+  varies day to day like the sphere's, so it would not move the arcs).
 
 ## Still removed (since 2026-09-29)
 

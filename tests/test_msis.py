@@ -364,3 +364,59 @@ def test_the_msis_lifetime_turns_the_node_with_j2(table, monkeypatch):
     early = days < 3                       # before the sinking orbit speeds the node up
     np.testing.assert_allclose(raan[early] - 0.5, rate * days[early], rtol=0.01, atol=1e-4)
     assert np.all(np.diff(raan[np.argsort(days)]) >= 0)
+
+
+def test_the_msis_column_matches_msis_at_and_between_its_heights(table):
+    from satflight.atmosphere import msis_density
+    from satflight.launch import COLUMN_KM, msis_column
+    jd = _jd(np.datetime64("2025-03-01T05:17", "m"))
+    lat, lon = 28.5, -80.6
+    air = msis_column(lat, lon, jd)
+
+    def want(h):
+        return float(msis_density(np.array([h]), math.radians(lat), math.radians(lon), jd)[0])
+    for h in (0.0, 10.0, 50.0, 86.0, 120.0, 300.0):
+        assert h in COLUMN_KM
+        assert air(h) == pytest.approx(want(h), rel=1e-6)
+    for h in (0.4, 13.7, 85.5, 150.5, 710.0):          # between grid heights: log-linear
+        assert air(h) == pytest.approx(want(h), rel=0.02)
+    assert air(-0.3) == air(0.0) and air(3000.0) == 0.0
+
+
+def _launch_run(atmosphere):
+    from satflight.launch import LAUNCH_SITES, LaunchSpec, vehicle_preset
+    lat, lon, alt = LAUNCH_SITES["Cape Canaveral SLC-40 (USA)"]
+    launch = LaunchSpec(name="Up", lat=lat, lon=lon, alt=alt, payload_mass=5000.0,
+                        vehicle=vehicle_preset("Falcon 9 (approx.)"), perigee_alt=400.0,
+                        apogee_alt=400.0, inclination=51.6, direction="north",
+                        timing="delay", delay=900.0)
+    sim = Simulation(Scenario(name="x", epoch=datetime(2025, 3, 1, tzinfo=UTC),
+                              forces=ForceModel(drag=True, atmosphere=atmosphere),
+                              launches=[launch]))
+    return sim, sim.ascent_of(sim.index_of("Up")), (lat, lon)
+
+
+def test_an_msis_run_flies_its_ascents_through_the_column_over_the_pad(table):
+    from satflight.atmosphere import msis_density
+    from satflight.launch import us76_density
+    sim, asc, (lat, lon) = _launch_run("msis")
+    jd0 = sim.jd(asc.t0)                                    # liftoff, not the run's start
+    for h in (10.0, 120.0):
+        want = float(msis_density(np.array([h]), math.radians(lat), math.radians(lon), jd0)[0])
+        assert asc.env.air(h) == pytest.approx(want, rel=1e-6)
+    sim.advance(1500.0)
+    assert sim.sats[sim.index_of("Up")].launch_report["outcome"] == "orbit"
+    _, asc_table, _ = _launch_run("table")
+    assert asc_table.env.air is us76_density
+
+
+def test_an_msis_run_with_a_launch_is_not_exported_to_matlab_yet(table, tmp_path):
+    """MATLAB's ascents fly the 1976 standard; the NRLMSIS column over the pad is
+    not ported, so such a run is refused, not exported with other air."""
+    sim, _, _ = _launch_run("msis")
+    with pytest.raises(ValueError, match="NRLMSIS ascent air"):
+        export_live_script(sim, tmp_path / "up.m")
+    sim.advance(1500.0)                     # in orbit: no ascent left to fly
+    export_live_script(sim, tmp_path / "later.m", start="now")
+    table_sim, _, _ = _launch_run("table")
+    export_live_script(table_sim, tmp_path / "plain.m")

@@ -737,7 +737,9 @@ built (docs/specs, 2026-11-24): a drag panel model of Sentinel-1 (it varies
 day to day like the sphere) and thermospheric winds (HWM14 does not install
 here; super-rotation and typical winds change Sentinel-1's drag by a constant
 under 1 %). Under MSIS the Orbit tab's perigee air and the lifetime estimate
-are MSIS's (B18, D37). Still open: ascents stay on the table.
+are MSIS's (B18, D37). Ascents fly the 1976 standard's density to 86 km
+(the orbit table had max Q a third low), and NRLMSIS's column over the pad
+under NRLMSIS. All five drag items decided 2026-11-24 are done or probed.
 
 **Why:** The density is the Vallado Table 8-4 piecewise exponential, a
 function of altitude only, times a constant `density_scale`. It is the

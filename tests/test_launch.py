@@ -318,3 +318,35 @@ def test_a_bad_resume_record_scrubs_the_launch_with_the_reason():
     sim = Simulation(_scenario(launches=[s]))
     assert not sim.ascents
     assert any("scrubbed" in e.text and "missing" in e.text for e in sim.events)
+
+
+# --- the air an ascent flies through ----------------------------------------------------
+
+@pytest.mark.parametrize("h, rho", [
+    # U.S. Standard Atmosphere 1976, Table I (geometric height): density, kg/m^3
+    (0.0, 1.2250), (1.0, 1.1117), (5.0, 0.73643), (10.0, 0.41351), (15.0, 0.19476),
+    (20.0, 8.8910e-2), (30.0, 1.8410e-2), (50.0, 1.0269e-3), (70.0, 8.2829e-5),
+    (80.0, 1.8458e-5),
+])
+def test_ascent_air_is_the_1976_standard_below_86_km(h, rho):
+    from satflight.launch import us76_density
+    assert us76_density(h) == pytest.approx(rho, rel=3e-4)
+
+
+def test_ascent_air_above_86_km_is_the_orbit_table():
+    from satflight.atmosphere import density
+    from satflight.launch import us76_density
+    for h in (86.5, 100.0, 200.0, 600.0):
+        assert us76_density(h) == pytest.approx(float(density(h)), rel=1e-12)
+    below, above = us76_density(86.0), us76_density(86.0 + 1e-6)
+    assert abs(above / below - 1) < 0.05            # a small step where the two meet
+
+
+def test_the_ascent_flies_through_its_environments_air():
+    def flight(air):
+        env = AscentEnv(gmst=ENV.gmst, air=air) if air else ENV
+        return plan_launch(spec(perigee_alt=400.0, apogee_alt=400.0, inclination=51.6,
+                                direction="north"), env, 0.0).flight
+    vacuum, std = flight(lambda h: 0.0), flight(None)
+    assert vacuum.max_q[0] == 0.0 and vacuum.losses["drag"] == 0.0
+    assert 35e3 < std.max_q[0] < 45e3             # Falcon 9 without its throttle bucket

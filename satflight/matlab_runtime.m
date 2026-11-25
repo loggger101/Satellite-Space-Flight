@@ -3628,7 +3628,16 @@ h = rm - C.RE * (1 - C.F * z * z);
 end
 
 function rho = ascDensity(h, C)
-% the atmosphere's density (kg/m^3) at h km, unscaled
+% the air an ascent flies through (kg/m^3) at geometric height h km, unscaled: the US
+% Standard Atmosphere 1976, p / (R T), to 86 km, the orbit table above (launch.us76_density)
+if h <= C.US76_TOP_GEOMETRIC
+    hc = max(h, 0);
+    hg = C.US76_R0 * hc / (C.US76_R0 + hc);
+    k = find(C.US76(:, 1) <= hg, 1, "last");
+    temperature = C.US76(k, 2) + C.US76(k, 3) * (hg - C.US76(k, 1));
+    rho = ascPressure(h, C) * C.US76_P0 / (C.US76_R_AIR * temperature);
+    return
+end
 if h > C.TOP_KM
     rho = 0;
     return
@@ -4122,6 +4131,9 @@ C.THROTTLE_MIN = 0.4;
 C.US76 = [0 288.15 -6.5; 11 216.65 0; 20 216.65 1.0; 32 228.65 2.8; 47 270.65 0;
     51 270.65 -2.8; 71 214.65 -2.0];
 C.US76_TOP = 84.852;          % km geopotential (86 km geometric)
+C.US76_TOP_GEOMETRIC = 86.0;  % km: above it ascents fly the orbit table
+C.US76_P0 = 101325.0;         % Pa, sea-level pressure
+C.US76_R_AIR = 287.053;       % J/(kg K)
 C.US76_GMR = 34.163195;       % K/km
 C.US76_R0 = 6356.766;         % km
 C.US76_P = ones(size(C.US76, 1), 1);

@@ -33,6 +33,7 @@ MU_SUN = 1.32712440018e11         # km^3/s^2 (IAU / DE)
 MU_MOON = 4902.800066             # km^3/s^2 (DE)
 P_SRP = 4.56e-6                   # N/m^2, solar radiation pressure at 1 AU
 SOI_EARTH = 924000.0              # km, Earth's sphere of influence w.r.t. the Sun
+C_LIGHT = 299792.458              # km/s, the speed of light (relativity term)
 
 # --- Time ---------------------------------------------------------------
 JD_J2000 = 2451545.0

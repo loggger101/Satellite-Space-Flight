@@ -22,7 +22,9 @@
     "moon": false,
     "srp": false,
     "atmosphere": "table",
-    "cd_model": "fixed"
+    "cd_model": "fixed",
+    "tides": false,
+    "relativity": false
   },
   "record_dt": 20.0,
   "warp": 3600,

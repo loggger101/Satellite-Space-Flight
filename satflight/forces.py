@@ -9,6 +9,8 @@ All accelerations are in km/s^2 and vectorized over ``(N, 3)`` arrays.
 * atmospheric drag with an atmosphere co-rotating with the Earth
 * third-body gravity of the Sun and the Moon
 * solar radiation pressure (cannonball, Cr*A/m) dimmed in the Earth's shadow
+* the solid-Earth tide the Sun and Moon raise (degree 2, IERS 2010 ch. 6)
+* relativity: the Schwarzschild term of IERS 2010 eq. 10.12
 
 Every term is a per-scenario switch: the demos fly J2-J4 only, Sentinel-1
 the full set (docs/SCOPE.md).
@@ -28,6 +30,7 @@ from . import atmosphere, drag_coefficient, gravity
 from .constants import (
     AU,
     C22,
+    C_LIGHT,
     J2,
     J3,
     J4,
@@ -202,6 +205,52 @@ def accel_srp(r, r_sun, cr_a_over_m, shadow: bool = True):
     return mag[..., None] * d / dm
 
 
+K2_EARTH = 0.30   # degree-2 Love number: IERS 2010 Table 6.3's anelastic k2m are 0.298-0.302
+
+
+def tide_potential(r, r_sun, r_moon, k2: float = K2_EARTH):
+    """The potential (km^2/s^2) of the solid-Earth tide the Sun and Moon raise,
+    at ``r`` ((N, 3) km): k2 GM_b R^5 / (r_b^3 r^3) P2(cos psi) for each body,
+    psi the angle between the satellite and the body. With one k2 for every
+    order it is IERS 2010 eq. 6.6 to degree 2 (the addition theorem sums the
+    normalized coefficients into it). The EGM2008 field is tide-free, so the
+    whole tide, permanent part included, belongs here."""
+    rm = np.linalg.norm(r, axis=-1)
+    out = 0.0
+    for rb, mu in ((r_sun, MU_SUN), (r_moon, MU_MOON)):
+        bm = np.linalg.norm(rb)
+        c = (r @ rb) / (rm * bm)
+        out = out + k2 * mu * R_EARTH ** 5 / (bm ** 3 * rm ** 3) * 0.5 * (3 * c * c - 1)
+    return out
+
+
+def accel_tides(r, r_sun, r_moon, k2: float = K2_EARTH):
+    """The gradient of :func:`tide_potential` (km/s^2): for each body
+    k2 GM_b R^5 / (2 r_b^3 r^4) [(3 - 15 c^2) r_hat + 6 c b_hat], c = r_hat . b_hat.
+    Under the body the bulge pulls down. Ocean tides are not modelled."""
+    rm = np.linalg.norm(r, axis=-1, keepdims=True)
+    rh = r / rm
+    out = np.zeros_like(r, dtype=float)
+    for rb, mu in ((r_sun, MU_SUN), (r_moon, MU_MOON)):
+        bm = np.linalg.norm(rb)
+        bh = rb / bm
+        c = rh @ bh
+        f = k2 * mu * R_EARTH ** 5 / (2 * bm ** 3 * rm[..., 0] ** 4)
+        out += f[..., None] * ((3 - 15 * c * c)[..., None] * rh + (6 * c)[..., None] * bh)
+    return out
+
+
+def accel_relativity(r, v):
+    """The Schwarzschild term of general relativity (IERS 2010 eq. 10.12 with
+    beta = gamma = 1; Lense-Thirring and de Sitter, 100 times smaller, left out):
+    GM / (c^2 r^3) [(4 GM / r - v^2) r + 4 (r . v) v], km/s^2. It turns the
+    perigee 6 pi GM / (c^2 a (1 - e^2)) per revolution."""
+    rm = np.linalg.norm(r, axis=-1, keepdims=True)
+    v2 = np.sum(v * v, axis=-1, keepdims=True)
+    rv = np.sum(r * v, axis=-1, keepdims=True)
+    return MU_EARTH / (C_LIGHT ** 2 * rm ** 3) * ((4 * MU_EARTH / rm - v2) * r + 4 * rv * v)
+
+
 # --- The configurable model ------------------------------------------------------------
 
 @dataclass
@@ -226,9 +275,11 @@ class ForceModel:
     srp: bool = False
     atmosphere: str = "table"
     cd_model: str = "fixed"       # or "dria_sphere": Cd from the NRLMSIS air (see accel_drag)
+    tides: bool = False           # the solid-Earth tide of the Sun and Moon (accel_tides)
+    relativity: bool = False      # the Schwarzschild term (accel_relativity)
 
-    TERMS = ("j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp")
-    NEEDS_TIME = ("sun", "moon", "srp")          # where the Sun or Moon is
+    TERMS = ("j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "tides", "relativity")
+    NEEDS_TIME = ("sun", "moon", "srp", "tides")   # where the Sun or Moon is
 
     def __post_init__(self):
         one_of(self.atmosphere, atmosphere.ATMOSPHERES, "atmosphere")
@@ -272,7 +323,7 @@ class ForceModel:
     def needs_time(self) -> bool:
         """True when a term needs the date (the Sun's or Moon's position, the
         space weather of NRLMSIS)."""
-        return self.sun or self.moon or self.srp or self.msis_drag
+        return self.sun or self.moon or self.srp or self.tides or self.msis_drag
 
     @property
     def needs_gmst(self) -> bool:
@@ -287,7 +338,8 @@ class ForceModel:
         if self.drag:
             out.append("DRAG" if not self.msis_drag else
                        "DRAG(MSIS)" if self.cd_model == "fixed" else "DRAG(MSIS,Cd)")
-        return out + [t.upper() for t in ("sun", "moon", "srp") if getattr(self, t)]
+        out += [t.upper() for t in ("sun", "moon", "srp", "tides") if getattr(self, t)]
+        return out + (["GR"] if self.relativity else [])
 
     def label(self) -> str:
         """Short summary such as ``2B+J2+DRAG`` or ``2B+EGM70+DRAG+SUN+MOON+SRP``."""
@@ -314,19 +366,24 @@ class ForceModel:
         if self.drag:
             a += accel_drag(r, v, cd_a_over_m, self.density_scale, self.atmosphere, gmst, jd,
                             self.cd_model)
-        if self.sun or self.moon or self.srp:
+        if self.sun or self.moon or self.srp or self.tides:
             if jd is None:
-                raise ValueError("the Sun, Moon and sunlight-pressure terms need the date (jd)")
-            if self.sun or self.srp:
-                rs = sun_position(jd)
-                if self.sun:
-                    a += accel_third_body(r, rs, MU_SUN)
-                if self.srp:
-                    if cr_a_over_m is None:
-                        raise ValueError("sunlight pressure needs Cr*A/m for each satellite")
-                    a += accel_srp(r, rs, cr_a_over_m)
+                raise ValueError("the Sun, Moon, sunlight-pressure and tide terms need the "
+                                 "date (jd)")
+            rs = sun_position(jd) if (self.sun or self.srp or self.tides) else None
+            rmn = moon_position(jd) if (self.moon or self.tides) else None
+            if self.sun:
+                a += accel_third_body(r, rs, MU_SUN)
+            if self.srp:
+                if cr_a_over_m is None:
+                    raise ValueError("sunlight pressure needs Cr*A/m for each satellite")
+                a += accel_srp(r, rs, cr_a_over_m)
             if self.moon:
-                a += accel_third_body(r, moon_position(jd), MU_MOON)
+                a += accel_third_body(r, rmn, MU_MOON)
+            if self.tides:
+                a += accel_tides(r, rs, rmn)
+        if self.relativity:
+            a += accel_relativity(r, v)
         return a
 
     def breakdown(self, r, v, cd_a_over_m, gmst=0.0, jd=None, cr_a_over_m=None):
@@ -344,6 +401,7 @@ class ForceModel:
             "C22": (accel_c22(r, gmst), sep and self.c22),
             # a switched-off drag is shown with the table: NRLMSIS needs measured
             # space weather the run itself does not
+            "relativity": (accel_relativity(r, v), self.relativity),
             "drag": (accel_drag(r, v, np.atleast_1d(cd_a_over_m), self.density_scale,
                                 self.atmosphere if self.drag else "table", gmst, jd,
                                 self.cd_model if self.drag else "fixed"),
@@ -359,6 +417,7 @@ class ForceModel:
             terms["Sun"] = (accel_third_body(r, rs, MU_SUN), self.sun)
             terms["Moon"] = (accel_third_body(r, moon_position(jd), MU_MOON), self.moon)
             terms["sunlight"] = (accel_srp(r, rs, cram), self.srp)
+            terms["tides"] = (accel_tides(r, rs, moon_position(jd)), self.tides)
         return {k: (float(np.linalg.norm(val[0])), bool(on)) for k, (val, on) in terms.items()}
 
 

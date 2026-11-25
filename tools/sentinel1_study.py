@@ -207,17 +207,18 @@ ARC_COLUMNS = ["mission", "start", "fit_rms_m", "fit_r_m", "fit_s_m", "fit_w_m",
 _WORKER = {}
 
 
-def _arc_row(m, d, degree, one=None, atmosphere="table", cd_model="fixed"):
+def _arc_row(m, d, degree, one=None, atmosphere="table", cd_model="fixed", iers=False):
     """One arc's row; what the data cannot support is a row with the reason."""
     try:
         if one is not None:
             return one(m, d)
-        key = (degree, atmosphere, cd_model)
+        key = (degree, atmosphere, cd_model, iers)
         if key not in _WORKER:                             # once per process
             from satflight.forces import ForceModel
             _WORKER[key] = (ForceModel(
                 gravity_degree=degree, drag=True, sun=True, moon=True, srp=True,
-                atmosphere=atmosphere, cd_model=cd_model), eop.read())
+                atmosphere=atmosphere, cd_model=cd_model, tides=iers, relativity=iers),
+                           eop.read())
         model, table = _WORKER[key]
         return study.accuracy_arc(m, d, model, MASS[m], eop_table=table)
     except (poeorb.PoeorbError, fit.FitError) as exc:
@@ -227,26 +228,28 @@ def _arc_row(m, d, degree, one=None, atmosphere="table", cd_model="fixed"):
 CD_FILE_TAG = {"fixed": "", "dria_sphere": "_dria"}
 
 
-def arcs_file(atmosphere="table", cd_model="fixed"):
+def arcs_file(atmosphere="table", cd_model="fixed", iers=False):
     """The arcs' file name: arcs.csv for the table, arcs_<atmosphere>.csv
-    otherwise, with "_dria" for the physical drag coefficient."""
+    otherwise, with "_dria" for the physical drag coefficient and "_iers" for
+    the solid-Earth tides and relativity."""
     base = "arcs" if atmosphere == "table" else f"arcs_{atmosphere}"
-    return f"{base}{CD_FILE_TAG[cd_model]}.csv"
+    return f"{base}{CD_FILE_TAG[cd_model]}{'_iers' if iers else ''}.csv"
 
 
 def run_arcs(first=FIRST, last=LAST, degree=70, limit=None, missions=MISSIONS, out=print,
              dest=OUT, one=None, workers=1, atmosphere="table", only=None,
-             cd_model="fixed"):
+             cd_model="fixed", iers=False):
     """Every weekly arc not already in ``dest``/arcs.csv, ``workers`` at a time
     (processes), each row written as it finishes; ``one`` (for tests) replaces
     :func:`study.accuracy_arc` and runs in this process. ``atmosphere`` "msis"
     flies them with NRLMSIS into arcs_msis.csv, and ``cd_model``
     "dria_sphere" with its physical Cd into arcs_msis_dria.csv; ``only``
     [(mission, day)] runs just those (ValueError for one that is not a weekly
-    arc, or for a Cd model the atmosphere cannot support)."""
+    arc, or for a Cd model the atmosphere cannot support). ``iers`` adds the
+    solid-Earth tides and relativity (into arcs_..._iers.csv)."""
     from satflight.forces import ForceModel
     ForceModel(drag=True, atmosphere=atmosphere, cd_model=cd_model)   # refuse a bad pair now
-    path = dest / arcs_file(atmosphere, cd_model)
+    path = dest / arcs_file(atmosphere, cd_model, iers)
     done = {(r["mission"], r["start"]) for r in read_csv(path)} if path.exists() else set()
     if not path.exists():
         write_csv(path, [], ARC_COLUMNS)
@@ -260,11 +263,11 @@ def run_arcs(first=FIRST, last=LAST, degree=70, limit=None, missions=MISSIONS, o
     todo = todo[:limit] if limit else todo
     pool = None
     if one is not None or workers <= 1:
-        rows = (_arc_row(m, d, degree, one, atmosphere, cd_model) for m, d in todo)
+        rows = (_arc_row(m, d, degree, one, atmosphere, cd_model, iers) for m, d in todo)
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
         pool = ProcessPoolExecutor(max_workers=workers)
-        futures = [pool.submit(_arc_row, m, d, degree, None, atmosphere, cd_model)
+        futures = [pool.submit(_arc_row, m, d, degree, None, atmosphere, cd_model, iers)
                    for m, d in todo]
         rows = (f.result() for f in as_completed(futures))
     try:
@@ -272,7 +275,7 @@ def run_arcs(first=FIRST, last=LAST, degree=70, limit=None, missions=MISSIONS, o
     finally:
         if pool is not None:     # an unexpected error: stop, without hours of waiting
             pool.shutdown(wait=False, cancel_futures=True)
-    write_csv(path, read_arcs(dest, atmosphere, cd_model), ARC_COLUMNS)   # out of order: sort
+    write_csv(path, read_arcs(dest, atmosphere, cd_model, iers), ARC_COLUMNS)   # out of order: sort
 
 
 def _write_arc_rows(path, rows, total, out):
@@ -287,10 +290,10 @@ def _write_arc_rows(path, rows, total, out):
         out(f"[{n + 1}/{total}] {m} {d}: {msg}")
 
 
-def read_arcs(dest=OUT, atmosphere="table", cd_model="fixed"):
+def read_arcs(dest=OUT, atmosphere="table", cd_model="fixed", iers=False):
     """``dest``/arcs.csv (or the ``atmosphere``'s and ``cd_model``'s file) in
     date order (then satellite), [] if there is none."""
-    path = dest / arcs_file(atmosphere, cd_model)
+    path = dest / arcs_file(atmosphere, cd_model, iers)
     rows = read_csv(path) if path.exists() else []
     return sorted(rows, key=lambda r: (r["start"], MISSIONS.index(r["mission"])))
 
@@ -565,6 +568,8 @@ def main(argv=None) -> int:
     p.add_argument("--cd-model", choices=["fixed", "dria_sphere"], default="fixed",
                    help="arcs: the drag coefficient; dria_sphere (needs --atmosphere msis) "
                         "writes arcs_msis_dria.csv")
+    p.add_argument("--iers", action="store_true",
+                   help="arcs: add the solid-Earth tides and relativity (writes ..._iers.csv)")
     p.add_argument("--only", action="append", type=_mission_day, metavar="MISSION:DAY",
                    help="arcs: just this arc, e.g. S1A:2026-01-20 (repeatable)")
     a = p.parse_args(argv)
@@ -573,7 +578,8 @@ def main(argv=None) -> int:
             run_series()
         elif a.command == "arcs":
             run_arcs(degree=a.degree, limit=a.limit, workers=a.workers,
-                     atmosphere=a.atmosphere, only=a.only, cd_model=a.cd_model)
+                     atmosphere=a.atmosphere, only=a.only, cd_model=a.cd_model,
+                     iers=a.iers)
         else:
             print(run_report())
     except (poeorb.PoeorbError, eop.EopError, FileNotFoundError, ValueError) as exc:

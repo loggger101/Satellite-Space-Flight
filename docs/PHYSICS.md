@@ -96,6 +96,30 @@ P = 4.56e-6 N/m^2 at 1 AU, `Cr` per satellite (default 1.3; the area is the
 drag area) and `nu` the sunlit fraction below. For Sentinel-1 (about
 2,200 kg, 10 m^2) it is about 3e-8 m/s^2.
 
+**Solid-Earth tides** (`tides`, off by default, added 2026-11-25). The Sun
+and Moon stretch the Earth, and the bulge pulls on the satellite: for each
+body the potential `k2 GM_b R^5 / (r_b^3 r^3) P2(cos psi)` (psi between the
+satellite and the body) and its gradient
+`k2 GM_b R^5 / (2 r_b^3 r^4) [(3 - 15 c^2) r_hat + 6 c b_hat]`,
+`c = cos psi`. With one Love number for every order (k2 = 0.30; IERS 2010
+Table 6.3's anelastic k20, k21, k22 are 0.302, 0.298, 0.301) this is IERS
+2010 eq. 6.6 to degree 2: the test sums the normalized coefficient changes
+into the same potential to 1e-12. EGM2008 is tide-free, so the whole tide,
+permanent part included, is applied. Left out: degree 3 and the frequency-
+dependent corrections (about 1 % of the effect), the pole tide and ocean
+tides (about a tenth of the solid tide for a low orbit). With the Moon
+overhead at 700 km it pulls down at 2.8-3.7e-7 m/s^2 (with the Moon's
+distance). Flown from one state with
+and without it (J2, Sun, Moon), a Sentinel-1 orbit moves 10 m along-track
+after one day and 47 m after three, and up to 5 m cross-track.
+
+**Relativity** (`relativity`, off by default, added 2026-11-25). The
+Schwarzschild term of IERS 2010 eq. 10.12 (beta = gamma = 1):
+`GM / (c^2 r^3) [(4 GM / r - v^2) r + 4 (r . v) v]`. Lense-Thirring and de
+Sitter, about 100 times smaller, are left out. The test integrates an
+eccentric orbit and finds the perigee turning 6 pi GM / (c^2 a (1 - e^2)) a
+revolution to 1e-3. For Sentinel-1 it is 2.5 m along-track a day.
+
 **Geostationary slots.** A `geo` orbit sits where the equatorial pull
 `mu / r^2 (1 + 3/2 J2 (Re/r)^2)` matches the Earth's rotation when J2 acts,
 ~0.5 km above the two-body R_GEO; at R_GEO it drifted east 0.8 deg a month.
@@ -642,8 +666,10 @@ cross-section, not checked here; this is evidence, not a test.
   plus J2 (j2mean); a run that has other terms switched on logs a warning
   naming them.
 - Sun and Moon from low-precision series; sunlight pressure as a cannonball
-  (no attitude-dependent panels, no Earth albedo or infrared). Tides, polar
-  motion and relativity are not modelled ([SCOPE.md](SCOPE.md)).
+  (no attitude-dependent panels, no Earth albedo or infrared). Ocean tides,
+  polar motion in the simulator's Earth and relativity beyond the
+  Schwarzschild term are not modelled; the degree-2 solid tide and that term
+  are switches ([SCOPE.md](SCOPE.md)).
 - Launch ascents fly J2-J4 and drag whatever else the scenario switches on.
 - The default atmosphere is the static exponential table (no diurnal bulge, no
   space-weather input); NRLMSIS 2.1 with measured space weather is the

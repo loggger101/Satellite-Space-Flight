@@ -28,6 +28,8 @@ removed" below stay out. The last commit that had all of them is `c079ded`.
   atmosphere, or NRLMSIS over the pad.
 - **Third-body gravity** of the Sun and the Moon (`sun`, `moon`), from the
   low-precision almanac series in `ephemeris.py`.
+- **Solid-Earth tides** (`tides`) of the Sun and Moon to degree 2, and the
+  **Schwarzschild relativity** term (`relativity`), both IERS 2010.
 - **Solar radiation pressure** (`srp`): a cannonball model with `Cr` per
   satellite (default 1.3, same area as drag), dimmed in the Earth's penumbra
   and umbra.
@@ -42,8 +44,10 @@ removed" below stay out. The last commit that had all of them is `c079ded`.
 Not modelled, and named in the Sentinel-1 report as what is left:
 - polar motion in the simulator's own Earth (the truth is corrected for it;
   the field's 0.5 arcsec tilt is centimetres);
-- solid-Earth and ocean tides;
-- relativity;
+- ocean tides, the pole tide and the degree-3 solid tide (the degree-2
+  solid-Earth tide is a switch since 2026-11-25, `"tides"`);
+- relativity beyond the Schwarzschild term (that term is a switch since
+  2026-11-25, `"relativity"`);
 - Earth albedo and infrared pressure;
 - thermospheric winds (probed 2026-11-24: for Sentinel-1 they change drag
   by a near-constant under 1 %, which the arc fits absorb; HWM14 does not

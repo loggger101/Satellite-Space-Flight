@@ -436,7 +436,21 @@ with `p(h)/p0` from the US Standard Atmosphere 1976 (seven layers to 86 km,
 within 1e-4 of its published table; isothermal above). The mass flow is fixed
 by the vacuum rating, so thrust rises with altitude as the nozzle
 back-pressure falls. Drag uses the vehicle's `Cd` and frontal area and is
-always applied during ascent, whatever the scenario's drag switch. An
+always applied during ascent, whatever the scenario's drag switch. The air is
+the same 1976 standard's density, p / (R T), to 86 km (its published values
+to their printed digits; the orbit table above, about 2 % off where they
+meet). The orbit table alone is a third too thin at 10 km, where max Q falls:
+Falcon 9 to 400 km read max Q 30 kPa on it and 41 kPa now (drag loss 18 ->
+22 m/s; the orbit reached is the same to 1 km). The real Falcon 9 throttles
+down through max Q, which the model does not. Under NRLMSIS
+(`"atmosphere": "msis"`) each ascent flies through the NRLMSIS column over
+its pad at liftoff instead: one call on a height grid (1 km steps to 150 km,
+10 km to 1000 km), log-linear between (within 2 % of NRLMSIS at the heights
+tested between grid points).
+The Sun hardly matters for an ascent (NRLMSIS at solar minimum and maximum
+agree within 10 % below 100 km); the column brings the season, the latitude
+and the weather of the day. MATLAB exports fly the 1976 standard; an NRLMSIS
+run with a launch still to fly is not exported yet. An
 acceleration limit, if set, throttles between 40 and 100 %; where even 40 %
 exceeds it the log says so once per stage. The liftoff thrust-to-weight is
 measured against the weight along the plumb line, gravity less the Earth's

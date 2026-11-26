@@ -68,6 +68,16 @@ S1_E_MEAN = 0.0011837
 S1_PHASE = 176.3                   # deg, 1C behind 1A
 
 
+def s1_plane_offset(phase: float = S1_PHASE) -> float:
+    """How far (deg of RAAN, + east) 1C's plane turns from 1A's so that 1C,
+    trailing by ``phase`` deg, flies 1A's ground tracks. Each orbit's node lands
+    360 * S1_DAYS / S1_REVS deg (12 tracks) farther west, so a trailer half a
+    revolution back lands exactly 6 tracks over; one ``phase`` back lands
+    (phase/360 - 1/2) of that short, which the plane makes up: -0.254 deg
+    (1C's node a minute of local time behind 1A's), as the precise orbits show."""
+    return (phase / 360.0 - 0.5) * 360.0 * S1_DAYS / S1_REVS
+
+
 def _mean_e_vector(sim, k, revs=2, step=10.0):
     """Satellite ``k``'s (e cos argp, e sin argp) averaged over whole
     revolutions, node to node, flown with the scenario's forces."""
@@ -117,22 +127,69 @@ def default():
     """Sentinel-1A and -1C on ESA's reference orbit, with the eccentricity and
     phasing their precise orbits show."""
     raan = s1_raan(EPOCH)
-    us = (0.0, (-S1_PHASE) % 360.0)   # argument of latitude at the epoch, deg
+    raans = [raan, (raan + s1_plane_offset()) % 360.0]   # 1C on 1A's ground tracks
+    us = [0.0, (-S1_PHASE) % 360.0]   # argument of latitude at the epoch, deg
 
     def build(osc):
-        def s1(name, u, mass, v):
+        def s1(name, u, raan, mass, v):
             e, argp = math.hypot(*v), math.degrees(math.atan2(v[1], v[0]))
             return SatSpec(name, el(altitude=S1_ALT, e=round(e, 9), i="sso",
                                     raan=round(raan, 6), argp=round(argp, 6),
                                     nu=round((u - argp) % 360.0, 6)),
                            color=None, mass=mass, area=10.0, cd=2.2)
-        return _default_scenario([s1("Sentinel-1A", us[0], 2164.0, osc[0]),
-                                  s1("Sentinel-1C", us[1], 2200.0, osc[1])])
+        return _default_scenario([s1("Sentinel-1A", us[0], raans[0], 2164.0, osc[0]),
+                                  s1("Sentinel-1C", us[1], raans[1], 2200.0, osc[1])])
+
+    def vec(e, w):
+        return e * math.cos(math.radians(w)), e * math.sin(math.radians(w))
 
     target = (0.0, S1_E_MEAN)          # argp 90 deg
-    starts = [frozen_start(build, k, target) for k in range(2)]
-    return build([(e * math.cos(math.radians(w)), e * math.sin(math.radians(w)))
-                  for e, w in starts])
+    first = vec(*frozen_start(build, 0, target))
+    # The phase and the plane offset are what the precise orbits measure from
+    # the nodes (when each satellite crosses, and where on the ground); the start
+    # sets osculating elements, whose J2 short-period swing differs at u = 0 and
+    # u = 183.7 deg (0.27 deg of phase, 2 km on the ground). So fly a day and move
+    # 1C along its orbit and turn its plane until its nodes come S1_PHASE behind
+    # 1A's and land on 1A's tracks (and find 1C's frozen start again where it is).
+    for _ in range(6):
+        osc = [first, vec(*frozen_start(build, 1, target))]
+        phase, miss = _flown_phase_and_miss(Simulation(build(osc)))
+        if abs(phase - S1_PHASE) < 0.002 and abs(miss) * 111.32 < 0.05:
+            return build(osc)
+        us[1] = (us[1] + phase - S1_PHASE) % 360.0
+        raans[1] = (raans[1] - miss) % 360.0
+    raise RuntimeError(f"Sentinel-1C still {phase:.3f} deg behind 1A and "
+                       f"{miss * 111.32:.2f} km off its tracks")
+
+
+def _flown_phase_and_miss(sim, hours=26.0, step=10.0):
+    """Flown ``hours`` with the scenario's forces, from the ascending nodes: how
+    far (deg) 1C trails 1A (when it crosses after 1A, over 1A's node-to-node
+    period) and how far east (deg) its nodes land from 1A's 175-track grid
+    (tracks 360/175 deg apart), each averaged over the day."""
+    import numpy as np
+
+    from satflight.fit import fly_batch
+    from satflight.timeutil import gmst
+    sats = sim.scenario.satellites
+    t = np.arange(0.0, hours * 3600.0, step)
+    jd0 = sim.clock.jd(0.0)
+    Y = fly_batch(sim.scenario.forces, jd0, 0.0, sim.y, t,
+                  [s.cd * s.area / s.mass for s in sats], [0.0] * len(sats))
+    tn, lon = [], []
+    for k in range(2):
+        r = Y[k, :, :3]
+        up = np.flatnonzero((r[:-1, 2] < 0) & (r[1:, 2] >= 0))
+        f = -r[up, 2] / (r[up + 1, 2] - r[up, 2])
+        rn = r[up] + f[:, None] * (r[up + 1] - r[up])
+        tn.append(t[up] + f * step)
+        lon.append(np.degrees(np.arctan2(rn[:, 1], rn[:, 0]) - gmst(jd0 + tn[k] / 86400.0)))
+    period = np.diff(tn[0]).mean()
+    after = tn[1] - tn[0][np.searchsorted(tn[0], tn[1]) - 1]
+    after = after[tn[1] > tn[0][0]]
+    grid = 360.0 / S1_REVS
+    return (float(360.0 * after.mean() / period),
+            float(np.mean((lon[1] - lon[0][0] + grid / 2) % grid - grid / 2)))
 
 
 def _default_scenario(satellites):
@@ -141,9 +198,10 @@ def _default_scenario(satellites):
         description="ESA's Copernicus radar pair on the Sentinel-1 reference orbit: "
                     "693 km, sun-synchronous (98.18 deg), dawn-dusk with the ascending "
                     "node at 18:00, frozen perigee over the North Pole, 175 orbits in a "
-                    "12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, so "
-                    "together they revisit each ground track every 6 days. Open the map "
-                    "(M) to watch the tracks interleave. Reference orbit with the "
+                    "12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, its "
+                    "plane turned 0.25 deg west to put it on 1A's ground tracks, so "
+                    "together they revisit each track every 6 days (Telemetry, PHASING). "
+                    "Open the map (M) to watch the tracks interleave. Reference orbit with the "
                     "eccentricity and spacing ESA's precise orbits show (2025-26), not "
                     "tracking data.",
         epoch=EPOCH, forces=ForceModel(j2=True, j3=True, j4=True, drag=True), warp=120,

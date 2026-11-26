@@ -37,7 +37,9 @@ def test_reference_orbit_elements(sim):
         el = rv2coe(sim.y[k, :3], sim.y[k, 3:])
         i_mean = math.degrees(float(osculating_to_mean_i(el.i, el.a, el.e, el.argp, el.nu)))
         assert i_mean == pytest.approx(98.18, abs=0.01)
-        assert local_time_of_node(el.raan, jd) == pytest.approx(18.0, abs=1 / 60)
+        # 1A on the reference 18:00; 1C's plane a minute earlier, onto 1A's tracks
+        ltan = (18.0, 18.0 - 1.0 / 60)[k]
+        assert local_time_of_node(el.raan, jd) == pytest.approx(ltan, abs=0.2 / 60)
         assert 7060 < el.a < 7085                       # osculating, around 7071 km mean
 
 
@@ -48,9 +50,14 @@ def test_1c_trails_1a_by_the_measured_176_degrees(sim):
     with open(STUDY / "phasing.csv", newline="", encoding="utf-8") as f:
         real = np.mean([float(r["mean_deg"]) for r in csv.DictReader(f)
                         if r["date"] < "2026-06-01"])
-    u = [rv2coe(sim.y[k, :3], sim.y[k, 3:]) for k in range(2)]
-    lat_arg = [math.degrees(e.argp + e.nu) % 360 for e in u]
-    assert (lat_arg[0] - lat_arg[1]) % 360 == pytest.approx(real, abs=0.05)
+    # measured as phasing.csv is: when 1C crosses the equator northward after
+    # 1A, over 1A's node-to-node period (the osculating argument of latitude
+    # differs from it by J2's short-period swing, 0.27 deg here)
+    times, _ = _nodes(sim)
+    a, c = times
+    after = c - a[np.searchsorted(a, c) - 1]
+    phase = 360.0 * after[c > a[0]] / np.diff(a).mean()
+    assert phase.mean() == pytest.approx(real, abs=0.05)
 
 
 def _revolution_mean_e(sim, k, revs=3, step=5.0):
@@ -156,3 +163,58 @@ def test_the_real_pair_flies_176_degrees_apart_until_1c_moved_in_june_2026():
     after = [float(r["mean_deg"]) for r in rows if r["date"] >= "2026-06-24"]
     assert min(before) > 175.8 and max(before) < 177.0
     assert after and all(206.0 < x < 208.0 for x in after)
+
+
+# --- one set of ground tracks -----------------------------------------------------------------
+# 175 tracks in 12 days lie 360/175 deg apart at the equator; each orbit's node lands
+# 360 * 12/175 deg (12 tracks) farther west. Trailing by 176.3 deg alone would put 1C
+# 0.12 of a track (28 km) off 1A's; ESA turns 1C's plane 0.25 deg west to close it.
+GRID_DEG = 360.0 / 175
+
+
+def _wrap(x, g):
+    return (np.asarray(x) + g / 2) % g - g / 2
+
+
+def _nodes(sim, hours=26.0, step=10.0):
+    """Each satellite's ascending-node times (s) and longitudes (deg,
+    Earth-fixed) over ``hours`` flown with the scenario's forces."""
+    from satflight.fit import fly_batch
+    from satflight.timeutil import gmst
+    sats = sim.scenario.satellites
+    t = np.arange(0.0, hours * 3600.0, step)
+    jd0 = sim.clock.jd(0.0)
+    Y = fly_batch(sim.scenario.forces, jd0, 0.0, sim.y, t,
+                  [s.cd * s.area / s.mass for s in sats], [0.0] * len(sats))
+    times, out = [], []
+    for k in range(len(sats)):
+        r = Y[k, :, :3]
+        up = np.flatnonzero((r[:-1, 2] < 0) & (r[1:, 2] >= 0))
+        f = -r[up, 2] / (r[up + 1, 2] - r[up, 2])
+        tn = t[up] + f * step
+        rn = r[up] + f[:, None] * (r[up + 1] - r[up])
+        lon = np.degrees(np.arctan2(rn[:, 1], rn[:, 0]) - gmst(jd0 + tn / 86400.0))
+        times.append(tn)
+        out.append(lon)
+    return times, out
+
+
+def test_1c_flies_1a_s_ground_tracks(sim):
+    """The pair's purpose: 1C passes over 1A's tracks six days later, so each
+    of 1C's equator crossings lands on 1A's 175-track grid, as the precise
+    orbits show (within 0.2 km, July 2025 - May 2026)."""
+    _, (a, c) = _nodes(sim)
+    off_km = _wrap(c - a[0], GRID_DEG) * 111.32
+    assert len(off_km) >= 15
+    assert np.abs(off_km).max() < 1.0
+
+
+def test_the_default_turns_1c_s_plane_as_the_real_pair_does(sim):
+    """1C's node runs about a minute of local time ahead of 1A's in the precise
+    orbits (the 0.25 deg its 176.3 deg phasing needs); the default has the same gap."""
+    real = (np.mean(_daily("S1A")["ltan_h"][:335])
+            - np.mean(_daily("S1C")["ltan_h"][:335])) * 60
+    jd = sim.clock.jd(0.0)
+    ltan = [local_time_of_node(rv2coe(sim.y[k, :3], sim.y[k, 3:]).raan, jd)
+            for k in range(2)]
+    assert (ltan[0] - ltan[1]) * 60 == pytest.approx(real, abs=0.1)

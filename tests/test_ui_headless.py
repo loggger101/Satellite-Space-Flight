@@ -1276,6 +1276,22 @@ def test_no_property_row_runs_into_its_value(scaled_app):
     assert not bad, sorted(bad)
 
 
+def test_the_sentinel_1_telemetry_shows_the_pair_s_phasing(app):
+    """1A's Telemetry tab names 1C, how far behind it flies and how close to 1A's
+    tracks; a satellite with nothing on its orbit gets no PHASING section."""
+    app.load_scenario(app.scenario_dir / "default.json")
+    app.sim.advance(4 * 3600.0)
+    app.select(0)
+    sections = dict(app.info.report(0))
+    rows = dict(sections["PHASING"])
+    assert rows["Companion"] == "Sentinel-1C"
+    assert rows["Phase angle"] == "176.30 deg behind"
+    assert rows["Track offset"].startswith("0.")
+    app.load_scenario(app.scenario_dir / "geo_drift.json")
+    app.select(0)
+    assert "PHASING" not in dict(app.info.report(0))
+
+
 def test_every_property_row_and_form_field_is_explained(app):
     """The right panel's rows (both tabs, every bundled orbit) and every dialog
     field have their own explanation."""

@@ -31,7 +31,7 @@ events, whatever the frame rate.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -229,6 +229,8 @@ class Satellite:
     launch_report: dict | None = None   # ascent summary once a launched payload separates
     replay: object | None = None  # replay.Ephemeris it follows instead of being integrated
     mission: str = ""             # Sentinel-1 unit of a replay or its twin ("S1A", ...)
+    # the latest ascending-node crossings: (t s, Earth-fixed longitude deg, RAAN deg)
+    nodes: list = field(default_factory=list, repr=False)
 
 
 @dataclass
@@ -1275,7 +1277,37 @@ class Simulation:
             self._eclipse_events(t, w)
             if self.stations:
                 self._station_events(t, w)
+        if free:
+            self._node_events(t, np.array(sorted(free)))
         self._approach_events(t, idx)
+
+    NODES_KEPT = 4
+
+    def _node_events(self, t: float, w: np.ndarray):
+        """Note satellites ``w`` crossing their ascending node in the step just
+        ended at ``t``: the time on the step's Hermite curve, the Earth-fixed
+        longitude and the RAAN there (the position lies on the line of nodes),
+        for :mod:`satflight.phasing`. A step nothing joins (a burn, the first
+        one) is skipped; crossings later than ``t`` (time went back) are dropped."""
+        for i in w:
+            nodes = self.sats[i].nodes
+            while nodes and nodes[-1][0] > t:
+                nodes.pop()
+        prev = self._previous(t)
+        if prev is None:
+            return
+        t0, y0 = prev
+        h = t - t0
+        up = w[(y0[w, 2] < 0) & (self.y[w, 2] >= 0)]
+        for i in up:
+            s = _crossing(lambda pos, _s: float(np.ravel(pos)[2]), y0[i], self.y[i], h)
+            x, y, _ = _hermite_at(y0[i], self.y[i], h, s)
+            tn = t0 + s * h
+            raan = math.atan2(y, x)
+            lon = math.remainder(raan - self.clock.gmst(tn), 2 * math.pi)
+            nodes = self.sats[i].nodes
+            nodes.append((tn, math.degrees(lon), math.degrees(raan) % 360.0))
+            del nodes[:-self.NODES_KEPT]
 
     def _eclipse_events(self, t: float, w: np.ndarray):
         """Log satellites ``w`` entering and leaving the Earth's shadow."""

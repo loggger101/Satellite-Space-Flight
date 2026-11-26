@@ -23,7 +23,14 @@ from .elements import rv2coe
 from .simulation import ACTIVE
 
 MAX_DAYS = 30                  # longest repeat cycle looked for
-CLOSURE_KM = 2.0               # a cycle must close to this at the equator
+# a cycle must close within this fraction of its own track spacing at the equator:
+# one orbit's node spacing is all there is to go on, and for a real orbit (the
+# precise states) it misses the exact repeat by a few 1e-4 deg, some 10 km over
+# Sentinel-1's 175 orbits, against tracks 229 km apart. The next-best cycles miss
+# by whole tracks (102 orbits in 7 days: 229 km).
+CLOSURE_FRACTION = 0.1
+CLOSURE_KM = 25.0              # and never by more than this: few orbits a day space
+#                               their tracks thousands of km apart
 MAX_COMPANIONS = 4
 MIN_TILT_DEG = 1.0             # below it the equator crossings are not defined
 EQUATOR_KM = 2 * math.pi * R_EARTH
@@ -69,18 +76,28 @@ def _period_and_shift(nodes):
 
 def repeat_cycle(sim, i) -> Repeat | None:
     """The repeat cycle satellite ``i``'s last orbit flies (the fewest days up to
-    MAX_DAYS that close within CLOSURE_KM), None if none does or it has not
+    MAX_DAYS that close within CLOSURE_FRACTION of their track spacing and
+    CLOSURE_KM), None if none does or it has not
     crossed the equator northward twice yet."""
     ps = _period_and_shift(sim.sats[i].nodes)
     if ps is None or not 0 < ps[1] < 360:
         return None
-    x = ps[1] / 360.0                     # Earth turns (relative to the node) per orbit
+    return cycle_of(ps[1] / 360.0)
+
+
+def cycle_of(x: float) -> Repeat | None:
+    """The repeat cycle of an orbit under which the Earth turns ``x`` times
+    (relative to the node) per revolution: the fewest days up to MAX_DAYS whose
+    whole number of orbits closes within CLOSURE_FRACTION of its track spacing
+    (and CLOSURE_KM)."""
+    if not 0 < x < 1:
+        return None
     for days in range(1, MAX_DAYS + 1):
         orbits = round(days / x)
         if orbits < 1:
             continue
         closure = abs(orbits * x - days) * EQUATOR_KM
-        if closure < CLOSURE_KM:
+        if closure < min(CLOSURE_FRACTION * EQUATOR_KM / orbits, CLOSURE_KM):
             return Repeat(orbits, days, EQUATOR_KM / orbits, closure)
     return None
 

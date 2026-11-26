@@ -164,3 +164,20 @@ def test_an_equatorial_orbit_has_no_node_and_no_companions():
     d = json.loads((ROOT / "scenarios" / "geo_drift.json").read_text(encoding="utf-8"))
     s = _sim(d, hours=1.0)
     assert s.n > 1 and phasing.companions(s, 0) == [] and phasing.rows(s, 0) == []
+
+
+def test_one_orbit_of_a_real_orbit_still_finds_its_cycle():
+    # one orbit's node spacing of the precise states right after the launch
+    # scenario's arrival: 6e-4 deg off the exact 175-in-12 shift, some 12 km over
+    # the cycle against tracks 229 km apart
+    from satflight.phasing import cycle_of
+    exact = 12 / 175
+    for off_deg in (-6e-4, 6e-4):
+        rep = cycle_of(exact + off_deg / 360.0)
+        assert (rep.orbits, rep.days) == (175, 12)
+        assert 5.0 < rep.closure_km < 0.1 * rep.spacing_km
+    # 102 orbits in 7 days, the next-best cycle, misses by a whole track
+    assert (cycle_of(exact).orbits, cycle_of(exact).days) == (175, 12)
+    assert cycle_of(7 / 102 + 0.001 / 360.0).days == 7    # a real 7-day orbit
+    # 8.1 orbits a day: 8 in a day misses by 495 km, a tenth of its 5000 km spacing
+    assert cycle_of(0.123456789) is None or cycle_of(0.123456789).days > 1

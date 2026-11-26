@@ -839,7 +839,8 @@ def test_start_screen_opens_on_request_and_covers_every_bundled_scenario(tmp_pat
         assert bundled == {stem for stem, *_ in CARDS}   # a new scenario needs a label and blurb
         scr = a.dialogs[-1]
         # Sentinel-1 leads: the nominal orbit, then the replay of the real one
-        assert [c[0].stem for c in scr.mission] == ["default", "sentinel1_replay"]
+        assert [c[0].stem for c in scr.mission] == ["default", "sentinel1_launch",
+                                                     "sentinel1_replay"]
         assert len(scr.mission) + len(scr.cards) == len(bundled)
         assert not scr.card_rects                        # the demos wait behind their button
     finally:

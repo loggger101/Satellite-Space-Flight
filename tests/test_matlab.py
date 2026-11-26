@@ -71,11 +71,16 @@ EXPORT_PARTS = (("matlabOnly",),                                           # 136
                 ("nrlmsisAscent",),
                 ("tidesAndRelativity",),
                 ("earthAlbedo",),
+                ("sentinel1Phasing",),
+                ("sentinel1Keeping",),
+                ("sentinel1LaunchAscent",),
+                ("sentinel1LaunchArrival",),
                 ("preciseOrbitReplay", "replayWithoutItsFiles"))
 BUNDLED_STARTS = ("fromTheStart", "anHourIn")
-BUNDLED_SPLIT = 2     # sessions per start: one start's scenarios had run over in
-                      # one session (launch_day, starlink_shell the slowest), so
-                      # every other scenario in each
+BUNDLED_SPLIT = 3     # sessions per start: one start's scenarios had run over in
+                      # one session (launch_day, starlink_shell the slowest), and
+                      # half of them over 880 s once sentinel1_launch came, so
+                      # every third scenario in each
 
 
 def test_every_export_test_runs_in_exactly_one_part():

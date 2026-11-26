@@ -61,6 +61,7 @@ from .elements import coe2rv, mean_to_true, rv2coe
 from .forces import ForceModel
 from .frames import ecef_to_eci_state, enu_matrix, geodetic_to_ecef, look_angles
 from .integrators import METHODS
+from .keeping import TrackKeeping
 from .launch import LaunchSpec
 from .maneuvers import Maneuver, sun_synchronous_inclination
 from .strict import build, check_dry_mass, check_keys, drag_props, finite, one_of, whole, within
@@ -329,6 +330,7 @@ class Scenario:
     stations: list = field(default_factory=list)
     maneuvers: list = field(default_factory=list)
     launches: list = field(default_factory=list)      # LaunchSpec
+    track_keeping: list = field(default_factory=list)  # TrackKeeping
     forces: ForceModel = field(default_factory=ForceModel)
     propagator: str = "cowell"           # cowell | kepler | j2mean
     integrator: IntegratorSettings = field(default_factory=IntegratorSettings)
@@ -352,10 +354,12 @@ class Scenario:
             "stations": [g.to_dict() for g in self.stations],
             "maneuvers": [m.to_dict() for m in self.maneuvers],
             "launches": [s.to_dict() for s in self.launches],
-        }
+        } | ({"track_keeping": [k.to_dict() for k in self.track_keeping]}
+             if self.track_keeping else {})
 
     KEYS = ("name", "description", "epoch", "propagator", "integrator", "forces", "record_dt",
-            "warp", "satellites", "constellations", "stations", "maneuvers", "launches")
+            "warp", "satellites", "constellations", "stations", "maneuvers", "launches",
+            "track_keeping")
 
     @classmethod
     def from_dict(cls, d: dict) -> Scenario:
@@ -389,6 +393,8 @@ class Scenario:
                       for k, g in enumerate(d.get("stations", []))],
             maneuvers=[Maneuver.from_dict(m) for m in d.get("maneuvers", [])],
             launches=[LaunchSpec.from_dict(s) for s in d.get("launches", [])],
+            track_keeping=[build(TrackKeeping, k, f"track keeping {n + 1}").check()
+                           for n, k in enumerate(d.get("track_keeping", []))],
         )
 
     @classmethod

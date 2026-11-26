@@ -94,6 +94,8 @@ s.evText = strings(0, 1);
 s.t = 0;
 s.closePairs = zeros(0, 2);
 s.lastSample = [];
+s.replan = false;                        % a keeper scheduled a burn this step
+s.keep = struct([]);
 % the simulator's adaptive integrator (dopri5, ported below step for step) starts with a
 % 10 s step and carries its step size from one stretch of the run to the next; events
 % are looked for at the ends of its steps
@@ -108,14 +110,32 @@ s.tout = tout;
 s.Yout = nan(n, 6, numel(tout));
 s.statusOut = strings(n, numel(tout));
 
-% loading, as the simulator loads a scenario: maneuvers, launches, then a first look
+% loading, as the simulator loads a scenario: maneuvers, launches, the burns for the
+% launches' payloads (once they stand on their pads), then a first look
+payloads = reshape(string({sim.launches.name}), 1, []);
+later = false(1, numel(s.man));
 for j = 1:numel(s.man)
+    if any(payloads == s.man(j).sat) && ~any(s.names == s.man(j).sat)
+        later(j) = true;
+        continue
+    end
     s = logEvent(s, 0, sprintf("Scheduled %s for %s %s", s.man(j).label, s.man(j).sat, ...
         whenText(s.man(j).t, 0)), "maneuver");
 end
 for L = reshape(sim.launches, 1, [])
     s = launchVehicle(s, L, opts.PlanLaunches);
 end
+for j = find(later)
+    if any(s.names == s.man(j).sat)
+        s = logEvent(s, 0, sprintf("Scheduled %s for %s %s", s.man(j).label, ...
+            s.man(j).sat, whenText(s.man(j).t, 0)), "maneuver");
+    else
+        s.pending(j) = false;
+        s = logEvent(s, 0, sprintf("%s: %s dropped (its launch was scrubbed)", ...
+            s.man(j).sat, s.man(j).label), "warn");
+    end
+end
+s = keepSetup(s, sim, payloads);
 [s, s.Y] = followRecordings(s, s.Y, 0);
 idx = freeIdx(s);
 s = stepLeft(s, 0, idx, s.Y);
@@ -434,6 +454,11 @@ for j = find(s.pending)
     end
     if s.status(i) ~= "active"
         s = logEvent(s, s.t, sprintf("%s: %s skipped (%s)", m.sat, m.label, s.status(i)), "warn");
+        continue
+    end
+    if any(cellfun(@(A) A.sat == i, s.ascents))
+        s = logEvent(s, s.t, sprintf("%s: %s skipped (still on its launch vehicle)", m.sat, ...
+            m.label), "warn");
         continue
     end
     r = s.Y(i, 1:3);
@@ -983,6 +1008,11 @@ s.Y(idx, :) = Yidx;
 checkFinite(s, t, idx);
 [s, left] = stepLeft(s, t, idx, s.Y);
 s = stepEvents(s, t, idx, s.Y);
+if s.replan
+    % a keeper scheduled a burn: the integration stops here so the run lands on it
+    left = true;
+    s.replan = false;
+end
 end
 
 function s = steppedIdle(s, idx)
@@ -2500,6 +2530,637 @@ for k = reshape(find(mission ~= "" & until == ""), 1, [])
 end
 end
 
+function N = satflightNodes(T, events, sim)
+%SATFLIGHTNODES Every object's ascending-node crossings in the run, from its samples: on
+%   the Hermite curve between two samples where z turns positive (bisection, as the
+%   simulator's Simulation._node_events does each step), leaving out a sample interval
+%   with a burn in it. Columns: t_s, utc, name, lon_deg (Earth-fixed) and raan_deg (the
+%   position's right ascension there: it lies on the line of nodes).
+burnT = events.t_s(events.kind == "maneuver" & contains(events.text, ": executed "));
+names = unique(T.name, "stable");
+tn = zeros(0, 1);
+who = strings(0, 1);
+lon = zeros(0, 1);
+raan = zeros(0, 1);
+for k = 1:numel(names)
+    R = T(T.name == names(k) & T.status == "active", :);
+    t = R.t_s;
+    Y = [R.x_km, R.y_km, R.z_km, R.vx_kms, R.vy_kms, R.vz_kms];
+    for j = reshape(find(Y(1:end - 1, 3) < 0 & Y(2:end, 3) >= 0), 1, [])
+        h = t(j + 1) - t(j);
+        if h <= 0 || any(burnT > t(j) & burnT <= t(j + 1))
+            continue
+        end
+        g = @(fr) [0 0 1] * hermiteAt(Y(j, :), Y(j + 1, :), h, fr).';
+        fr = crossingFraction(g, 0, 1);
+        p = hermiteAt(Y(j, :), Y(j + 1, :), h, fr);
+        tn(end + 1, 1) = t(j) + fr * h; %#ok<AGROW>
+        who(end + 1, 1) = names(k); %#ok<AGROW>
+        ra = atan2(p(2), p(1));
+        raan(end + 1, 1) = mod(rad2deg(ra), 360); %#ok<AGROW>
+        lon(end + 1, 1) = rad2deg(angle(exp(1i * (ra - gmst(sim.jd0 + tn(end) / 86400))))); %#ok<AGROW>
+    end
+end
+utc = T.utc(1) - seconds(T.t_s(1)) + seconds(tn);
+N = sortrows(table(tn, utc, who, lon, raan, VariableNames=["t_s", "utc", "name", ...
+    "lon_deg", "raan_deg"]), "t_s");
+N.Properties.UserData = names;      % the run's order: each object's colour in the plots
+end
+
+function P = satflightPhasing(N, T)
+%SATFLIGHTPHASING How the objects sharing an orbit sit along it and over the ground, at
+%   each ascending node, as the simulator's PHASING rows read them (satflight/phasing.py):
+%   for each object at its node, each companion on the same orbit then (near-circular,
+%   within 30 km in size, 0.5 deg in tilt and 5 deg in plane; not one along the equator),
+%   from the companion's latest node: how far along the orbit it leads (ahead_deg; minus
+%   is behind), how far its plane is turned (plane_deg, + east, compared at the same
+%   moment), and on a repeat orbit (the fewest days up to 30 that close within a tenth of
+%   their track spacing and 25 km, from
+%   the object's last two nodes: orbits in days) how far east of this object's tracks it
+%   crosses the equator (track_km).
+C = satflightConstants();
+P = table('Size', [0 9], 'VariableTypes', ["double", "datetime", "string", "string", ...
+    "double", "double", "double", "double", "double"], 'VariableNames', ["t_s", "utc", ...
+    "name", "companion", "ahead_deg", "plane_deg", "track_km", "orbits", "days"]);
+P.utc.TimeZone = "UTC";
+P.Properties.UserData = N.Properties.UserData;
+names = unique(N.name, "stable");
+wrap = @(x, p) mod(x + p / 2, p) - p / 2;
+% each object's nodes and flying samples, sorted out once (a constellation has hundreds
+% of nodes and dozens of companions for each)
+m = numel(names);
+nodesOf = cell(m, 1);
+timesOf = cell(m, 1);
+statesOf = cell(m, 1);
+for a = 1:m
+    nodesOf{a} = N(N.name == names(a), :);
+    R = T(T.name == names(a) & T.status == "active", :);
+    timesOf{a} = R.t_s;
+    statesOf{a} = [R.x_km, R.y_km, R.z_km, R.vx_kms, R.vy_kms, R.vz_kms];
+end
+rows = cell(0, 9);
+for a = 1:m
+    mine = nodesOf{a};
+    usual = median(diff(mine.t_s));
+    for q = 2:height(mine)
+        p = mine.t_s(q) - mine.t_s(q - 1);
+        if p > 1.5 * usual
+            continue            % a node left out (a burn between samples): no period here
+        end
+        shift = -wrap(mine.lon_deg(q) - mine.lon_deg(q - 1), 360);
+        rate = wrap(mine.raan_deg(q) - mine.raan_deg(q - 1), 360) / p;
+        [orbits, days] = repeatCycle(shift / 360, C);
+        here = stateNear(timesOf{a}, statesOf{a}, mine.t_s(q));
+        if isempty(here)
+            continue
+        end
+        for b = 1:m
+            if b == a
+                continue
+            end
+            theirs = nodesOf{b}(nodesOf{b}.t_s <= mine.t_s(q), :);
+            there = stateNear(timesOf{b}, statesOf{b}, mine.t_s(q));
+            if isempty(theirs) || isempty(there) || ~sameOrbit(here, there, C)
+                continue
+            end
+            tb = theirs.t_s(end);
+            if mine.t_s(q) - tb >= p
+                continue        % its node of this revolution was left out (a burn)
+            end
+            ahead = wrap(360 * (mine.t_s(q) - tb) / p, 360);
+            plane = wrap(theirs.raan_deg(end) - mine.raan_deg(q) - rate * (tb - mine.t_s(q)), 360);
+            track = NaN;
+            if ~isnan(orbits)
+                track = deg2rad(wrap(theirs.lon_deg(end) - mine.lon_deg(q), 360 / orbits)) * C.RE;
+            end
+            rows(end + 1, :) = {mine.t_s(q), mine.utc(q), names(a), names(b), ahead, ...
+                plane, track, orbits, days}; %#ok<AGROW>
+        end
+    end
+end
+if ~isempty(rows)
+    utc = vertcat(rows{:, 2});
+    utc.TimeZone = "UTC";
+    P = [P; table(vertcat(rows{:, 1}), utc, vertcat(rows{:, 3}), vertcat(rows{:, 4}), ...
+        vertcat(rows{:, 5}), vertcat(rows{:, 6}), vertcat(rows{:, 7}), ...
+        vertcat(rows{:, 8}), vertcat(rows{:, 9}), VariableNames=P.Properties.VariableNames)];
+end
+end
+
+function [orbits, days] = repeatCycle(x, C)
+% the repeat cycle (phasing.repeat_cycle): x Earth turns per orbit, relative to the node
+orbits = NaN;
+days = NaN;
+if ~(x > 0 && x < 1)
+    return
+end
+for d = 1:30
+    n = round(d / x);
+    % within a tenth of a track, and 25 km
+    if n >= 1 && abs(n * x - d) * 2 * pi * C.RE < min(0.1 * 2 * pi * C.RE / n, 25)
+        orbits = n;
+        days = d;
+        return
+    end
+end
+end
+
+function y = stateNear(times, states, t)
+% the state at the sample nearest t of an object's flying samples ([] if none within a
+% minute)
+[dt, k] = min(abs(times - t));
+y = [];
+if ~isempty(dt) && dt <= 60
+    y = states(k, :);
+end
+end
+
+function tf = sameOrbit(ya, yb, C)
+% phasing._same_orbit: near-circular, within 30 km in a, 0.5 deg in i, 5 deg in RAAN,
+% and tilted more than a degree (an equatorial orbit has no node to read)
+e = rv2coe([ya(1:3); yb(1:3)], [ya(4:6); yb(4:6)], C.MU);
+dr = mod(e.raan(1) - e.raan(2) + pi, 2 * pi) - pi;
+tf = e.i(1) > deg2rad(1) && all(e.e < 0.05) && abs(e.a(1) - e.a(2)) < 30 && ...
+    abs(e.i(1) - e.i(2)) < deg2rad(0.5) && abs(dr) < deg2rad(5);
+end
+
+function S = satflightPhasingSummary(P, N)
+%SATFLIGHTPHASINGSUMMARY One row per pair of satellites sharing an orbit (each pair once,
+%   the first-named as the reference): how many ascending nodes it was read at, how far
+%   the companion trails the reference (behind_deg: mean, min, max; 180 is half an orbit),
+%   the plane offset and the track offset (mean and the largest, km east), the repeat
+%   cycle, and, on a repeat orbit with the companion on the reference's tracks (within a
+%   tenth of their spacing), how many days after the reference it flies each of them
+%   (follows_days) and so how often the pair revisits a track between them
+%   (revisit_days, against the cycle for one satellite).
+pairs = uniquePairs(P);
+n = size(pairs, 1);
+S = table(pairs(:, 1), pairs(:, 2), zeros(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), ...
+    nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), nan(n, 1), ...
+    VariableNames=["name", "companion", "nodes", "behind_deg", "behind_min_deg", ...
+    "behind_max_deg", "plane_deg", "track_km", "track_max_km", "orbits", "days", ...
+    "follows_days", "revisit_days"]);
+for k = 1:n
+    R = P(P.name == pairs(k, 1) & P.companion == pairs(k, 2), :);
+    behind = -R.ahead_deg;
+    S.nodes(k) = height(R);
+    S.behind_deg(k) = mean(behind);
+    S.behind_min_deg(k) = min(behind);
+    S.behind_max_deg(k) = max(behind);
+    S.plane_deg(k) = mean(R.plane_deg);
+    S.track_km(k) = mean(R.track_km, "omitnan");
+    S.track_max_km(k) = max(abs(R.track_km), [], "omitnan");
+    S.orbits(k) = R.orbits(end);
+    S.days(k) = R.days(end);
+    if isnan(R.orbits(end)) || abs(R.track_km(end)) > 0.1 * 2 * pi * 6378.137 / R.orbits(end)
+        continue
+    end
+    S.follows_days(k) = followDays(N, pairs(k, 1), pairs(k, 2), R.orbits(end), R.days(end));
+    S.revisit_days(k) = min(S.follows_days(k), R.days(end) - S.follows_days(k));
+end
+end
+
+function pairs = uniquePairs(P)
+% each pair of P once, the one in front as the reference (the companion trails it), in
+% the run's order; a pair read from one side only (the other's nodes all left out, as
+% for a chaser burning every orbit) keeps the side it was read from, whichever leads
+names = runOrder(P);
+pairs = strings(0, 2);
+for a = 1:numel(names)
+    for b = a + 1:numel(names)
+        R = P(P.name == names(a) & P.companion == names(b), :);
+        Q = P(P.name == names(b) & P.companion == names(a), :);
+        if isempty(R) && isempty(Q)
+            continue
+        end
+        if isempty(Q) || (~isempty(R) && mean(R.ahead_deg) <= 0)
+            pairs(end + 1, :) = [names(a), names(b)]; %#ok<AGROW>
+        else
+            pairs(end + 1, :) = [names(b), names(a)]; %#ok<AGROW>
+        end
+    end
+end
+end
+
+function names = runOrder(P)
+% the objects in the run's order (as satflightNodes found them), those in P only
+names = reshape(string(P.Properties.UserData), [], 1);
+names = names(ismember(names, [P.name; P.companion]));
+if isempty(names)
+    names = unique([P.name; P.companion], "stable");
+end
+end
+
+function c = satColor(P, name)
+% the colour an object draws with in every figure: its place in the run
+c = lineColor(find(runOrder(P) == name, 1));
+end
+
+function d = followDays(N, ref, other, orbits, days)
+% how long (days) after ref flies a track other flies it: other's last node against the
+% ref nodes carried on whole orbits until one lands on the same track
+A = N(N.name == ref, :);
+B = N(N.name == other, :);
+p = (A.t_s(end) - A.t_s(end - 1));
+shift = -mod(A.lon_deg(end) - A.lon_deg(end - 1) + 180, 360) + 180;
+grid = 360 / orbits;
+k = 0:orbits - 1;
+lon = A.lon_deg(end) - k * shift;
+miss = abs(mod(lon - B.lon_deg(end) + grid / 2, 360) - grid / 2);
+[~, best] = min(miss);
+cycle = days * 86400;
+d = mod(B.t_s(end) - (A.t_s(end) + k(best) * p), cycle) / 86400;
+end
+
+function fig = satflightPlotPhaseAngle(P, measured)
+%SATFLIGHTPLOTPHASEANGLE How far each companion trails the satellite it shares an orbit
+%   with, at each ascending node, against the nominal half orbit (180 deg) and, when
+%   measured is given (struct with phase_deg, phase_min_deg, phase_max_deg and span), the
+%   precise orbits' mean and daily range.
+if nargin < 2
+    measured = struct([]);
+end
+fig = figure(Name="Phase angle");
+themeFigure(fig);
+ax = axes(fig);
+styleAxes(ax);
+hold(ax, "on");
+grid(ax, "on");
+pairs = uniquePairs(P);
+lo = inf;
+hi = -inf;
+if ~isempty(measured)
+    t = [min(P.utc), max(P.utc)];
+    patch(ax, [t, fliplr(t)], [measured.phase_min_deg, measured.phase_min_deg, ...
+        measured.phase_max_deg, measured.phase_max_deg], [0.5 0.5 0.5], FaceAlpha=0.15, ...
+        EdgeColor="none", DisplayName="precise orbits, daily range " + measured.span);
+    yline(ax, measured.phase_deg, ":", sprintf("measured %.2f°", measured.phase_deg), ...
+        Tag="satflight:muted", LineWidth=1.5, HandleVisibility="off", ...
+        LabelVerticalAlignment="bottom", LabelHorizontalAlignment="left");
+    lo = measured.phase_min_deg;
+    hi = measured.phase_max_deg;
+end
+for k = 1:size(pairs, 1)
+    R = P(P.name == pairs(k, 1) & P.companion == pairs(k, 2), :);
+    plot(ax, R.utc, -R.ahead_deg, ".-", Color=satColor(P, pairs(k, 2)), LineWidth=2, ...
+        MarkerSize=12, DisplayName=pairs(k, 2) + " behind " + pairs(k, 1));
+    lo = min(lo, min(-R.ahead_deg));
+    hi = max(hi, max(-R.ahead_deg));
+end
+if abs(hi - 180) < 10
+    yline(ax, 180, "--", "nominal 180° (half an orbit)", Tag="satflight:muted", ...
+        HandleVisibility="off", LabelVerticalAlignment="top", ...
+        LabelHorizontalAlignment="right");
+    hi = max(hi, 180);
+end
+pad = max(0.05, 0.1 * (hi - lo));
+ylim(ax, [lo - pad, hi + pad]);
+ylabel(ax, "Companion behind (deg along the orbit)");
+title(ax, "Constellation phasing at each ascending node");
+legend(ax, Location="east");
+applyTheme(fig);
+end
+
+function fig = satflightPlotPhasingOffsets(P, measured)
+%SATFLIGHTPLOTPHASINGOFFSETS Each companion's plane offset (deg, + east) and track offset
+%   (km east of the reference's tracks) at each ascending node, with the precise orbits'
+%   values when measured carries plane_deg and track_km.
+if nargin < 2
+    measured = struct([]);
+end
+fig = figure(Name="Plane and track offsets");
+themeFigure(fig);
+tl = tiledlayout(fig, 2, 1, TileSpacing="compact");
+pairs = uniquePairs(P);
+cols = ["plane_deg", "Plane offset (deg, + east)"; "track_km", "Track offset (km, + east)"];
+ref = ["plane_deg", "measured %.3f°"; "track_km", "measured within %.1f km"];
+for j = 1:2
+    ax = nexttile(tl);
+    styleAxes(ax);
+    hold(ax, "on");
+    grid(ax, "on");
+    for k = 1:size(pairs, 1)
+        R = P(P.name == pairs(k, 1) & P.companion == pairs(k, 2), :);
+        plot(ax, R.utc, R.(cols(j, 1)), ".-", Color=satColor(P, pairs(k, 2)), LineWidth=2, ...
+            MarkerSize=12, DisplayName=pairs(k, 2) + " from " + pairs(k, 1));
+    end
+    lim = ylim(ax);
+    if ~isempty(measured) && isfield(measured, ref(j, 1))
+        v = measured.(ref(j, 1));
+        span = [min([lim, -v, v]), max([lim, -v, v])];
+        if j == 1
+            span = [min(lim(1), v), max(lim(2), v)];
+        end
+        ylim(ax, span + [-1 1] * 0.15 * max(diff(span), 1e-6));
+        if j == 2
+            yline(ax, v, ":", Tag="satflight:muted", HandleVisibility="off");
+            yline(ax, -v, ":", sprintf(ref(j, 2), v), Tag="satflight:muted", ...
+                HandleVisibility="off", LabelVerticalAlignment="bottom");   % one label
+        else
+            yline(ax, v, ":", sprintf(ref(j, 2), v), Tag="satflight:muted", ...
+                HandleVisibility="off");
+        end
+    end
+    ylabel(ax, cols(j, 2));
+    if j == 1
+        title(ax, "Same plane, same ground tracks");
+        legend(ax, Location="east");
+    end
+end
+applyTheme(fig);
+end
+
+function fig = satflightPlotConstellation(T, P)
+%SATFLIGHTPLOTCONSTELLATION Where the satellites sharing an orbit sit on it at the run's
+%   last sample: their arguments of latitude around the orbit (0 at the ascending node,
+%   the direction of flight counter-clockwise), the companions' angles behind the first
+%   one marked, and the nominal half-orbit slot opposite it.
+C = satflightConstants();
+pairs = uniquePairs(P);
+names = unique([pairs(1, 1); pairs(:, 2)], "stable");
+fig = figure(Name="Constellation geometry");
+themeFigure(fig);
+pax = polaraxes(fig);
+hold(pax, "on");
+pax.ThetaZeroLocation = "right";
+pax.ThetaDir = "counterclockwise";
+pax.RTickLabel = {};
+pax.RLim = [0 1.25];
+th = linspace(0, 2 * pi, 361);
+polarplot(pax, th, ones(size(th)), Tag="satflight:muted", LineWidth=1, ...
+    HandleVisibility="off");
+at = max(T.t_s);
+u = nan(numel(names), 1);
+for k = 1:numel(names)
+    R = T(T.name == names(k) & T.status == "active", :);
+    [~, q] = min(abs(R.t_s - at));
+    el = rv2coe([R.x_km(q), R.y_km(q), R.z_km(q)], [R.vx_kms(q), R.vy_kms(q), R.vz_kms(q)], ...
+        C.MU);
+    u(k) = mod(el.argp + el.nu, 2 * pi);
+    c = satColor(P, names(k));
+    polarplot(pax, [0 u(k)], [0 1], Color=c, LineWidth=1, HandleVisibility="off");
+    polarplot(pax, u(k), 1, "o", MarkerSize=12, LineWidth=2, MarkerEdgeColor=c, ...
+        MarkerFaceColor=c, DisplayName=names(k));
+    text(pax, u(k), 1.13, names(k), HorizontalAlignment="center", Tag="satflight:label");
+end
+polarplot(pax, u(1) + pi, 1, "o", MarkerSize=12, LineWidth=1.5, Tag="satflight:rim", ...
+    MarkerFaceColor="none", DisplayName="half an orbit from " + names(1));
+for k = 2:numel(names)
+    behind = mod(u(1) - u(k), 2 * pi);
+    R = P(P.name == names(1) & P.companion == names(k), :);
+    shown = rad2deg(behind);
+    if ~isempty(R)
+        shown = -R.ahead_deg(end);         % as the phasing reads it, at the last node
+    end
+    arc = linspace(u(1), u(1) - behind, 90);
+    polarplot(pax, arc, 0.55 * ones(size(arc)), Color=satColor(P, names(k)), LineWidth=1.5, ...
+        HandleVisibility="off");
+    text(pax, u(1) - behind / 2, 0.42, sprintf("%.1f° behind", shown), ...
+        HorizontalAlignment="center", Tag="satflight:label");
+end
+title(pax, "On the orbit at " + string(max(T.utc), "yyyy-MM-dd HH:mm") + " UTC");
+legend(pax, Location="southoutside", Orientation="horizontal");
+applyTheme(fig);
+end
+
+function fig = satflightPlotCrossings(N, P)
+%SATFLIGHTPLOTCROSSINGS Every ascending equator crossing of the satellites sharing an
+%   orbit: its longitude against the time it happened. Each orbit lands farther west;
+%   a companion half an orbit behind crosses between the reference's crossings.
+names = runOrder(P);
+fig = figure(Name="Equator crossings");
+themeFigure(fig);
+ax = axes(fig);
+styleAxes(ax);
+hold(ax, "on");
+grid(ax, "on");
+for k = 1:numel(names)
+    R = N(N.name == names(k), :);
+    plot(ax, R.lon_deg, R.utc, "o", MarkerSize=8, LineWidth=1.5, ...
+        MarkerEdgeColor=satColor(P, names(k)), MarkerFaceColor=satColor(P, names(k)), ...
+        DisplayName=names(k));
+end
+xlim(ax, [-180 180]);
+xticks(ax, -180:60:180);
+xlabel(ax, "Longitude of the ascending crossing (deg east)");
+ylabel(ax, "UTC");
+title(ax, "Where each orbit crosses the equator northward");
+legend(ax, Location="best");
+applyTheme(fig);
+end
+
+function fig = satflightPlotRepeatCycle(N, P)
+%SATFLIGHTPLOTREPEATCYCLE On a repeat orbit, which of the reference satellite's tracks
+%   (relative orbit 1 .. orbits, numbered from its first crossing) each satellite sharing
+%   the orbit flies, and on which day of the run: a companion on the same tracks flies
+%   the same relative orbits a fixed number of days later.
+S = satflightPhasingSummary(P, N);
+S = S(~isnan(S.orbits), :);
+fig = figure(Name="Repeat cycle");
+themeFigure(fig);
+ax = axes(fig);
+styleAxes(ax);
+hold(ax, "on");
+grid(ax, "on");
+if isempty(S)
+    title(ax, "No repeat cycle in this run");
+    applyTheme(fig);
+    return
+end
+ref = S.name(1);
+orbits = S.orbits(1);
+grid0 = 360 / orbits;
+A = N(N.name == ref, :);
+names = [ref; S.companion(S.name == ref)];
+t0 = A.utc(1);
+span = [inf -inf];
+for k = 1:numel(names)
+    R = N(N.name == names(k), :);
+    span = [min(span(1), min(days(R.utc - t0))), max(span(2), max(days(R.utc - t0)))];
+    track = mod(round(mod(A.lon_deg(1) - R.lon_deg, 360) / grid0), orbits) + 1;
+    plot(ax, days(R.utc - t0), track, "o", MarkerSize=8, LineWidth=1.5, ...
+        MarkerEdgeColor=satColor(P, names(k)), MarkerFaceColor=satColor(P, names(k)), ...
+        DisplayName=names(k));
+end
+ylim(ax, [0 orbits + 1]);
+xlim(ax, span + [-0.02 0.02] * max(diff(span), 1));   % no empty margin before the run
+xlabel(ax, "Days since " + ref + "'s first crossing");
+ylabel(ax, sprintf("Relative orbit (track) of %s, 1-%d", ref, orbits));
+title(ax, sprintf("%d orbits in %d days", orbits, S.days(1)) + ...
+    phasingFollowText(S(1, :)));
+legend(ax, Location="best");
+applyTheme(fig);
+end
+
+function s = phasingFollowText(row)
+s = "";
+if ~isnan(row.follows_days)
+    s = sprintf(": %s flies each track %.1f days after %s", row.companion, ...
+        row.follows_days, row.name);
+end
+end
+
+function K = satflightTrackKeeping(N, sim)
+%SATFLIGHTTRACKKEEPING Each kept object's ascending nodes (N, from satflightNodes) read as
+%   its keeper reads them: how far east of its reference track it crossed (km), the
+%   reference being the repeat cycle's grid through its first node after keeping starts,
+%   the revolutions between nodes counted from the time between them. Columns: t_s, utc,
+%   name, offset_km and band_km (the band it is kept in, either way).
+C = satflightConstants();
+kmPerDeg = C.RE * pi / 180;
+[t, off, band] = deal(zeros(0, 1));
+utc = N.utc([]);
+who = strings(0, 1);
+if isfield(sim, "trackKeeping")
+    for Kp = reshape(sim.trackKeeping, 1, [])
+        R = N(N.name == string(Kp.sat) & N.t_s >= Kp.start, :);
+        if height(R) < 2
+            continue
+        end
+        step = median(diff(R.t_s));
+        n = [0; cumsum(max(1, round(diff(R.t_s) / step)))];
+        x = R.lon_deg - R.lon_deg(1) + 360 * Kp.days / Kp.orbits * n;
+        t = [t; R.t_s]; %#ok<AGROW>
+        utc = [utc; R.utc]; %#ok<AGROW>
+        who = [who; R.name]; %#ok<AGROW>
+        off = [off; (x - 360 * round(x / 360)) * kmPerDeg]; %#ok<AGROW>
+        band = [band; repmat(Kp.bandKm, height(R), 1)]; %#ok<AGROW>
+    end
+end
+K = sortrows(table(t, utc, who, off, band, VariableNames=["t_s", "utc", "name", ...
+    "offset_km", "band_km"]), "t_s");
+K.Properties.UserData = N.Properties.UserData;
+end
+
+function S = satflightKeepingSummary(K, burns)
+%SATFLIGHTKEEPINGSUMMARY One row per kept object: its crossings, how far off its track
+%   they landed (RMS and largest, m, after its first day: before then the keeper is still
+%   learning the drift), its keeping burns (from the burns table satflightRun returns):
+%   how many, their total and median delta-v (mm/s), the median days between them, and
+%   what keeping costs per day of the run (mm/s).
+names = keptOrder(K);
+[crossings, nb] = deal(zeros(numel(names), 1));
+[rmsM, maxM, total, med, apart, perDay] = deal(nan(numel(names), 1));
+for k = 1:numel(names)
+    R = K(K.name == names(k), :);
+    crossings(k) = height(R);
+    late = R.offset_km(R.t_s >= R.t_s(1) + 86400);
+    if ~isempty(late)
+        rmsM(k) = 1000 * sqrt(mean(late .^ 2));
+        maxM(k) = 1000 * max(abs(late));
+    end
+    B = burns(burns.name == names(k) & burns.label == "track keeping", :);
+    nb(k) = height(B);
+    total(k) = 1000 * sum(B.dv_ms);
+    if nb(k)
+        med(k) = 1000 * median(B.dv_ms);
+    end
+    if nb(k) >= 2
+        apart(k) = median(diff(B.t0_s)) / 86400;
+    end
+    span = (R.t_s(end) - R.t_s(1)) / 86400;
+    if span > 0
+        perDay(k) = total(k) / span;
+    end
+end
+S = table(names, crossings, rmsM, maxM, nb, total, med, apart, perDay, VariableNames=[ ...
+    "name", "crossings", "offset_rms_m", "offset_max_m", "burns", "dv_total_mm_s", ...
+    "dv_median_mm_s", "days_apart", "mm_s_per_day"]);
+end
+
+function names = keptOrder(K)
+% the kept objects in the run's order (as satflightNodes found them)
+names = reshape(string(K.Properties.UserData), [], 1);
+names = names(ismember(names, K.name));
+if isempty(names)
+    names = unique(K.name, "stable");
+end
+end
+
+function fig = satflightPlotTrackKeeping(K, burns, measured)
+%SATFLIGHTPLOTTRACKKEEPING Each kept object's offset from its reference track at every
+%   ascending node (m, + east), inside its band, with its keeping burns marked: drag walks
+%   the crossings east along a parabola, and each burn turns them back. With measured
+%   (Sentinel-1), ESA's typical day for comparison: half its days the worst crossing lands
+%   within that of the track.
+names = keptOrder(K);
+order = string(K.Properties.UserData);
+fig = figure(Name="Ground-track keeping");
+themeFigure(fig);
+tl = tiledlayout(fig, max(numel(names), 1), 1, TileSpacing="compact");
+for k = 1:numel(names)
+    ax = nexttile(tl);
+    styleAxes(ax);
+    hold(ax, "on");
+    grid(ax, "on");
+    R = K(K.name == names(k), :);
+    b = 1000 * R.band_km(1);
+    c = lineColor(find(order == names(k), 1));
+    if isempty(c)
+        c = lineColor(k);
+    end
+    yline(ax, [-b b], ":", Tag="satflight:muted", LineWidth=1.5, HandleVisibility="off");
+    yline(ax, -b, ":", sprintf("band ±%g m", b), Tag="satflight:muted", ...
+        HandleVisibility="off", LabelVerticalAlignment="bottom");
+    if ~isempty(measured) && isfield(measured, "track_typical_m")
+        yline(ax, [-1 1] * measured.track_typical_m, "-.", Tag="satflight:muted", ...
+            HandleVisibility="off");
+        yline(ax, measured.track_typical_m, "-.", sprintf("ESA, typical day ±%.0f m", ...
+            measured.track_typical_m), Tag="satflight:muted", HandleVisibility="off", ...
+            LabelVerticalAlignment="top", LabelHorizontalAlignment="left");
+    end
+    plot(ax, R.utc, 1000 * R.offset_km, ".-", Color=c, LineWidth=1.5, MarkerSize=10, ...
+        DisplayName=names(k));
+    B = burns(burns.name == names(k) & burns.label == "track keeping", :);
+    for j = 1:height(B)
+        xline(ax, B.utc(j), "--", sprintf("%+.1f mm/s", 1000 * B.dvV_ms(j)), ...
+            Tag="satflight:muted", HandleVisibility="off", LabelOrientation="horizontal", ...
+            LabelVerticalAlignment="top");
+    end
+    lim = max([1.25 * b; 1.1 * max(abs(1000 * R.offset_km))]);
+    ylim(ax, [-lim lim]);
+    ylabel(ax, "Offset (m, + east)");
+    title(ax, sprintf("%s: %d burns, %.1f mm/s in all", names(k), height(B), ...
+        1000 * sum(B.dv_ms)));
+end
+applyTheme(fig);
+end
+
+function fig = satflightPlotKeepingCost(K, burns, measured)
+%SATFLIGHTPLOTKEEPINGCOST What holding the tracks costs: each kept object's delta-v spent
+%   on keeping burns, adding up over the run (mm/s); with measured (Sentinel-1), the rate
+%   ESA's precise orbits show the pair spending on its along-track trims, for comparison.
+names = keptOrder(K);
+order = string(K.Properties.UserData);
+fig = figure(Name="Keeping cost");
+themeFigure(fig);
+ax = axes(fig);
+styleAxes(ax);
+hold(ax, "on");
+grid(ax, "on");
+t0 = min(K.utc);
+t1 = max(K.utc);
+for k = 1:numel(names)
+    B = burns(burns.name == names(k) & burns.label == "track keeping", :);
+    c = lineColor(find(order == names(k), 1));
+    if isempty(c)
+        c = lineColor(k);
+    end
+    when = [t0; B.utc; t1];
+    spent = 1000 * [0; cumsum(B.dv_ms); sum(B.dv_ms)];
+    stairs(ax, when, spent, Color=c, LineWidth=2, DisplayName=names(k));
+end
+if ~isempty(measured) && isfield(measured, "keep_mm_s_per_day")
+    plot(ax, [t0 t1], [0 measured.keep_mm_s_per_day * days(t1 - t0)], ":", ...
+        Tag="satflight:muted", LineWidth=1.5, DisplayName=sprintf( ...
+        "ESA's average, %.2f mm/s a day", measured.keep_mm_s_per_day));
+end
+ylabel(ax, "Keeping delta-v, adding up (mm/s)");
+title(ax, "What holding the ground tracks costs");
+legend(ax, Location="northwest");
+applyTheme(fig);
+end
+
 function fig = satflightPlotTruthGap(G)
 %SATFLIGHTPLOTTRUTHGAP Each twin's radial, along-track and cross-track gap to the replay of
 %   its mission over the run (m).
@@ -2547,7 +3208,152 @@ if numel(s.names) <= C.EVENT_DETAIL_LIMIT && ~isempty(w)
         s = stationEvents(s, t, w, Y);
     end
 end
+s = keepEvents(s, t, idx, Y);
 s = approachEvents(s, t, idx, Y);
+end
+
+function s = keepSetup(s, sim, payloads)
+% ground-track keeping (the simulator's satflight.keeping): one keeper per object named
+% in sim.trackKeeping, each holding its object within bandKm of the tracks of an
+% orbits-in-days repeat cycle from its first ascending node after start
+s.replan = false;
+s.keep = struct("i", {}, "band", {}, "orbits", {}, "days", {}, "start", {}, "isp", {}, ...
+    "ref", {}, "count", {}, "last", {}, "sinceT", {}, "sinceE", {}, "waitUntil", {});
+if ~isfield(sim, "trackKeeping")
+    return
+end
+for K = reshape(sim.trackKeeping, 1, [])
+    name = string(K.sat);
+    i = find(s.names == name, 1);
+    if any([s.keep.i] == i)
+        error("satflight:keeping", "%s has track keeping twice.", name);
+    end
+    if isempty(i)
+        why = "not in the scenario";
+        if any(payloads == name)
+            why = "its launch was scrubbed";
+        end
+        s = logEvent(s, 0, sprintf("%s: track keeping dropped (%s)", name, why), "warn");
+        continue
+    end
+    if ~(K.bandKm > 0) || ~(0 < K.days && K.days < K.orbits) || ~(K.isp > 0) || ~(K.start >= 0)
+        error("satflight:keeping", "Track keeping for %s cannot work: it needs bandKm > 0, " + ...
+            "0 < days < orbits, isp > 0 and start >= 0.", name);
+    end
+    s.keep(end + 1) = struct("i", i, "band", K.bandKm, "orbits", K.orbits, "days", K.days, ...
+        "start", K.start, "isp", K.isp, "ref", nan, "count", 0, "last", nan, ...
+        "sinceT", zeros(0, 1), "sinceE", zeros(0, 1), "waitUntil", -inf);
+end
+end
+
+function s = keepEvents(s, t, idx, Y)
+% the simulator's _node_events for the kept objects: each one's ascending node in the
+% step that ended at t (states Y), on the step's Hermite curve, handed to its keeper; a
+% burn it asks for is scheduled like any other maneuver
+if isempty(s.keep)
+    return
+end
+prev = previousStep(s, t, Y);
+if isempty(prev)
+    return
+end
+h = t - prev.t;
+[~, order] = sort([s.keep.i]);
+for q = order
+    i = s.keep(q).i;
+    if ~any(idx == i) || ~(prev.Y(i, 3) < 0 && Y(i, 3) >= 0)
+        continue
+    end
+    y0 = prev.Y(i, :);
+    y1 = Y(i, :);
+    g = @(fr) [0 0 1] * hermiteAt(y0, y1, h, fr).';
+    fr = crossingFraction(g, 0, 1);
+    pos = hermiteAt(y0, y1, h, fr);
+    tn = prev.t + fr * h;
+    ra = atan2(pos(2), pos(1));
+    lon = rad2deg(remainderPi(ra - gmst(s.sim.jd0 + tn / 86400)));
+    [s.keep(q), tBurn, dv] = keeperCrossing(s.keep(q), tn, lon, Y(i, 1:3), Y(i, 4:6), s.C);
+    if ~isnan(tBurn)
+        m = satflightBurn(s.names(i), "impulse", tBurn, [dv 0 0], "VNB", 0, "", 0, ...
+            s.keep(q).isp, 0, "track keeping");
+        s.man(end + 1) = m;
+        s.pending(end + 1) = true;
+        s = logEvent(s, t, sprintf("Scheduled %s for %s %s", m.label, m.sat, ...
+            whenText(m.t, t)), "maneuver");
+        s.replan = true;
+    end
+end
+end
+
+function x = remainderPi(x)
+% x wrapped to [-pi, pi], as Python's math.remainder(x, 2 pi)
+x = x - 2 * pi * round(x / (2 * pi));
+end
+
+function [K, tBurn, dv] = keeperCrossing(K, t, lonDeg, r, v, C)
+% satflight.keeping.TrackKeeper.crossing: note an ascending node at t (s) and longitude
+% lonDeg; answer with the burn (time s, along-track delta-v km/s) or tBurn = NaN. The
+% offset from the reference track (km, + east) is measured on the repeat cycle's grid,
+% the revolutions since the last crossing counted from the time between them; a
+% parabola fitted to the offsets since the last burn says when the band will be left,
+% and the burn turns the drift so that the parabola peaks at the band's far edge
+tBurn = nan;
+dv = 0;
+if t < K.start
+    return
+end
+a = 1 / (2 / norm(r) - dot(v, v) / C.MU);
+period = 2 * pi * sqrt(a ^ 3 / C.MU);
+kmPerDeg = C.RE * pi / 180;
+if isnan(K.ref)
+    K.ref = lonDeg;
+    K.count = 0;
+    off = 0;
+else
+    K.count = K.count + max(1, round((t - K.last) / period));
+    shift = 360 * K.days / K.orbits * K.count;
+    x = lonDeg - K.ref + shift;
+    off = (x - 360 * round(x / 360)) * kmPerDeg;
+end
+K.last = t;
+if t < K.waitUntil
+    return
+end
+K.sinceT(end + 1, 1) = t;
+K.sinceE(end + 1, 1) = off;
+t0 = K.sinceT(1);
+if (t - t0) / 86400 < 1.0                 % a day of crossings since the last burn
+    return
+end
+tau = (K.sinceT - t0) / 86400;
+c = polyfit(tau, K.sinceE, 2);
+now = tau(end);
+ahead = now + 0.5;                         % burn when the band is left this soon
+eNow = c(3) + c(2) * now + c(1) * now * now;
+eAhead = c(3) + c(2) * ahead + c(1) * ahead * ahead;
+rate = c(2) + 2 * c(1) * now;
+if abs(eAhead) < K.band
+    return
+end
+side = sign(eAhead);
+back = 2 * c(1) * side;                    % drag's pull back toward this edge
+reach = max(eNow * side + K.band, 0);
+if back > 0
+    target = -side * sqrt(2 * back * reach);
+else
+    target = -side * K.band / 2.0;         % no pull back: cross the band in two days
+end
+h = cross(r, v);
+p = dot(h, h) / C.MU;
+n = sqrt(C.MU / a ^ 3);
+raanDot = -1.5 * n * C.J2 * (C.RE / p) ^ 2 * h(3) / norm(h);
+perKm = -1.5 * (C.OMEGA - raanDot) * C.RE * 86400 / a;   % drift (km/day) per km of a
+da = (target - rate) / perKm;
+dv = sqrt(C.MU / a) * da / (2 * a);
+tBurn = t + period / 2;                    % half an orbit on
+K.waitUntil = tBurn;
+K.sinceT = zeros(0, 1);
+K.sinceE = zeros(0, 1);
 end
 
 function s = eclipseEvents(s, t, w, Y)
@@ -4976,6 +5782,11 @@ function B = satflightBeta(T)
 %   the Earth goes round the Sun.
 C = satflightConstants();
 rows = T(inOrbit(T, C), :);
+if isempty(rows)                      % nothing in orbit yet (all still climbing)
+    B = table(rows.name, rows.t_s, rows.utc, zeros(0, 1), zeros(0, 1), ...
+        VariableNames=["name", "t_s", "utc", "beta_deg", "limit_deg"]);
+    return
+end
 r = [rows.x_km, rows.y_km, rows.z_km];
 h = cross(r, [rows.vx_kms, rows.vy_kms, rows.vz_kms], 2);
 [when, ~, at] = unique(rows.t_s);     % the Sun once per sample time
@@ -5906,6 +6717,11 @@ if isfield(sim, "replayUntil")
     names = reshape(string(sim.names), [], 1);
     present = present(~ismember(present, names(reshape(string(sim.replayUntil), [], 1) ~= "")));
 end
+cols = ["name", "t_s", ...
+    "energy_MJkg", "energy_total_MJkg", "jacobi_MJkg", "h_km2s", "hz_km2s", "speed_kms", ...
+    "r_km", "period_min", "acc_central_ms2", "acc_j2_ms2", "acc_j3_ms2", "acc_j4_ms2", ...
+    "acc_c22_ms2", "acc_drag_ms2", "acc_sun_ms2", "acc_moon_ms2", "acc_srp_ms2", ...
+    "acc_egm_ms2", "acc_tides_ms2", "acc_relativity_ms2", "acc_albedo_ms2"];
 D = cell(numel(present), 1);
 for q = 1:numel(present)
     rows = T(T.name == present(q), :);
@@ -5969,16 +6785,12 @@ for q = 1:numel(present)
     D{q} = table(repmat(present(q), height(rows), 1), rows.t_s, kepler, total, ...
         total - C.OMEGA * h(:, 3), vecnorm(h, 2, 2), h(:, 3), speed, rm, period, acc(:, 1), ...
         acc(:, 2), acc(:, 3), acc(:, 4), acc(:, 5), acc(:, 6), acc(:, 7), acc(:, 8), ...
-        acc(:, 9), acc(:, 10), acc(:, 11), acc(:, 12), acc(:, 13), ...
-        VariableNames=["name", "t_s", ...
-        "energy_MJkg", "energy_total_MJkg", "jacobi_MJkg", "h_km2s", "hz_km2s", "speed_kms", ...
-        "r_km", "period_min", "acc_central_ms2", "acc_j2_ms2", "acc_j3_ms2", "acc_j4_ms2", ...
-        "acc_c22_ms2", "acc_drag_ms2", "acc_sun_ms2", "acc_moon_ms2", "acc_srp_ms2", ...
-        "acc_egm_ms2", "acc_tides_ms2", "acc_relativity_ms2", "acc_albedo_ms2"]);
+        acc(:, 9), acc(:, 10), acc(:, 11), acc(:, 12), acc(:, 13), VariableNames=cols);
 end
 D = vertcat(D{:});
-if isempty(D)
-    D = table(strings(0, 1), zeros(0, 1), VariableNames=["name", "t_s"]);
+if isempty(D)                         % nothing in orbit yet: the columns, no rows
+    D = [table(strings(0, 1), VariableNames="name"), ...
+        array2table(zeros(0, numel(cols) - 1), VariableNames=cols(2:end))];
 end
 
 % the coasts, and the quantity physics keeps there

@@ -14,6 +14,7 @@ from satflight.maneuvers import Maneuver
 from satflight.matlab_export import (
     CROSS_CHECK,
     FIXED_STEP,
+    KEEPING_HELPERS,
     RUNTIME,
     _epoch_text,
     drop_functions,
@@ -255,15 +256,18 @@ def lone_satellite() -> Scenario:
 
 
 @pytest.mark.parametrize("scenario, compare, sections", [
-    ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Plots",
+    ("launch_day", True, ["Settings", "Scenario", "Launches", "Run", "Constellation phasing",
+                          "Plots",
                           "Passes and eclipses", "Maneuvers and close approaches",
                           "Orbit transfers", "Orbit evolution", "Physics diagnostics",
                           "Animation", "Save", "Cross-check against the simulator"]),
-    ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
+    ("hohmann_to_geo", False, ["Settings", "Scenario", "Run", "Constellation phasing",
+                               "Plots", "Passes and eclipses",
                                "Maneuvers and close approaches", "Orbit transfers",
                                "Orbit evolution", "Physics diagnostics", "Animation",
                                "Save"]),
-    ("orbit_tour", False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
+    ("orbit_tour", False, ["Settings", "Scenario", "Run", "Constellation phasing", "Plots",
+                        "Passes and eclipses",
                         "Close approaches", "Orbit evolution", "Physics diagnostics",
                         "Animation", "Save"]),
     (None, False, ["Settings", "Scenario", "Run", "Plots", "Passes and eclipses",
@@ -333,7 +337,8 @@ def test_the_introduction_counts_in_words(tmp_path):
     assert "with no satellites in orbit, 1 launch and no scheduled maneuvers." in text
 
 
-TWINLESS = {"satflightTruthGap", "satflightPlotTruthGap"}    # no precise-orbit twin
+# no precise-orbit twin, and no ground-track keeping
+TWINLESS = {"satflightTruthGap", "satflightPlotTruthGap"} | set(KEEPING_HELPERS)
 
 
 @pytest.mark.parametrize("scenario, gone", [
@@ -645,3 +650,86 @@ def test_snapshot_carries_a_burn_under_way():
     snap.advance(1500.0)
     assert np.allclose(snap.y, sim.y, atol=1e-3)                 # km
     assert snap.sats[0].mass == pytest.approx(sim.sats[0].mass)
+
+
+def test_the_phasing_section_follows_the_run_with_the_measured_values(tmp_path):
+    """Constellation phasing comes right after the run, with every phasing figure; a
+    Sentinel-1 run carries what the precise orbits measured (the study's CSVs), another
+    run none, and a lone satellite has no such section."""
+    import csv
+
+    from satflight.matlab_export import sentinel1_measured
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "default.json"))
+    text = export_live_script(sim, tmp_path / "p.m", "start", 60, 60).read_text(encoding="utf-8")
+    assert headings(text)[2:5] == ["Run", "Constellation phasing", "Plots"]
+    for call in ("satflightPhasingSummary(phasing, nodes)", "satflightPlotPhaseAngle(phasing, "
+                 "measured)", "satflightPlotPhasingOffsets(phasing, measured)",
+                 "satflightPlotConstellation(T, phasing)", "satflightPlotCrossings(nodes, "
+                 "phasing)", "satflightPlotRepeatCycle(nodes, phasing)"):
+        assert call in text
+    study = ROOT / "docs" / "analysis" / "sentinel1"
+    with open(study / "phasing.csv", newline="", encoding="utf-8") as f:
+        phase = [float(r["mean_deg"]) for r in csv.DictReader(f)]
+    m = sentinel1_measured()
+    assert m["phase_deg"] == pytest.approx(np.mean(phase))
+    assert (m["phase_min_deg"], m["phase_max_deg"]) == (min(phase), max(phase))
+    assert m["plane_deg"] == pytest.approx(-0.254, abs=0.001)
+    assert 0.0 < m["track_km"] < 0.5
+    assert f'measured = struct("phase_deg", {round(m["phase_deg"], 6):.10g}' in text
+    other = Simulation(Scenario.load(ROOT / "scenarios" / "rendezvous.json"))
+    text = export_live_script(other, tmp_path / "q.m", "start", 60, 60).read_text(
+        encoding="utf-8")
+    assert "measured = struct([]);" in text and "Constellation phasing" in text
+    assert "### Ground-track keeping" not in text and "sim.trackKeeping = " not in text
+    text = export_live_script(Simulation(lone_satellite()), tmp_path / "r.m", "start", 60,
+                              60).read_text(encoding="utf-8")
+    assert "Constellation phasing" not in text and "satflightPhasing" not in text
+
+
+def test_a_kept_run_shows_its_keeping_beside_esa_s(tmp_path):
+    """The default pair keeps its tracks: the script flies the same keepers
+    (sim.trackKeeping), and its phasing section ends with the keeping's table and
+    figures, held against the trims ESA's precise orbits show (burns.csv)."""
+    import csv
+
+    from satflight.matlab_export import sentinel1_measured
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "default.json"))
+    text = export_live_script(sim, tmp_path / "k.m", "start", 60, 60).read_text(encoding="utf-8")
+    assert ('sim.trackKeeping = struct("sat", {"Sentinel-1A", "Sentinel-1C"}, "bandKm", '
+            '{0.05, 0.05}, "orbits", {175, 175}, "days", {12, 12}, "start", {0, 0}, '
+            '"isp", {220, 220});') in text
+    assert headings(text)[2:5] == ["Run", "Constellation phasing", "Plots"]
+    phasing = text.index("## Constellation phasing")
+    assert phasing < text.index("%[text] ### Ground-track keeping") < text.index("## Plots")
+    for call in ("keeping = satflightTrackKeeping(nodes, sim);",
+                 "keepingSummary = satflightKeepingSummary(keeping, burns);",
+                 "satflightPlotTrackKeeping(keeping, burns, measured);",
+                 "satflightPlotKeepingCost(keeping, burns, measured);"):
+        assert call in text
+    for name in KEEPING_HELPERS:
+        assert f"{name}(" in text
+    m = sentinel1_measured()
+    with open(ROOT / "docs" / "analysis" / "sentinel1" / "burns.csv", newline="",
+              encoding="utf-8") as f:
+        trims = [r for r in csv.DictReader(f) if r["kind"] == "burn"]
+    along = sorted(float(r["dv_along_mm_s"]) for r in trims if r["dv_along_mm_s"])
+    assert m["burn_mm_s"] == pytest.approx(np.median(along))
+    assert 2.0 < m["burn_days"] < 6.0 and 0.5 < m["keep_mm_s_per_day"] < 2.0
+    assert 20.0 < m["track_typical_m"] < 50.0
+    assert "as this run's keepers do (below)." in text
+
+
+def test_a_constellation_goes_without_phasing(tmp_path):
+    """Phasing compares every object with every other at each node: the Starlink
+    shell's 1584 would take MATLAB hours, so its script says phasing is left out
+    and carries none of the phasing functions (nor saves their tables)."""
+    from satflight.matlab_export import PHASING_HELPERS, PHASING_MAX
+    sim = Simulation(Scenario.load(ROOT / "scenarios" / "starlink_shell.json"))
+    assert len(sim.sats) > PHASING_MAX
+    text = export_live_script(sim, tmp_path / "s.m", "start", 60, 60).read_text(encoding="utf-8")
+    assert "Constellation phasing" in headings(text)
+    assert f"this run has {len(sim.sats)} (the export phases up to {PHASING_MAX})" in text
+    for name in PHASING_HELPERS:
+        assert f"function {name}(" not in text and f"= {name}(" not in text, name
+    assert "satflightPhasing(nodes, T)" not in text
+    assert "`phasingSummary`" not in text

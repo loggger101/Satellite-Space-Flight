@@ -116,10 +116,9 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             tc.verifyEqual(string(S.daily.date(1), "yyyy-MM-dd"), "2025-07-01");
             tc.verifyEqual(unique(S.daily.mission)', ["S1A" "S1C"]);
             tc.verifyEqual(unique(S.burns.kind)', ["burn" "placebo"]);
-            failed = S.arcs(S.arcs.error ~= "", :);
-            tc.verifyNotEmpty(failed);
-            tc.verifyTrue(all(isnan(failed.fit_rms_m)));
-            tc.verifySubstring(failed.error(1), "(run tools/fetch_poeorb.py)");
+            % the study ends in May 2026: every arc it keeps has its precise orbits
+            tc.verifyTrue(all(S.arcs.error == ""));
+            tc.verifyTrue(all(isfinite(S.arcs.fit_rms_m)));
             tc.verifyEqual(S.burns.note(1), "");
             tc.verifyEqual(height(S.arcs_msis), 6);      % the six arcs fitted again
             tc.verifyTrue(all(S.arcs_msis.error == ""));

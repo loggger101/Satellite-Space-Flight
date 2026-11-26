@@ -54,6 +54,8 @@ from .widgets import FieldSpec as F
 MISSION = [
     ("default", "Sentinel-1A and 1C",
      "ESA's twin radar satellites on their real 12-day repeating orbit, half an orbit apart."),
+    ("sentinel1_launch", "Sentinel-1 launch",
+     "Falcon 9 lifts both from Vandenberg; three burns each put them where the data starts."),
     # needs the downloaded precise orbits: opening it without them says what is missing
     ("data/sentinel1_replay", "Precise-orbit replay",
      "1A and 1C where ESA tracked them, each with a simulated twin; watch the gap grow."),

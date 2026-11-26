@@ -1,6 +1,6 @@
 {
   "name": "Sentinel-1A and 1C",
-  "description": "ESA's Copernicus radar pair on the Sentinel-1 reference orbit: 693 km, sun-synchronous (98.18 deg), dawn-dusk with the ascending node at 18:00, frozen perigee over the North Pole, 175 orbits in a 12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, its plane turned 0.25 deg west to put it on 1A's ground tracks, so together they revisit each track every 6 days (Telemetry, PHASING). Open the map (M) to watch the tracks interleave. Reference orbit with the eccentricity and spacing ESA's precise orbits show (2025-26), not tracking data.",
+  "description": "ESA's Copernicus radar pair on the Sentinel-1 reference orbit: 693 km, sun-synchronous (98.18 deg), dawn-dusk with the ascending node at 18:00, frozen perigee over the North Pole, 175 orbits in a 12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, its plane turned 0.25 deg west to put it on 1A's ground tracks, so together they revisit each track every 6 days (Telemetry, PHASING). Each keeps within 50 m of its tracks with small along-track burns about a week apart, as ESA keeps them. Open the map (M) to watch the tracks interleave. Reference orbit with the eccentricity and spacing ESA's precise orbits show (2025-26), not tracking data.",
   "epoch": "2026-09-29T12:00:00Z",
   "propagator": "cowell",
   "integrator": {
@@ -101,5 +101,23 @@
     }
   ],
   "maneuvers": [],
-  "launches": []
+  "launches": [],
+  "track_keeping": [
+    {
+      "sat": "Sentinel-1A",
+      "band_km": 0.05,
+      "orbits": 175,
+      "days": 12,
+      "start": 0.0,
+      "isp": 220.0
+    },
+    {
+      "sat": "Sentinel-1C",
+      "band_km": 0.05,
+      "orbits": 175,
+      "days": 12,
+      "start": 0.0,
+      "isp": 220.0
+    }
+  ]
 }

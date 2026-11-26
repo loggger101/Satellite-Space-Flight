@@ -48,6 +48,7 @@ from .ephemeris import sun_position
 from .forces import ForceModel, conservative_energy
 from .frames import eci_to_ecef, geodetic_height, unit
 from .integrators import Propagator
+from .keeping import TrackKeeper, TrackKeeping
 from .launch import Ascent, AscentEnv, LaunchSpec, coast, fly, plan_launch, plane_normal, validate
 from .maneuvers import G0, Maneuver, finite_direction, impulse_eci, propellant_after, resolve_time
 from .replay import ENDED
@@ -337,13 +338,36 @@ class Simulation:
         for name, color, props, r, v in expand(scenario, self.clock, 0.0):
             self._append(name, color, props, r, v)
         self.history = History(len(self.sats))
+        payloads = {spec.name for spec in scenario.launches}
+        later = []                         # burns for a payload: once its launch is added
         for m in scenario.maneuvers:
-            self.schedule(Maneuver.from_dict(m.to_dict()))
+            if m.sat in payloads and m.sat not in {s.name for s in self.sats}:
+                later.append(m)
+            else:
+                self.schedule(Maneuver.from_dict(m.to_dict()))
         for spec in scenario.launches:
             try:
                 self.launch(LaunchSpec.from_dict(spec.to_dict()))
             except ValueError as exc:
                 self.log(f"Launch of {spec.name} scrubbed: {exc}", "alert")
+        for m in later:
+            if m.sat in {s.name for s in self.sats}:
+                self.schedule(Maneuver.from_dict(m.to_dict()))
+            else:
+                self.log(f"{m.sat}: {m.describe()} dropped (its launch was scrubbed)", "warn")
+        # ground-track keeping (satflight.keeping): one keeper per satellite named
+        self.keepers = {}
+        self._replan = False             # a keeper scheduled a burn: stop at it
+        for k in scenario.track_keeping:
+            if k.sat in self.keepers:
+                raise ValueError(f"{k.sat} has track keeping twice")
+            if k.sat not in {s.name for s in self.sats}:
+                # a satellite taken out of the scenario (or a launch scrubbed) leaves its
+                # keeping behind: said in the log, as a dropped burn is
+                why = "its launch was scrubbed" if k.sat in payloads else "not in the scenario"
+                self.log(f"{k.sat}: track keeping dropped ({why})", "warn")
+                continue
+            self.keepers[k.sat] = TrackKeeper(k)
         self._post_step(self.t, force_record=True)
         self.log(f"Scenario '{scenario.name}' loaded: {len(self.sats)} satellites, "
                  f"{len(self.stations)} stations, propagator {self.propagator}")
@@ -702,9 +726,10 @@ class Simulation:
         i = self.require(m.sat)
         if m.kind == "match_velocity":
             self.require(m.target)
-        if self.ascent_of(i) is not None:
-            raise ValueError(f"{m.sat} is still on its launch vehicle; "
-                             "maneuver it after separation")
+        if self.ascent_of(i) is not None and not (m.timing == "absolute" and m.t is not None
+                                                  and m.t > self.t + 1e-6):
+            raise ValueError(f"{m.sat} is still on its launch vehicle; maneuver it after "
+                             "separation, or give the burn an absolute time after it")
         if self.sats[i].replay is not None:
             raise ValueError(f"{m.sat} follows its recorded orbit and cannot burn; "
                              "maneuver its twin instead")
@@ -727,6 +752,10 @@ class Simulation:
             sat = self.sats[i]
             if sat.status != ACTIVE:
                 self.log(f"{m.sat}: {m.describe()} skipped ({sat.status})", "warn")
+                continue
+            if self.ascent_of(i) is not None:
+                self.log(f"{m.sat}: {m.describe()} skipped (still on its launch vehicle)",
+                         "warn")
                 continue
             r, v = self.y[i, :3].copy(), self.y[i, 3:].copy()
             if m.kind == "finite":
@@ -1202,7 +1231,9 @@ class Simulation:
         if force_record or t - self._last_record >= self.record_dt - 1e-9 or changed:
             self.history.record(t, self.y)
             self._last_record = t
-        return changed
+        # a keeper's new burn: the integration stops here so the run lands on it
+        replan, self._replan = self._replan, False
+        return changed or replan
 
     def _previous(self, t: float):
         """``(t0, y0)`` of the step that just ended at ``t``, or None when nothing
@@ -1308,6 +1339,14 @@ class Simulation:
             nodes = self.sats[i].nodes
             nodes.append((tn, math.degrees(lon), math.degrees(raan) % 360.0))
             del nodes[:-self.NODES_KEPT]
+            keeper = self.keepers.get(self.sats[i].name)
+            if keeper is not None:
+                burn = keeper.crossing(tn, math.degrees(lon), self.y[i, :3], self.y[i, 3:])
+                if burn is not None:
+                    self.schedule(Maneuver(self.sats[i].name, "impulse", timing="absolute",
+                                           t=burn[0], dv=(burn[1], 0.0, 0.0), frame="VNB",
+                                           isp=keeper.spec.isp, label="track keeping"))
+                    self._replan = True
 
     def _eclipse_events(self, t: float, w: np.ndarray):
         """Log satellites ``w`` entering and leaving the Earth's shadow."""
@@ -1521,6 +1560,10 @@ class Simulation:
             mm = Maneuver.from_dict(m.to_dict())
             mm.t = m.t - self.t
             sc.maneuvers.append(mm)
+        # the keepers go on, each setting its reference anew at its first crossing
+        sc.track_keeping = [TrackKeeping(**(k.spec.to_dict()
+                                            | {"start": max(k.spec.start - self.t, 0.0)}))
+                            for k in self.keepers.values()]
         return sc
 
 

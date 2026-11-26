@@ -1012,6 +1012,12 @@ modelling them.
   Moon, so it is out of scope.
 - **Constellation phasing:** keep each member's along-track position within a
   window of its slot.
+- **Done (2026-11-25): repeat-orbit ground-track keeping** (`satflight/keeping.py`,
+  ported to the MATLAB engine): each node's offset from the repeat cycle's grid,
+  a parabola fitted since the last burn, and an along-track burn half an orbit
+  later that turns the drift to peak at the band's far edge. The Sentinel-1 pair
+  keeps within 50 m for about 1 mm/s a day each, what ESA's precise orbits show
+  (burns every 3.3 days of 3.7 mm/s, median). Inclination trims are not modelled.
 - These run as rules checked on grid steps, like the existing events. Every
   burn draws on the propellant budget (B3), which gives each satellite a
   lifetime.

@@ -137,7 +137,28 @@ sections:
    run only at its samples); `objects` each object's family, drag area and
    coefficient, final and dry mass, and reflectivity (Cr). Shown: `keyEvents` (launches, burns, alerts), `atEnd` (where each object is
    at the end of the run) and `launchTable`.
-5. **Plots**: ground track (with the night side and the point where the Sun
+5. **Constellation phasing** (with two to 24 objects, as every one is compared with every other at each node; right after the run,
+   the project's centre): `nodes` has every ascending equator crossing (time,
+   longitude, the RAAN there), `phasing` how each satellite's companions on its
+   orbit sit at each crossing (how far ahead, the plane offset, the track offset
+   on its repeat cycle), read as the simulator's Telemetry PHASING rows read
+   them, and `phasingSummary` one row per pair: how far the companion trails,
+   the plane and track offsets, the repeat cycle and how many days after the
+   reference it flies each track (Sentinel-1C: 176.3 deg behind 1A, its plane
+   0.25 deg west, on 1A's 175 tracks 6 days after it). Five figures: the phase
+   angle over the run, the plane and track offsets, where the satellites sit on
+   their orbit (a polar diagram with the angle between them), every equator
+   crossing, and the repeat cycle's tracks by day (`duration` of 12 days shows
+   Sentinel-1's whole cycle). In a run with Sentinel-1, `measured` carries what
+   ESA's precise orbits show over the study, and the figures draw it beside the
+   simulation. With ground-track keeping (`sim.trackKeeping`; the default pair
+   keeps within 50 m), the engine flies the simulator's keepers (a burn half an
+   orbit after the node where the fitted drift would leave the band), `keeping`
+   has each kept crossing's offset from its reference track and `keepingSummary`
+   per satellite the offsets, its burns and their cost a day; two more figures
+   show the offsets with the burns marked and the delta-v adding up against ESA's
+   measured rate (about 1 mm/s a day each).
+6. **Plots**: ground track (with the night side and the point where the Sun
    is overhead at the end of the run), altitude, elements (only while an
    object is in an orbit that clears the Earth, so an ascent leaves a gap; the
    node only out of the equator, the perigee only for e of 0.01 or more), 3-D
@@ -146,7 +167,7 @@ sections:
    each ascent (`satflightPlotAscent`), of the objects in `shown`: all of them
    up to 12, past that those still in orbit first. Set `shown` to the names
    you want.
-6. **Passes and eclipses**, from the event log: `passes` (with ground
+7. **Passes and eclipses**, from the event log: `passes` (with ground
    stations) has each station pass in the order they happen, its AOS and LOS,
    minutes in view and the highest elevation at the samples in between, and
    `coverage` each station's passes, objects seen, minutes with at least one
@@ -161,13 +182,13 @@ sections:
    eclipse under way when the run (or the object) ends has LOS or stop `NaT`.
    The simulator logs these only while a run has at most 40 objects; past
    that the section says so.
-7. **Maneuvers and close approaches** (each part only where it can have
+8. **Maneuvers and close approaches** (each part only where it can have
    rows: maneuvers with scheduled burns or launches, which schedule their
    circularization; approaches with two objects or more), from the event log:
    `maneuvers` has each burn carried out, when, its label and delta-v, and
    `deltaV` each object's total; `approaches` each pair that came within
    10 km, the time of closest approach and the distance then, closest first.
-8. **Orbit transfers** (with burns): `transfers` has each burn and what it did
+9. **Orbit transfers** (with burns): `transfers` has each burn and what it did
    to the orbit: delta-v in total and by direction, perigee, apogee,
    inclination and period just before and just after (from the exact states),
    and the propellant used. Per object that burns, `satflightPlotTransfer`
@@ -179,13 +200,13 @@ sections:
    over time, and the mass the rocket equation leaves); `satflightPlotBurnWindow`
    the perigee, apogee, inclination and period over the part of the run that
    holds the burns, each impulse a clean step.
-9. **Orbit evolution**: `drift` has, per object, how its orbit changes after
+10. **Orbit evolution**: `drift` has, per object, how its orbit changes after
    its last burn, fitted with a straight line over its samples in orbit (two
    orbits at least, or it is left out, saying so): the period and mean perigee
    and apogee, the change of the mean semi-major axis per day (drag lowers it;
    J2's short-period swing taken out), and the drift of the node and of the
    perigee per day beside what J2 theory gives for that orbit.
-10. **Physics diagnostics**: `diagnostics` has, per object and sample in orbit,
+11. **Physics diagnostics**: `diagnostics` has, per object and sample in orbit,
    specific energy (two-body and with the potential of the gravity terms the
    run applies), angular momentum and its z part, speed, radius, period, the
    Jacobi constant, and the acceleration from each force applied (central
@@ -198,7 +219,7 @@ sections:
    relative to its size, and whether drag makes it fall (with the Sun, the Moon
    or sunlight pressure on, nothing is kept and it says so). A figure plots them,
    the forces on a log scale, and the energy drift since each coast began.
-11. **Animation** (`animate = false` to skip it): plays the run back, the
+12. **Animation** (`animate = false` to skip it): plays the run back, the
    ground track, with the night side shaded, beside the orbits around the
    turning Earth, each object over its last orbit and marked where it is
    (o in orbit, x come down or gone), with the latest lines of the event log.
@@ -213,16 +234,16 @@ sections:
    an arrow where a burn fires, and the camera turning; its frames bunch up
    about burns and launches and spread out over the coasts, so a transfer does
    not flash past (the title gives the speed). `animation3DFile` saves it.
-12. **Save**: with `figureFolder = "figures"`, saves every figure there as a
+13. **Save**: with `figureFolder = "figures"`, saves every figure there as a
    PNG at 300 dpi and a PDF (vector graphics; a figure with the 3-D Earth as an
    image at 300 dpi) named after the figure, and both animations as MP4
    (`savedFiles` lists the figures). With `resultsFile = "run.mat"`, saves
    `sim`, `T`, `events` and every table the sections before made to that
    MAT-file (`load("run.mat")` brings them back).
-13. **Gap to the precise orbit** (with a Sentinel-1 twin and the replay of its
+14. **Gap to the precise orbit** (with a Sentinel-1 twin and the replay of its
    unit): `truthGap` has the twin's radial, along-track and cross-track offset
    from the replay at every sample while both fly, and a figure plots them.
-14. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
+15. **Cross-check** (not in a MATLAB-only script): runs the Python simulator on the same scenario through
    this toolkit, tabulates and plots the position difference
    (`satflightCompare`) and pairs up the two event logs (`satflightCompareEvents`).
    It needs this folder and Python; set `crossCheck = false` to skip it elsewhere.

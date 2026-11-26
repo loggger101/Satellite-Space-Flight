@@ -129,6 +129,8 @@ taking shape and the time to cutoff.
   the full **EGM2008** field to degree and order 70 in their place
 - **Sun and Moon gravity** and **sunlight pressure** (cannonball `Cr`, off in the
   Earth's shadow)
+- **Solid-Earth tides** of the Sun and Moon and the **relativity** (Schwarzschild)
+  term, as IERS 2010 gives them (switches; not in MATLAB exports yet)
 - **Atmospheric drag** (piecewise-exponential atmosphere, or **NRLMSIS 2.1** driven by
   measured space weather; co-rotating with the Earth,
   solar-activity scale factor)
@@ -477,7 +479,7 @@ satflight/            physics engine (numpy only)
   timeutil.py         Julian dates, GMST, clock
   frames.py           ECI, ECEF, geodetic, ENU, RSW, VNB
   elements.py         elements <-> state, anomalies, universal Kepler, conics
-  forces.py           gravity, J2-J4, C22/S22, drag, Sun, Moon, sunlight pressure
+  forces.py           gravity, J2-J4, C22/S22, drag, Sun, Moon, sunlight pressure, tides, relativity
   gravity.py          EGM2008 spherical harmonics to 70x70 (data/egm2008_70.gfc)
   atmosphere.py       exponential table and NRLMSIS 2.1 (pymsis)
   spaceweather.py     CelesTrak's measured F10.7 and ap, for NRLMSIS

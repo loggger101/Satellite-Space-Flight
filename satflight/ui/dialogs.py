@@ -646,6 +646,11 @@ FORCE_TIPS = {
     "moon": "The Moon's tide, about twice the Sun's. It matters most for high orbits.",
     "srp": "Sunlight pushing on the satellite (Cr x area / mass), off in the Earth's "
            "shadow. Tens to hundreds of metres a day for a low satellite.",
+    "tides": "The Sun and Moon stretch the solid Earth by about 30 cm; the bulge pulls on "
+             "the satellite: at 700 km about 10 m along-track after a day and 50 m after "
+             "three. IERS 2010, degree 2; ocean tides are not modelled.",
+    "relativity": "General relativity's correction to the Earth's pull (the Schwarzschild "
+                  "term): at 700 km about 2.5 m along-track a day.",
 }
 # the Earth's gravity field: the separate J2/J3/J4/C22 terms, or EGM2008 to N x N
 FIELD_CHOICES = {"J2-J4 terms": 0, "EGM2008 8x8": 8, "EGM2008 20x20": 20,
@@ -693,8 +698,8 @@ CD_MODEL_TIPS = {
         "Cd worked out from the NRLMSIS air at the satellite: its temperature and the "
         "atomic oxygen stuck on the surface (Sentman's sphere, SESAM accommodation). About "
         "2.8 at 700 km; it varies a few % around the orbit and dips in storms. Each "
-        "satellite's Cd becomes a correction on it (2.2 = as modelled). Not in MATLAB "
-        "exports yet."),
+        "satellite's Cd becomes a correction on it (2.2 = as modelled). MATLAB exports "
+        "fly it too."),
 }
 
 
@@ -742,6 +747,10 @@ def physics_dialog(app):
         F("sun", "Sun's gravity", "bool", fm.sun, tip=FORCE_TIPS["sun"]),
         F("moon", "Moon's gravity", "bool", fm.moon, tip=FORCE_TIPS["moon"]),
         F("srp", "Sunlight pressure", "bool", fm.srp, tip=FORCE_TIPS["srp"]),
+        F("tides", "Solid-Earth tides", "bool", fm.tides,
+          tip=FORCE_TIPS["tides"] + " Not in MATLAB exports yet."),
+        F("relativity", "Relativity", "bool", fm.relativity,
+          tip=FORCE_TIPS["relativity"] + " Not in MATLAB exports yet."),
         F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}",
           tip="Seconds of simulated time between the points stored for trails, the map "
               "tracks and the plot."),
@@ -756,7 +765,8 @@ def physics_dialog(app):
             forces = ForceModel(j2=v["j2"], j3=v["j3"], j4=v["j4"], c22=v["c22"],
                                 drag=v["drag"], density_scale=v["density_scale"],
                                 gravity_degree=FIELD_CHOICES[v["field"]], sun=v["sun"],
-                                moon=v["moon"], srp=v["srp"],
+                                moon=v["moon"], srp=v["srp"], tides=v["tides"],
+                                relativity=v["relativity"],
                                 atmosphere=ATMOSPHERE_CHOICES[v["atmosphere"]],
                                 cd_model=CD_MODEL_CHOICES[v["cd_model"]])
         except ValueError as exc:     # physical Cd with the table

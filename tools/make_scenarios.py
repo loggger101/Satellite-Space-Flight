@@ -738,6 +738,10 @@ ALL = {"default": default, "data/sentinel1_replay": sentinel1_replay,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
        "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift,
        "sentinel1_launch": sentinel1_launch}
+# builders that fly days to calibrate (default: the pair's measured phasing) or to aim
+# (sentinel1_launch: both ascents, the phasing and the transfers): minutes each to
+# rebuild, so selfcheck --quick leaves them out and says so
+SLOW = ("default", "sentinel1_launch")
 
 # Planner results differ in the last bits between platforms (libm, numpy SIMD
 # paths): 1e-14 m/s on a 7.5 km/s subtraction. Any edit to a scenario changes

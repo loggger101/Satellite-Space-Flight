@@ -161,6 +161,24 @@ classdef ExportTest < ExportCase
             tc.verifyTrue(all(out.diagnostics.acc_drag_ms2 > 0));
         end
 
+        function tidesAndRelativity(tc)
+            % the solid-Earth tide and the Schwarzschild term (forces "tides",
+            % "relativity") with the Sun and Moon, 12 h: held to the simulator under 1 mm
+            sc = satflight.newScenario("Tidal", Sun=true, Moon=true, Tides=true, ...
+                Relativity=true, Epoch=datetime(2025, 11, 12, 0, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
+                I=98.18, Raan=278, Nu=30));
+            sc = satflight.addSatellite(sc, "Eccentric", satflight.orbitElements( ...
+                PerigeeAlt=500, ApogeeAlt=20000, I=63.4, Raan=40, Nu=10));
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "tidal.json"));
+            script = tc.export(file, "tidal", ["--duration", "12h", "--step", "60"]);
+            tc.verifyTrue(any(contains(readlines(script), '"tides", true, "relativity", true')));
+            [diffs, out] = tc.check(script);
+            tc.verifyLessThan(diffs.max_diff_km, 1e-6);
+            tc.verifyTrue(all(out.diagnostics.acc_tides_ms2 > 0));
+            tc.verifyTrue(all(out.diagnostics.acc_relativity_ms2 > 0));
+        end
+
         function nrlmsisAscent(tc)
             % under NRLMSIS an ascent flies the NRLMSIS column over its pad at liftoff
             % (launch.msis_column), in the storm: two launches from far-apart pads, 15 and

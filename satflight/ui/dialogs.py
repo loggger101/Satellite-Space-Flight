@@ -748,9 +748,9 @@ def physics_dialog(app):
         F("moon", "Moon's gravity", "bool", fm.moon, tip=FORCE_TIPS["moon"]),
         F("srp", "Sunlight pressure", "bool", fm.srp, tip=FORCE_TIPS["srp"]),
         F("tides", "Solid-Earth tides", "bool", fm.tides,
-          tip=FORCE_TIPS["tides"] + " Not in MATLAB exports yet."),
+          tip=FORCE_TIPS["tides"]),
         F("relativity", "Relativity", "bool", fm.relativity,
-          tip=FORCE_TIPS["relativity"] + " Not in MATLAB exports yet."),
+          tip=FORCE_TIPS["relativity"]),
         F("record_dt", "Trail sample interval (s)", "float", f"{sim.record_dt:g}",
           tip="Seconds of simulated time between the points stored for trails, the map "
               "tracks and the plot."),

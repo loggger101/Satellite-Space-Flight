@@ -367,14 +367,16 @@ if sim.propagator == "cowell"
 end
 F = sim.forces;
 field = F.gravityDegree > 0;      % the field stands in for J2, J3, J4 and C22
-on = [~field & [F.j2, F.j3, F.j4, F.c22], field, F.drag, F.sun, F.moon, F.srp];
+on = [~field & [F.j2, F.j3, F.j4, F.c22], field, F.drag, F.sun, F.moon, F.srp, F.tides, ...
+    F.relativity];
 drag = "DRAG";
 if physicalCd(F)
     drag = "DRAG(MSIS,Cd)";
 elseif msisDrag(F)
     drag = "DRAG(MSIS)";
 end
-terms = ["J2", "J3", "J4", "C22", "EGM" + F.gravityDegree, drag, "SUN", "MOON", "SRP"];
+terms = ["J2", "J3", "J4", "C22", "EGM" + F.gravityDegree, drag, "SUN", "MOON", "SRP", ...
+    "TIDES", "GR"];
 used = sim.propagator == "j2mean" & terms == "J2";
 left = terms(on & ~used);
 end
@@ -746,7 +748,7 @@ vc = sqrt(C.MU / rm);
 F = s.sim.forces;
 perturbed = s.sim.propagator == "j2mean" || (s.sim.propagator == "cowell" && ...
     (F.j2 || F.j3 || F.j4 || F.c22 || F.gravityDegree > 0 || F.drag || F.sun || ...
-    F.moon || F.srp));      % every term the acceleration includes, as the simulator
+    F.moon || F.srp || F.tides || F.relativity));      % every term the acceleration includes, as the simulator
 if ~perturbed
     v = vc * th;
     return
@@ -1184,7 +1186,7 @@ if F.drag && ~isempty(burnRows)
     cdam(burnRows(:, 1)) = cdam(burnRows(:, 1)) .* burnRows(:, 4) ./ masses;
 end
 jd = [];
-if F.sun || F.moon || F.srp || msis
+if F.sun || F.moon || F.srp || F.tides || msis
     jd = jd0 + t / 86400;      % where the Sun and Moon are; NRLMSIS's time
 end
 a = acceleration(r, v, cdam, theta, F, C, jd, cram);
@@ -1688,6 +1690,32 @@ if F.sun || F.srp
 end
 if F.moon
     a = a + thirdBody(r, moonPosition(jd, C), C.MU_MOON);
+end
+if F.tides
+    a = a + tideAcceleration(r, sunPosition(jd, C), moonPosition(jd, C), C);
+end
+if F.relativity
+    % the Schwarzschild term (forces.accel_relativity, IERS 2010 eq. 10.12)
+    v2 = sum(v .* v, 2);
+    rv = sum(r .* v, 2);
+    a = a + C.MU ./ (C.C_LIGHT ^ 2 * rm .^ 3) .* ((4 * C.MU ./ rm - v2) .* r + 4 * rv .* v);
+end
+end
+
+function a = tideAcceleration(r, rs, rmoon, C)
+% the solid-Earth tide the Sun and Moon raise (forces.accel_tides): for each body
+% k2 GM_b R^5 / (2 r_b^3 r^4) [(3 - 15 c^2) r_hat + 6 c b_hat], c = r_hat . b_hat
+rm = vecnorm(r, 2, 2);
+rh = r ./ rm;
+a = zeros(size(r));
+bodies = {rs, C.MU_SUN; rmoon, C.MU_MOON};
+for j = 1:2
+    rb = bodies{j, 1};
+    bm = norm(rb);
+    bh = rb / bm;
+    c = rh * bh';
+    f = C.K2_EARTH * bodies{j, 2} * C.RE ^ 5 ./ (2 * bm ^ 3 * rm .^ 4);
+    a = a + f .* ((3 - 15 * c .^ 2) .* rh + 6 * c .* bh);
 end
 end
 
@@ -4237,6 +4265,9 @@ C.R_SUN = 696000.0;
 C.AU = 149597870.7;
 C.MU_SUN = 1.32712440018e11;  % km^3/s^2
 C.MU_MOON = 4902.800066;      % km^3/s^2
+% satflight/forces.py: the solid-Earth tide and relativity
+C.K2_EARTH = 0.30;            % degree-2 Love number
+C.C_LIGHT = 299792.458;       % km/s
 C.P_SRP = 4.56e-6;            % N/m^2, sunlight pressure at 1 AU
 % satflight/scenario.py
 C.CR_DEFAULT = 1.3;           % sunlight reflectivity of an object given none
@@ -5793,11 +5824,12 @@ F = sim.forces;
 if msisDrag(F)
     F = msisSetup(F, sim.dataFolder, C);
 end
-terms = ["j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "egm"];
-applied = false(1, 9);
+terms = ["j2", "j3", "j4", "c22", "drag", "sun", "moon", "srp", "egm", "tides", "relativity"];
+applied = false(1, 11);
 if sim.propagator == "cowell"
     field = F.gravityDegree > 0;      % the field stands in for J2, J3, J4 and C22
-    applied = [~field & [F.j2, F.j3, F.j4, F.c22], F.drag, F.sun, F.moon, F.srp, field];
+    applied = [~field & [F.j2, F.j3, F.j4, F.c22], F.drag, F.sun, F.moon, F.srp, field, ...
+        F.tides, F.relativity];
 end
 present = unique(T.name, "stable")';
 if isfield(sim, "replayUntil")
@@ -5820,13 +5852,13 @@ for q = 1:numel(present)
     period = NaN(size(rm));
     bound = kepler < 0;
     period(bound) = 2 * pi * sqrt((-C.MU ./ (2 * kepler(bound))) .^ 3 / C.MU) / 60;
-    acc = NaN(height(rows), 10);
+    acc = NaN(height(rows), 12);
     acc(:, 1) = 1000 * C.MU ./ rm .^ 2;
     props = objects(objects.name == present(q), :);
     for j = find(applied)
         G = struct("j2", false, "j3", false, "j4", false, "c22", false, "drag", false, ...
             "densityScale", F.densityScale, "sun", false, "moon", false, "srp", false, ...
-            "gravityDegree", 0, "field", F.field);
+            "tides", false, "relativity", false, "gravityDegree", 0, "field", F.field);
         if terms(j) == "egm"
             G.gravityDegree = F.gravityDegree;
         else
@@ -5850,7 +5882,7 @@ for q = 1:numel(present)
                 cram = props.cr(1) * props.area_m2(1) ./ m;
             end
         end
-        if any(terms(j) == ["sun", "moon", "srp"]) || msisDrag(G)
+        if any(terms(j) == ["sun", "moon", "srp", "tides"]) || msisDrag(G)
             % the Sun and Moon at each sample's own date (NRLMSIS: its air then)
             jd = juliandate(rows.utc);
             extra = zeros(height(rows), 3);
@@ -5867,11 +5899,11 @@ for q = 1:numel(present)
     D{q} = table(repmat(present(q), height(rows), 1), rows.t_s, kepler, total, ...
         total - C.OMEGA * h(:, 3), vecnorm(h, 2, 2), h(:, 3), speed, rm, period, acc(:, 1), ...
         acc(:, 2), acc(:, 3), acc(:, 4), acc(:, 5), acc(:, 6), acc(:, 7), acc(:, 8), ...
-        acc(:, 9), acc(:, 10), VariableNames=["name", "t_s", ...
+        acc(:, 9), acc(:, 10), acc(:, 11), acc(:, 12), VariableNames=["name", "t_s", ...
         "energy_MJkg", "energy_total_MJkg", "jacobi_MJkg", "h_km2s", "hz_km2s", "speed_kms", ...
         "r_km", "period_min", "acc_central_ms2", "acc_j2_ms2", "acc_j3_ms2", "acc_j4_ms2", ...
         "acc_c22_ms2", "acc_drag_ms2", "acc_sun_ms2", "acc_moon_ms2", "acc_srp_ms2", ...
-        "acc_egm_ms2"]);
+        "acc_egm_ms2", "acc_tides_ms2", "acc_relativity_ms2"]);
 end
 D = vertcat(D{:});
 if isempty(D)
@@ -5890,8 +5922,8 @@ K = table('Size', [0 8], 'VariableTypes', ["string", "double", "double", "double
     "double", "double", "string"], 'VariableNames', ["name", "from_s", "to_s", "samples", ...
     "quantity", "drift_rel", "hz_drift_rel", "expected"]);
 expected = "constant";
-outside = ["the Sun", "the Moon", "sunlight pressure"];
-outside = outside(applied(6:8));
+outside = ["the Sun", "the Moon", "sunlight pressure", "the tides", "relativity"];
+outside = outside(applied([6:8, 10, 11]));
 if ~isempty(outside)
     % bodies and light from outside the Earth's field work on the orbit
     expected = "not kept (" + strjoin(outside, ", ") + ")";
@@ -6020,7 +6052,8 @@ d = D(D.name == focus, :);
 forces = ["acc_central_ms2", "central gravity"; "acc_j2_ms2", "J2"; "acc_j3_ms2", "J3"; ...
     "acc_j4_ms2", "J4"; "acc_c22_ms2", "C22"; "acc_drag_ms2", "drag"; ...
     "acc_sun_ms2", "the Sun"; "acc_moon_ms2", "the Moon"; "acc_srp_ms2", "sunlight"; ...
-    "acc_egm_ms2", "EGM2008 field"];
+    "acc_egm_ms2", "EGM2008 field"; "acc_tides_ms2", "tides"; ...
+    "acc_relativity_ms2", "relativity"];
 for j = 1:size(forces, 1)
     y = d.(forces(j, 1));
     if any(isfinite(y))

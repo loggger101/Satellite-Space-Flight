@@ -149,8 +149,13 @@ def test_the_switches_round_trip_through_a_scenario_dict():
     assert ForceModel.from_dict({}).tides is False
 
 
-def test_the_matlab_export_refuses_the_new_terms_until_ported():
-    from satflight.matlab_export import unported_forces
-    assert unported_forces(ForceModel(tides=True, relativity=True)) == [
-        "solid-Earth tides", "relativity"]
-    assert unported_forces(ForceModel()) == []
+def test_the_matlab_export_carries_both_switches(tmp_path):
+    from satflight.matlab_export import export_live_script, unported_forces
+    from satflight.scenario import SatSpec, Scenario
+    from satflight.simulation import Simulation
+    assert unported_forces(ForceModel(tides=True, relativity=True)) == []
+    sc = Scenario(name="Tidal", forces=ForceModel(tides=True, relativity=True),
+                  satellites=[SatSpec("S", {"type": "elements", "altitude": 700, "i": 98})])
+    text = export_live_script(Simulation(sc), tmp_path / "tidal.m", "start", 60, 60).read_text(
+        encoding="utf-8")
+    assert '"tides", true, "relativity", true' in text

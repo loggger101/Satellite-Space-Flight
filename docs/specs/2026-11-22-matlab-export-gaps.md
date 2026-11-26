@@ -126,6 +126,13 @@ export loses nothing there.
   `drag_coefficient.sphere_cd`. `ExportTest/physicalCd` flies the 12 November
   2025 storm against the simulator (a Cube with Cd 2.5, so the correction
   factor counts too). `unported_forces` names nothing now.
+- Solid-Earth tides and relativity (forces "tides", "relativity", added
+  2026-11-25). Ported the same day: `tideAcceleration` is `forces.accel_tides`,
+  the Schwarzschild term sits in `acceleration` as in `forces.accel_relativity`,
+  and the diagnostics gain `acc_tides_ms2` and `acc_relativity_ms2`.
+  `ExportTest/tidesAndRelativity` holds a 693 km and a 500 x 20,000 km orbit
+  to the simulator under 1 mm in 12 h; `newScenario` takes `Tides` and
+  `Relativity`.
 
 **NRLMSIS ascent air.** Under NRLMSIS, Python ascents fly the NRLMSIS
 column over the pad at liftoff (`launch.msis_column`, 2026-11-24); MATLAB

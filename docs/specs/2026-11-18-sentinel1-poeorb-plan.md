@@ -1,5 +1,13 @@
 # Sentinel-1A and 1C from ESA precise orbits (POEORB) - plan
 
+**Status (2026-11-26): every step is done, and the project is complete**
+(see the README's status note and [../SCOPE.md](../SCOPE.md)). The plan is kept as
+written, with one change since: on 2026-11-25 the study was cut to
+2025-07-01 .. 2026-05-31, before ESA moved 1C to trail 1A by 207 deg in June
+2026. Section 4's study figures (102 arcs, the year's means) come from the
+full year. [../analysis/sentinel1/report.md](../analysis/sentinel1/report.md)
+has the study as it stands (96 arcs).
+
 Drafted 2026-11-18. Decisions settled with the user the same day. Source:
 <https://step.esa.int/auxdata/orbits/Sentinel-1/POEORB/>. The project's main
 goal is to map Sentinel-1A and 1C accurately; these files are the ground truth.

@@ -1,5 +1,11 @@
 # Scope
 
+**Status (2026-11-26): the project is complete.** The Sentinel-1A/1C goal below
+is met, with the pair's phasing as the README describes. The accuracy work
+closed on 2026-11-25: the items under "Not modelled" are parked, not planned.
+The real data end on 2026-05-31. In June 2026 ESA moved 1C to trail 1A by
+207 deg, onto other tracks, and the project does not follow it there.
+
 **Decision (2026-11-18), revising 2026-09-29:** the project's goal is to map
 Sentinel-1A and 1C against ESA's precise orbits, accurate to a few cm. For that the
 user brought back the Sun's and the Moon's gravity and sunlight pressure, and
@@ -35,6 +41,9 @@ removed" below stay out. The last commit that had all of them is `c079ded`.
   satellite (default 1.3, same area as drag), dimmed in the Earth's penumbra
   and umbra.
 - **Thrust:** impulsive and finite burns.
+- **Ground-track keeping** (`track_keeping`): along-track burns that hold a
+  repeat orbit within a band of its reference tracks, as ESA keeps
+  Sentinel-1.
 - **The Sun's position** for lighting, eclipses, beta angle and LTAN.
 - **The sun-synchronous inclination** (`"i": "sso"`). It is a J2 property of
   the Earth's field and does not use the Sun's position.
@@ -55,7 +64,9 @@ Not modelled, and named in the Sentinel-1 report as what is left:
   by a near-constant under 1 %, which the arc fits absorb; HWM14 does not
   install here);
 - attitude and a panel model of the satellite (probed 2026-11-24: its drag
-  varies day to day like the sphere's, so it would not move the arcs).
+  varies day to day like the sphere's, so it would not move the arcs);
+- inclination trims: ground-track keeping burns along-track only, so the
+  slow drift of a sun-synchronous orbit's inclination is left uncorrected.
 
 ## Still removed (since 2026-09-29)
 

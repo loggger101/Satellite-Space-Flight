@@ -6,6 +6,18 @@ Build scenarios with any number of satellites in any orbits, or launch them
 on multi-stage rockets from anywhere on Earth, then calculate and watch them
 evolve under real perturbing forces.
 
+**Status (2026-11-26): complete.** The project set out to map Sentinel-1A and
+1C and their constellation phasing against ESA's precise orbits, and it does:
+- eleven months of precise orbits (July 2025 to May 2026) studied;
+- the pair's measured phasing as the opening scenario, each satellite held on
+  its ground tracks;
+- a launch from Vandenberg into those slots;
+- a live phasing view in Telemetry;
+- a MATLAB export that carries all of it.
+
+See [Sentinel-1 precise orbits](#sentinel-1-precise-orbits) for the results and
+[docs/SCOPE.md](docs/SCOPE.md) for what is modelled and what was left out.
+
 ## Start it
 
 - **Windows:** double-click **`Start Satellite Space Flight.bat`** in this folder.
@@ -448,8 +460,9 @@ mean elements, burns and phasing; `arcs` runs the weekly accuracy arcs;
 `report` writes the Markdown and figures from the CSVs). Both satellites hold
 their frozen orbit (LTAN 18:00-18:01, i 98.18 deg, e 1.18e-3, argp 90 deg)
 and their 12-day, 175-orbit track to about 24 m at the equator, trimming every
-4 days or so. 1C flies 176.3 deg behind 1A, not the nominal 180, with its
-plane 0.25 deg west of 1A's (its node a minute earlier), which puts it on
+3.3 days (median) for about 1 mm/s a day each. 1C flies 176.3 deg behind
+1A, not the nominal 180, with its plane 0.25 deg west of 1A's (its node a
+minute earlier), which puts it on
 1A's tracks to 0.2 km despite the 176 deg: it passes over each of them 6 days
 after 1A. The study stops at the end of May 2026: in June ESA moved 1C to
 trail by 207 deg, onto other tracks. Fitted to one day of the precise orbit
@@ -457,6 +470,26 @@ and flown on, the simulator keeps Sentinel-1 within about 9-10 m along-track
 after a day and 23-25 m after three (median RMS over 96 weekly arcs; radial
 2-4 m, cross-track 5-13 m); the worst tenth, mostly geomagnetic storm weeks,
 reach 100-130 m after three days.
+
+**Phasing, as the project leaves it.**
+- The opening scenario (`default.json`) starts 1A and 1C on their measured
+  orbits: 1C 176.3 deg behind, its plane 0.25 deg west.
+- Ground-track keeping holds each satellite within 50 m of its reference
+  tracks, with along-track burns about a week apart. That costs about 1 mm/s
+  a day each, the rate ESA's precise orbits show (trims every 3.3 days of
+  3.7 mm/s, median).
+- Telemetry's PHASING rows show the live phase angle, plane offset and track
+  offset.
+- `sentinel1_launch.json` flies the pair from Vandenberg into those slots.
+- A MATLAB export of either scenario has a phasing section, with ESA's
+  measured values beside the run.
+
+The real data stop at May 2026 by choice. The accuracy work closed after the
+solid tides, relativity and albedo terms, which brought the median fit over
+six arcs from 1.99 to 1.52 m. A three-day error of about 25 m along-track is about
+0.0002 deg of phase, and phasing is measured in whole degrees, so more
+realism would change no phasing answer.
+
 Contains modified Copernicus Sentinel data.
 
 ## Accuracy and validation

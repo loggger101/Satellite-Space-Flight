@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.integrate import solve_ivp
 
 from satflight import forces
 from satflight.constants import C_LIGHT, MU_EARTH, MU_MOON, MU_SUN, R_EARTH
 from satflight.ephemeris import moon_position, sun_position
 from satflight.forces import ForceModel
+from satflight.integrators import Propagator
 
 JD = 2460991.5 + 0.37          # 2025-11-12 20:52 UTC, the storm day of the arcs
 RNG = np.random.default_rng(7)
@@ -111,14 +111,14 @@ def test_relativity_advances_the_perigee_at_einsteins_rate():
     revs = 20
 
     def run(gr):
+        # the simulator's own Dormand-Prince, held far tighter than a run's
         def f(_t, y):
-            r = y[None, :3]
-            acc = forces.accel_point_mass(r)
+            acc = forces.accel_point_mass(y[:, :3])
             if gr:
-                acc = acc + forces.accel_relativity(r, y[None, 3:])
-            return np.concatenate([y[3:], acc[0]])
-        return solve_ivp(f, (0, revs * period), y0, method="DOP853",
-                         rtol=1e-13, atol=1e-13).y[:, -1]
+                acc = acc + forces.accel_relativity(y[:, :3], y[:, 3:])
+            return np.concatenate([y[:, 3:], acc], axis=1)
+        prop = Propagator("dopri5", rtol=1e-13, atol=1e-13, h_max=600.0)
+        return prop.integrate(f, 0.0, y0[None].copy(), revs * period)[1][0]
 
     advance = _lrl_angle(run(True)) - _lrl_angle(run(False))
     einstein = 6 * np.pi * MU_EARTH / (C_LIGHT ** 2 * a_km * (1 - e * e)) * revs

@@ -139,6 +139,14 @@ one state, it moves the orbit 1.2 m along-track after a day and 4.2 m after
 three. The satellite's own shadow does not dim the Earth's light; the arc fits
 absorb a constant scale through Cr.
 
+Against the six NRLMSIS accuracy arcs (`sentinel1_study.py arcs --iers`, rows
+in `arcs_msis_iers.csv`), the tides and relativity together bring the median
+fit from 1.99 to 1.52 m RMS and the cross-track part of the three-day check from
+11.5 to 9.8 m (day one: 3.9 to 3.2 m); the along-track checks stay as drag
+leaves them. Adding the albedo and infrared (`--albedo`,
+`arcs_msis_iers_alb.csv`) changes none of these by more than a few centimetres
+(median fit 1.55 m, day three 9.7 m cross-track): Cr absorbs it.
+
 **Geostationary slots.** A `geo` orbit sits where the equatorial pull
 `mu / r^2 (1 + 3/2 J2 (Re/r)^2)` matches the Earth's rotation when J2 acts,
 ~0.5 km above the two-body R_GEO; at R_GEO it drifted east 0.8 deg a month.

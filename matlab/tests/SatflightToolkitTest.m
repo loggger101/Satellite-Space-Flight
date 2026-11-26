@@ -110,7 +110,7 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             % the year study's CSVs as tables, every number as Python reads it
             folder = fullfile(tc.Root, "docs", "analysis", "sentinel1");
             S = satflight.readStudy();
-            tc.verifyEqual(sort(string(fieldnames(S)))', ["arcs" "arcs_msis" "arcs_msis_dria" "burns" "daily" "phasing"]);
+            tc.verifyEqual(sort(string(fieldnames(S)))', ["arcs" "arcs_msis" "arcs_msis_dria" "arcs_msis_iers" "arcs_msis_iers_alb" "burns" "daily" "phasing"]);
             tc.verifyEqual(S.daily.date.TimeZone, 'UTC');
             tc.verifyEqual(S.burns.start_utc.TimeZone, 'UTC');
             tc.verifyEqual(string(S.daily.date(1), "yyyy-MM-dd"), "2025-07-01");
@@ -125,11 +125,16 @@ classdef SatflightToolkitTest < matlab.unittest.TestCase
             tc.verifyTrue(all(S.arcs_msis.error == ""));
             tc.verifyEqual(height(S.arcs_msis_dria), 6);  % and with the physical Cd
             tc.verifyTrue(all(S.arcs_msis_dria.error == ""));
+            tc.verifyEqual(height(S.arcs_msis_iers), 6);  % and with tides and relativity
+            tc.verifyTrue(all(S.arcs_msis_iers.error == ""));
+            tc.verifyEqual(height(S.arcs_msis_iers_alb), 6);  % and with albedo too
+            tc.verifyTrue(all(S.arcs_msis_iers_alb.error == ""));
 
             files = struct("daily_S1A", S.daily(S.daily.mission == "S1A", :), ...
                 "daily_S1C", S.daily(S.daily.mission == "S1C", :), "phasing", S.phasing, ...
                 "burns", S.burns, "arcs", S.arcs, "arcs_msis", S.arcs_msis, ...
-                "arcs_msis_dria", S.arcs_msis_dria);
+                "arcs_msis_dria", S.arcs_msis_dria, "arcs_msis_iers", S.arcs_msis_iers, ...
+                "arcs_msis_iers_alb", S.arcs_msis_iers_alb);
             lines = splitlines(strip(string(runPython([fullfile(tc.Root, "matlab", ...
                 "tests", "study_sums.py"), folder]))));
             tc.assertGreaterThan(numel(lines), 60);

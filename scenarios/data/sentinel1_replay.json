@@ -24,7 +24,8 @@
     "atmosphere": "table",
     "cd_model": "fixed",
     "tides": false,
-    "relativity": false
+    "relativity": false,
+    "albedo": false
   },
   "record_dt": 20.0,
   "warp": 60,

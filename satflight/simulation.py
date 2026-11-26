@@ -817,7 +817,7 @@ class Simulation:
     def _derivative(self, idx: np.ndarray, burns: list):
         """State derivative f(t, y) for satellites ``idx`` including active finite burns."""
         cd_am = self._props(idx)
-        cr_am = self._cr_props(idx) if self.forces.srp else None
+        cr_am = self._cr_props(idx) if (self.forces.srp or self.forces.albedo) else None
         rows = {int(i): k for k, i in enumerate(idx)}
         burn_rows = [(rows[j], b, self.sats[j].cd * self.sats[j].area)
                      for b in burns if (j := self.index_of(b.man.sat)) in rows]

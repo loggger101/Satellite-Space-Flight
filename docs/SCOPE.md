@@ -30,6 +30,7 @@ removed" below stay out. The last commit that had all of them is `c079ded`.
   low-precision almanac series in `ephemeris.py`.
 - **Solid-Earth tides** (`tides`) of the Sun and Moon to degree 2, and the
   **Schwarzschild relativity** term (`relativity`), both IERS 2010.
+- **Earth albedo and infrared pressure** (`albedo`), Knocke's model.
 - **Solar radiation pressure** (`srp`): a cannonball model with `Cr` per
   satellite (default 1.3, same area as drag), dimmed in the Earth's penumbra
   and umbra.
@@ -48,7 +49,8 @@ Not modelled, and named in the Sentinel-1 report as what is left:
   solid-Earth tide is a switch since 2026-11-25, `"tides"`);
 - relativity beyond the Schwarzschild term (that term is a switch since
   2026-11-25, `"relativity"`);
-- Earth albedo and infrared pressure;
+- clouds and seasons in the Earth's albedo beyond Knocke's latitude-and-season
+  model (albedo and infrared pressure are a switch since 2026-11-25, `"albedo"`);
 - thermospheric winds (probed 2026-11-24: for Sentinel-1 they change drag
   by a near-constant under 1 %, which the arc fits absorb; HWM14 does not
   install here);

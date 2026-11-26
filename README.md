@@ -398,10 +398,10 @@ which opens in the Live Editor with its headings and inline figures.
 The project's goal is to map Sentinel-1A and 1C accurately. The ground truth
 is ESA's precise orbit files (POEORB, a few cm accurate): one per satellite
 per day, with Earth-fixed state vectors every 10 s. They are kept outside the
-repository (about half a GB for a year):
+repository (about half a GB for the study's eleven months):
 
 ```bash
-python tools/fetch_poeorb.py            # S1A and S1C, 2025-07-01 to 2026-06-30
+python tools/fetch_poeorb.py            # S1A and S1C, 2025-07-01 to 2026-05-31
 python tools/fetch_eop.py               # IERS polar motion and UT1-UTC (~4 MB)
 python tools/fetch_space_weather.py     # CelesTrak F10.7 and ap, and NOAA's solar-cycle
                                         # forecast, for NRLMSIS (~3 MB)
@@ -431,21 +431,22 @@ recording, `{"type": "precise", "mission": "S1A"}` starts a twin on it. The plan
 replay, reports) is in
 [docs/specs/2026-11-18-sentinel1-poeorb-plan.md](docs/specs/2026-11-18-sentinel1-poeorb-plan.md).
 
-A year of it (July 2025 to June 2026) is studied in
+July 2025 to May 2026 is studied in
 [docs/analysis/sentinel1/report.md](docs/analysis/sentinel1/report.md),
-written by `tools/sentinel1_study.py` (`series` reads the year into daily
+written by `tools/sentinel1_study.py` (`series` reads the span into daily
 mean elements, burns and phasing; `arcs` runs the weekly accuracy arcs;
 `report` writes the Markdown and figures from the CSVs). Both satellites hold
 their frozen orbit (LTAN 18:00-18:01, i 98.18 deg, e 1.18e-3, argp 90 deg)
 and their 12-day, 175-orbit track to about 24 m at the equator, trimming every
-4 days or so. 1C flew 176 deg behind 1A, not the nominal 180, until it was
-moved to 207 deg in June 2026. Its plane sits 0.25 deg west of 1A's (its node
-a minute earlier), which puts it on 1A's tracks to 0.2 km despite the 176 deg:
-it passes over each of them 6 days after 1A. Fitted to one day of the precise orbit and flown
-on, the simulator keeps Sentinel-1 within about 9 m along-track after a day and
-24 m after three (median RMS over 102 weekly arcs; radial 2-5 m, cross-track
-5-13 m); the worst tenth, mostly geomagnetic storm weeks, reach 60-130 m after
-three days.
+4 days or so. 1C flies 176.3 deg behind 1A, not the nominal 180, with its
+plane 0.25 deg west of 1A's (its node a minute earlier), which puts it on
+1A's tracks to 0.2 km despite the 176 deg: it passes over each of them 6 days
+after 1A. The study stops at the end of May 2026: in June ESA moved 1C to
+trail by 207 deg, onto other tracks. Fitted to one day of the precise orbit
+and flown on, the simulator keeps Sentinel-1 within about 9-10 m along-track
+after a day and 23-25 m after three (median RMS over 96 weekly arcs; radial
+2-4 m, cross-track 5-13 m); the worst tenth, mostly geomagnetic storm weeks,
+reach 100-130 m after three days.
 Contains modified Copernicus Sentinel data.
 
 ## Accuracy and validation

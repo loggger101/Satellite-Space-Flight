@@ -85,8 +85,7 @@ def test_an_orbit_that_does_not_repeat_soon_has_no_cycle():
 
 
 def test_1c_trails_1a_by_the_phasing_the_precise_orbits_show(sim):
-    real = np.mean([float(r["mean_deg"]) for r in _real("phasing.csv")
-                    if r["date"] < "2026-06-01"])
+    real = np.mean([float(r["mean_deg"]) for r in _real("phasing.csv")])
     (c,) = phasing.companions(sim, 0)
     assert c.index == 1
     assert -c.ahead_deg == pytest.approx(real, abs=0.1)
@@ -95,8 +94,8 @@ def test_1c_trails_1a_by_the_phasing_the_precise_orbits_show(sim):
 
 
 def test_1c_s_plane_is_turned_west_by_the_real_pair_s_ltan_gap(sim):
-    ltan = {m: np.mean([float(r["ltan_h"]) for r in _real(f"daily_{m}.csv")
-                        if r["date"] < "2026-06-01"]) for m in ("S1A", "S1C")}
+    ltan = {m: np.mean([float(r["ltan_h"]) for r in _real(f"daily_{m}.csv")])
+            for m in ("S1A", "S1C")}
     real_deg = (ltan["S1C"] - ltan["S1A"]) * 15.0          # 1 h of local time = 15 deg
     (c,) = phasing.companions(sim, 0)
     assert c.plane_deg == pytest.approx(real_deg, abs=0.03)

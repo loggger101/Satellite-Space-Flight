@@ -44,12 +44,11 @@ def test_reference_orbit_elements(sim):
 
 
 def test_1c_trails_1a_by_the_measured_176_degrees(sim):
-    """Not the nominal 180: what the precise orbits show from July 2025 until
-    1C was moved in June 2026 (phasing.csv)."""
+    """Not the nominal 180: what the precise orbits show, July 2025 - May 2026
+    (phasing.csv)."""
     import csv
     with open(STUDY / "phasing.csv", newline="", encoding="utf-8") as f:
-        real = np.mean([float(r["mean_deg"]) for r in csv.DictReader(f)
-                        if r["date"] < "2026-06-01"])
+        real = np.mean([float(r["mean_deg"]) for r in csv.DictReader(f)])
     # measured as phasing.csv is: when 1C crosses the equator northward after
     # 1A, over 1A's node-to-node period (the osculating argument of latitude
     # differs from it by J2's short-period swing, 0.27 deg here)
@@ -87,7 +86,7 @@ def test_the_default_flies_the_real_mean_eccentricity(sim, k):
     mission = ("S1A", "S1C")[k]
     real = _daily(mission)
     e, argp = _revolution_mean_e(sim, k)
-    assert e == pytest.approx(np.mean(real["e"][:335]), abs=3e-6)
+    assert e == pytest.approx(np.mean(real["e"]), abs=3e-6)
     assert argp == pytest.approx(90.0, abs=0.5)
 
 
@@ -137,7 +136,7 @@ def _daily(mission):
 
 @pytest.mark.parametrize("mission", ["S1A", "S1C"])
 def test_the_real_orbit_flies_the_12_day_repeat(mission):
-    revs = _daily(mission)["revs"][:335]          # July 2025 to May 2026, before 1C moved
+    revs = _daily(mission)["revs"]
     assert revs.sum() / len(revs) == pytest.approx(175 / 12, abs=0.005)
 
 
@@ -152,17 +151,24 @@ def test_the_default_ltan_inclination_and_perigee_match_the_real_orbit(sim, miss
     assert np.mean(d["argp_deg"]) == pytest.approx(90.0, abs=1.0)
 
 
-def test_the_real_pair_flies_176_degrees_apart_until_1c_moved_in_june_2026():
-    """Not the 180 deg of the default: 1C trails 1A by 176.2 deg (measured twice:
-    from node times and from the argument of latitude), and in June 2026 it was
-    raised, drifted and lowered to trail by about 207 deg."""
+def test_the_study_is_the_pair_as_it_flew_before_1c_was_moved():
+    """July 2025 - May 2026, every day: in June 2026 ESA moved 1C to trail by
+    about 207 deg, 229 km off its old tracks, and the project studies the pair
+    before that. Through those months 1C trails 1A by 175.9-176.7 deg, not the
+    nominal 180."""
     import csv
     with open(STUDY / "phasing.csv", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
-    before = [float(r["mean_deg"]) for r in rows if r["date"] < "2026-06-01"]
-    after = [float(r["mean_deg"]) for r in rows if r["date"] >= "2026-06-24"]
-    assert min(before) > 175.8 and max(before) < 177.0
-    assert after and all(206.0 < x < 208.0 for x in after)
+    dates = [r["date"] for r in rows]
+    assert dates[0] == "2025-07-01" and dates[-1] == "2026-05-31"
+    deg = [float(r["mean_deg"]) for r in rows]
+    assert min(deg) > 175.8 and max(deg) < 177.0
+    for mission in ("S1A", "S1C"):
+        with open(STUDY / f"daily_{mission}.csv", newline="", encoding="utf-8") as f:
+            days = [r["date"] for r in csv.DictReader(f)]
+        assert days[0] == "2025-07-01" and days[-1] == "2026-05-31"
+    with open(STUDY / "arcs.csv", newline="", encoding="utf-8") as f:
+        assert max(r["start"] for r in csv.DictReader(f)) == "2026-05-26"   # + 3 days
 
 
 # --- one set of ground tracks -----------------------------------------------------------------
@@ -212,8 +218,7 @@ def test_1c_flies_1a_s_ground_tracks(sim):
 def test_the_default_turns_1c_s_plane_as_the_real_pair_does(sim):
     """1C's node runs about a minute of local time ahead of 1A's in the precise
     orbits (the 0.25 deg its 176.3 deg phasing needs); the default has the same gap."""
-    real = (np.mean(_daily("S1A")["ltan_h"][:335])
-            - np.mean(_daily("S1C")["ltan_h"][:335])) * 60
+    real = (np.mean(_daily("S1A")["ltan_h"]) - np.mean(_daily("S1C")["ltan_h"])) * 60
     jd = sim.clock.jd(0.0)
     ltan = [local_time_of_node(rv2coe(sim.y[k, :3], sim.y[k, 3:]).raan, jd)
             for k in range(2)]

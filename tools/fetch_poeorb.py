@@ -1,6 +1,6 @@
 """Download Sentinel-1 precise orbit files (POEORB) from ESA.
 
-    python tools/fetch_poeorb.py                       # S1A and S1C, 2025-07-01..2026-06-30
+    python tools/fetch_poeorb.py                       # S1A and S1C, 2025-07-01..2026-05-31
     python tools/fetch_poeorb.py --sats S1C --from 2026-01-01 --to 2026-01-07
     python tools/fetch_poeorb.py --dry-run             # say what would be fetched
 
@@ -35,7 +35,7 @@ from satflight.poeorb import (
     newest_per_day,
 )
 
-FIRST, LAST = date(2025, 7, 1), date(2026, 6, 30)
+FIRST, LAST = date(2025, 7, 1), date(2026, 5, 31)   # the study's span (sentinel1_study)
 PAUSE = 0.5            # s between requests: ESA's server is shared
 RETRIES = (5, 20, 60)  # s to wait before each retry of a failed request
 

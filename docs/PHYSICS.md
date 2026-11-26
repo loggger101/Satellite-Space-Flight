@@ -152,9 +152,9 @@ extrapolated to 2500 km and zero above. `density_scale` multiplies it to mimic
 solar maximum (~3x at 400 km) or minimum (~0.3x); real densities vary by an
 order of magnitude over the solar cycle, so decay times are indicative.
 At Sentinel-1's 693 km the weekly accuracy arcs fit the scale (with Cd 2.2 at
-10 m^2): 1.23 on average for 1A and 1.27 for 1C (0.43 to 4.05 week by week,
-the two satellites agreeing within a few percent), a mean Cd of 2.7-2.8 for
-the year 2025-07 .. 2026-06 near solar maximum. The scale is held for the
+10 m^2): 1.26 on average for 1A and 1.28 for 1C (0.43 to 4.05 week by week,
+the two satellites agreeing within a few percent), a mean Cd of 2.8 for
+2025-07 .. 2026-05 near solar maximum. The scale is held for the
 three days flown on, so a storm that starts after the fit day costs most of
 the prediction error (see the study report).
 

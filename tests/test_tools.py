@@ -27,7 +27,9 @@ import selfcheck  # noqa: E402
 from satflight.simulation import Simulation  # noqa: E402
 
 
-@pytest.mark.parametrize("name", list(make_scenarios.ALL))
+@pytest.mark.parametrize("name", [
+    pytest.param(n, marks=pytest.mark.time_limit(1200)) if n in make_scenarios.SLOW else n
+    for n in make_scenarios.ALL])   # the slow builders fly days: 3 and 7 minutes here
 def test_the_committed_scenarios_are_what_the_generator_makes(name):
     """scenarios/*.json are generated: an edit to one file, or to the generator
     without rerunning it, would otherwise drift apart unnoticed."""
@@ -126,6 +128,17 @@ def test_selfcheck_passes_here(capsys):
     assert selfcheck.main(["--quick", "default", "geo_drift"]) == 0
     out = capsys.readouterr().out
     assert "All checks passed." in out and "FAIL" not in out
+    # the builders that take minutes are left out by name, the rest rebuilt
+    assert "not rebuilt (--quick): default, sentinel1_launch" in out
+
+
+def test_selfcheck_quick_still_finds_a_stale_scenario(monkeypatch):
+    import make_scenarios
+    monkeypatch.setattr(make_scenarios, "stale",
+                        lambda name: ["/name: changed"] if name == "geo_drift" else [])
+    ok, text = selfcheck.generator(quick=True)
+    assert not ok and "geo_drift (/name: changed)" in text
+    assert text.endswith("not rebuilt (--quick): default, sentinel1_launch")
 
 
 class Jittery(Simulation):

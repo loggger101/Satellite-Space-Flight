@@ -350,3 +350,30 @@ def test_the_ascent_flies_through_its_environments_air():
     vacuum, std = flight(lambda h: 0.0), flight(None)
     assert vacuum.max_q[0] == 0.0 and vacuum.losses["drag"] == 0.0
     assert 35e3 < std.max_q[0] < 45e3             # Falcon 9 without its throttle bucket
+
+
+def test_a_scenario_can_schedule_burns_for_a_payload_still_on_its_rocket():
+    """A burn at an absolute time for a launch's payload waits for it: flown
+    after separation, skipped with a warning if the payload is still aboard."""
+    later = Maneuver("Sat", "impulse", timing="absolute", t=60.0 + 3000.0, dv=(0.01, 0.0, 0.0))
+    early = Maneuver("Sat", "impulse", timing="absolute", t=60.0 + 100.0, dv=(0.02, 0.0, 0.0))
+    sc = _scenario(launches=[spec(name="Sat", timing="delay", delay=60.0, kick=2.5)])
+    sc.maneuvers = [later, early]
+    sim = Simulation(sc)
+    assert sorted(m.t for m in sim.maneuvers if m.sat == "Sat") == [160.0, 3060.0]
+    sim.advance(400.0)
+    i = sim.index_of("Sat")
+    assert any("skipped" in e.text and "launch vehicle" in e.text for e in sim.events)
+    sim.advance(3000.0)
+    assert sim.ascent_of(i) is None
+    assert sim.sats[i].dv_used == pytest.approx(0.01)
+    assert Scenario.from_dict(sc.to_dict()).maneuvers[0].t == 3060.0
+
+
+def test_a_payload_burn_before_separation_needs_an_absolute_time():
+    sim = Simulation(_scenario(launches=[spec(name="Sat", timing="delay", delay=60.0,
+                                              kick=2.5)]))
+    with pytest.raises(ValueError, match="launch vehicle"):
+        sim.schedule(Maneuver("Sat", "impulse", timing="apoapsis", dv=(0.01, 0.0, 0.0)))
+    with pytest.raises(ValueError, match="launch vehicle"):     # now: still aboard
+        sim.schedule(Maneuver("Sat", "impulse", dv=(0.01, 0.0, 0.0)))

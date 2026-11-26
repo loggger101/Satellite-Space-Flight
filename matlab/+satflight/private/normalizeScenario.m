@@ -9,7 +9,8 @@ end
 if ~isfield(sc, "name")
     error("satflight:badScenario", "The scenario has no name (start it with satflight.newScenario).");
 end
-for list = ["satellites", "constellations", "stations", "maneuvers", "launches"]
+for list = ["satellites", "constellations", "stations", "maneuvers", "launches", ...
+        "track_keeping"]
     if isfield(sc, list)
         sc.(list) = asCellRow(sc.(list), list);
     end

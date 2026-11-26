@@ -197,6 +197,80 @@ classdef ExportTest < ExportCase
             tc.verifyTrue(all(out.diagnostics.acc_albedo_ms2 > 0));
         end
 
+        function sentinel1Phasing(tc)
+            % the project's pair, a day: the live script's phasing (satflightNodes,
+            % satflightPhasing) reads 1C 176.3 deg behind 1A on 1A's 175 tracks, its plane
+            % 0.25 deg west, as the simulator's PHASING rows and the precise orbits do
+            [diffs, out] = tc.check(tc.export(fullfile(tc.Root, "scenarios", "default.json"), ...
+                "sentinel1phasing", ["--duration", "26h", "--step", "60"]));
+            tc.verifyLessThan(diffs.max_diff_km, 1e-6);
+            P = out.phasing(out.phasing.name == "Sentinel-1A", :);
+            tc.verifyGreaterThanOrEqual(height(P), 14);
+            tc.verifyEqual(unique(P.companion), "Sentinel-1C");
+            tc.verifyEqual(P.ahead_deg, repmat(-176.3, height(P), 1), AbsTol=0.01);
+            tc.verifyEqual(P.plane_deg, repmat(-0.2546, height(P), 1), AbsTol=0.003);
+            tc.verifyLessThan(max(abs(P.track_km)), 1);
+            tc.verifyEqual(unique([P.orbits, P.days], "rows"), [175 12]);
+            C = out.phasing(out.phasing.name == "Sentinel-1C", :);
+            tc.verifyEqual(C.ahead_deg, repmat(176.3, height(C), 1), AbsTol=0.01);
+        end
+
+        function sentinel1Keeping(tc)
+            % the pair keeps its tracks: past the first day each keeper schedules its
+            % along-track burn half an orbit after a node, the script's engine flies the
+            % same burns as the simulator (held to it), and every crossing after the
+            % first day lands within the 50 m band
+            [diffs, out] = tc.check(tc.export(fullfile(tc.Root, "scenarios", "default.json"), ...
+                "sentinel1keeping", ["--duration", "31h", "--step", "60"]));
+            tc.verifyLessThan(diffs.max_diff_km, 1e-5);
+            B = out.burns(out.burns.label == "track keeping", :);
+            tc.verifyEqual(sort(B.name), ["Sentinel-1A"; "Sentinel-1C"]);
+            tc.verifyGreaterThan(B.dvV_ms, 0.002);          % a few mm/s, raising
+            tc.verifyLessThan(B.dvV_ms, 0.010);
+            tc.verifyEqual(nnz(startsWith(out.events.text, "Scheduled track keeping for ")), 2);
+            K = out.keeping;
+            tc.verifyEqual(unique(K.name, "stable"), ["Sentinel-1C"; "Sentinel-1A"]);
+            tc.verifyLessThan(max(abs(K.offset_km)), 0.06);
+            S = out.keepingSummary;
+            tc.verifyEqual(S.name, ["Sentinel-1A"; "Sentinel-1C"]);   % the run's order
+            tc.verifyEqual(S.burns, [1; 1]);
+        end
+
+        function sentinel1LaunchAscent(tc)
+            % the Sentinel-1 launch scenario from the start: 1A on its pad at Vandenberg,
+            % liftoff on the southbound window, separation in the parking orbit and the
+            % phasing burn an orbit later, a burn the scenario holds for a payload still
+            % on its rocket
+            [~, out] = tc.check(tc.export(fullfile(tc.Root, "scenarios", ...
+                "sentinel1_launch.json"), "s1launch", ["--duration", "17h", "--step", "60"]));
+            tc.verifyEqual(out.launches(1).outcome, "orbit");
+            M = out.maneuvers;
+            tc.verifyEqual(M.maneuver(M.name == "Sentinel-1A"), "phasing burn");
+            tc.verifyGreaterThan(M.dv_ms(M.name == "Sentinel-1A"), 1);
+        end
+
+        function sentinel1LaunchArrival(tc)
+            % three hours before the study's first moment to four after: both satellites
+            % fly their aimed transfers and arrival burns, held to the simulator, and the
+            % phasing settles once they are in their slots where the study's first day
+            % has it (phasing.csv, 2025-07-01: 175.887 deg)
+            T = 6 * 86400 + 2;
+            [diffs, out] = tc.check(tc.export(fullfile(tc.Root, "scenarios", ...
+                "sentinel1_launch.json"), "s1arrival", ["--at", string(T - 3 * 3600), ...
+                "--duration", "7h", "--step", "60"]));
+            tc.verifyLessThan(max(diffs.max_diff_km(startsWith(diffs.name, "Sentinel-1") & ...
+                ~contains(diffs.name, "Stage"))), 1e-3);
+            arrived = out.maneuvers(contains(out.maneuvers.maneuver, "arrival"), :);
+            tc.verifyEqual(sort(arrived.name), ["Sentinel-1A"; "Sentinel-1C"]);
+            % the script starts 3 h before the arrival (its clock counts from there);
+            % an orbit on, both nodes come from the slots
+            P = out.phasing(out.phasing.name == "Sentinel-1A" & ...
+                out.phasing.t_s > 3 * 3600 + 6000, :);
+            tc.verifyNotEmpty(P);
+            tc.verifyEqual(P.ahead_deg, repmat(-175.887, height(P), 1), AbsTol=0.02);
+            tc.verifyLessThan(max(abs(P.track_km)), 1);
+        end
+
         function nrlmsisAscent(tc)
             % under NRLMSIS an ascent flies the NRLMSIS column over its pad at liftoff
             % (launch.msis_column), in the storm: two launches from far-apart pads, 15 and
@@ -549,7 +623,8 @@ classdef ExportTest < ExportCase
             saved = load(mat);
             tc.verifyEqual(sort(string(fieldnames(saved)))', sort(["sim", "T", "events", ...
                 "keyEvents", "atEnd", "burns", "objects", "passes", "coverage", "eclipses", ...
-                "betaAngles", "approaches", "drift", "diagnostics", "conservation"]));
+                "betaAngles", "approaches", "drift", "diagnostics", "conservation", ...
+                "measured", "nodes", "phasing", "phasingSummary"]));
             for name = ["T", "events", "passes", "coverage", "eclipses", "betaAngles", "drift", ...
                     "burns", "objects", "diagnostics", "conservation"]
                 tc.verifyEqual(saved.(name), out.(name), name);

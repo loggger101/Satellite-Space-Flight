@@ -13,7 +13,8 @@ What it checks:
   environment  Python, numpy, pygame-ce, the fonts in use
   assets       Earth texture and coastlines load; bundled fonts present
   files        every scenario in scenarios/ and scenarios/user/ reads strictly
-  generator    scenarios/*.json are what tools/make_scenarios.py makes now
+  generator    scenarios/*.json are what tools/make_scenarios.py makes now (--quick
+               leaves out the builders that take minutes, and names them)
   physics      per scenario: the run finishes, its energy holds where nothing
                adds or removes any, the integrator rejects few steps, and one
                long advance equals many short ones (bit for bit)
@@ -114,12 +115,15 @@ def scenario_file(path: Path):
     return True, f"{sc.name!r}: {sim.n} objects, {len(sc.launches)} launches"
 
 
-def generator():
+def generator(quick=False):
     import make_scenarios
-    diffs = {name: make_scenarios.stale(name) for name in make_scenarios.ALL}
+    left = [n for n in make_scenarios.ALL if quick and n in make_scenarios.SLOW]
+    diffs = {name: make_scenarios.stale(name) for name in make_scenarios.ALL
+             if name not in left}
     stale = [f"{name} ({d[0]})" for name, d in diffs.items() if d]
+    note = f"; not rebuilt (--quick): {', '.join(left)}" if left else ""
     return not stale, (f"stale: {', '.join(stale)} (run python tools/make_scenarios.py)"
-                       if stale else f"{len(make_scenarios.ALL)} scenarios match")
+                       if stale else f"{len(diffs)} scenarios match") + note
 
 
 def _energy_model(sim) -> ForceModel:
@@ -215,7 +219,7 @@ def main(argv=None) -> int:
     print("Scenario files")
     for p in bundled + user:
         rep.check(str(p.relative_to(ROOT)), scenario_file, p)
-    rep.check("generator", generator)
+    rep.check("generator", generator, args.quick)
     print(f"Physics ({hours:g} simulated hours each)")
     for p in chosen:
         rep.check(p.stem, physics, p, hours)

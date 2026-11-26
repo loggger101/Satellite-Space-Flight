@@ -26,6 +26,10 @@ SECTIONS = {
                                "of each orbit is spent in the Earth's shadow.",
     "ASCENT": "Live readings from the rocket while it climbs.",
     "STAGES": "Propellant left in each stage. The highlighted one is burning or next to burn.",
+    "PHASING": "The other satellites flying this one's orbit, and where they sit: how far "
+               "ahead or behind along it, how far their orbit plane is turned, and how far "
+               "their ground tracks lie from this one's. Read at each equator crossing, as "
+               "the Sentinel-1 study reads ESA's precise orbits.",
     "PRECISE ORBIT": "ESA's precise orbit (POEORB, accurate to a few cm), which a replayed "
                      "satellite follows, and how far a twin flown by the force model has "
                      "strayed from it.",
@@ -137,6 +141,21 @@ ROWS = {
     "Energy drift": "Relative change of the conserved orbital energy since the reference "
                     "time. It shows the integrator's error when no drag or burns act (it "
                     "should stay tiny).",
+    # --- phasing
+    "Repeat cycle": "A repeat orbit flies the same ground tracks again after a whole number "
+                    "of days: Sentinel-1 flies 175 orbits in 12 days, its tracks 229 km "
+                    "apart at the equator. Found from the last two equator crossings.",
+    "Companion": "Another satellite on this orbit (the same height, tilt and plane within a "
+                 "few degrees).",
+    "Phase angle": "How far around the orbit the companion is ahead of or behind this "
+                   "satellite, from when each crosses the equator northward. Sentinel-1C "
+                   "flies 176.3 deg behind 1A (180 is exactly half an orbit).",
+    "Plane offset": "How far the companion's orbit plane is turned east (+) or west (-) of "
+                    "this one's (RAAN, compared at the same moment). Sentinel-1C's is turned "
+                    "0.25 deg west, to put it on 1A's tracks despite its 176.3 deg phasing.",
+    "Track offset": "How far east or west of this satellite's repeat tracks the companion "
+                    "crosses the equator. Near 0 km it flies the same tracks, days later: "
+                    "Sentinel-1C passes over 1A's tracks 6 days after it.",
     # --- precise orbit
     "Source": "Where the replayed satellite's positions come from: ESA's precise orbit "
               "files, read from your data folder (tools/fetch_poeorb.py).",

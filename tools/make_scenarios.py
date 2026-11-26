@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from satflight.forces import ForceModel  # noqa: E402
+from satflight.keeping import TrackKeeping  # noqa: E402
 from satflight.launch import LAUNCH_SITES, LaunchSpec, pad_state, vehicle_preset  # noqa: E402
 from satflight.planner import (  # noqa: E402
     plan_hohmann,
@@ -66,6 +67,16 @@ S1_ALT = 692.827267
 # first-order J2 + J3 value, -J3 Re sin(i) / (2 J2 a) = 1.0443e-3, is 12 % low.
 S1_E_MEAN = 0.0011837
 S1_PHASE = 176.3                   # deg, 1C behind 1A
+
+
+def s1_plane_offset(phase: float = S1_PHASE) -> float:
+    """How far (deg of RAAN, + east) 1C's plane turns from 1A's so that 1C,
+    trailing by ``phase`` deg, flies 1A's ground tracks. Each orbit's node lands
+    360 * S1_DAYS / S1_REVS deg (12 tracks) farther west, so a trailer half a
+    revolution back lands exactly 6 tracks over; one ``phase`` back lands
+    (phase/360 - 1/2) of that short, which the plane makes up: -0.254 deg
+    (1C's node a minute of local time behind 1A's), as the precise orbits show."""
+    return (phase / 360.0 - 0.5) * 360.0 * S1_DAYS / S1_REVS
 
 
 def _mean_e_vector(sim, k, revs=2, step=10.0):
@@ -117,22 +128,86 @@ def default():
     """Sentinel-1A and -1C on ESA's reference orbit, with the eccentricity and
     phasing their precise orbits show."""
     raan = s1_raan(EPOCH)
-    us = (0.0, (-S1_PHASE) % 360.0)   # argument of latitude at the epoch, deg
+    raans = [raan, (raan + s1_plane_offset()) % 360.0]   # 1C on 1A's ground tracks
+    us = [0.0, (-S1_PHASE) % 360.0]   # argument of latitude at the epoch, deg
 
     def build(osc):
-        def s1(name, u, mass, v):
+        def s1(name, u, raan, mass, v):
             e, argp = math.hypot(*v), math.degrees(math.atan2(v[1], v[0]))
             return SatSpec(name, el(altitude=S1_ALT, e=round(e, 9), i="sso",
                                     raan=round(raan, 6), argp=round(argp, 6),
                                     nu=round((u - argp) % 360.0, 6)),
                            color=None, mass=mass, area=10.0, cd=2.2)
-        return _default_scenario([s1("Sentinel-1A", us[0], 2164.0, osc[0]),
-                                  s1("Sentinel-1C", us[1], 2200.0, osc[1])])
+        return _default_scenario([s1("Sentinel-1A", us[0], raans[0], 2164.0, osc[0]),
+                                  s1("Sentinel-1C", us[1], raans[1], 2200.0, osc[1])])
+
+    def vec(e, w):
+        return e * math.cos(math.radians(w)), e * math.sin(math.radians(w))
 
     target = (0.0, S1_E_MEAN)          # argp 90 deg
-    starts = [frozen_start(build, k, target) for k in range(2)]
-    return build([(e * math.cos(math.radians(w)), e * math.sin(math.radians(w)))
-                  for e, w in starts])
+    first = vec(*frozen_start(build, 0, target))
+    # The phase and the plane offset are what the precise orbits measure from
+    # the nodes (when each satellite crosses, and where on the ground); the start
+    # sets osculating elements, whose J2 short-period swing differs at u = 0 and
+    # u = 183.7 deg (0.27 deg of phase, 2 km on the ground). So fly a day and move
+    # 1C along its orbit and turn its plane until its nodes come S1_PHASE behind
+    # 1A's and land on 1A's tracks (and find 1C's frozen start again where it is).
+    for _ in range(6):
+        osc = [first, vec(*frozen_start(build, 1, target))]
+        phase, miss = _flown_phase_and_miss(Simulation(build(osc)))
+        if abs(phase - S1_PHASE) < 0.002 and abs(miss) * 111.32 < 0.05:
+            sc = build(osc)            # calibrated free of burns, then kept on track
+            sc.track_keeping = s1_keeping([s.name for s in sc.satellites])
+            return sc
+        us[1] = (us[1] + phase - S1_PHASE) % 360.0
+        raans[1] = (raans[1] - miss) % 360.0
+    raise RuntimeError(f"Sentinel-1C still {phase:.3f} deg behind 1A and "
+                       f"{miss * 111.32:.2f} km off its tracks")
+
+
+# ESA holds each Sentinel-1 on its reference tracks: on a typical day of the
+# precise orbits its worst crossing lands 31-32 m off (the median of the daily
+# largest offsets), with along-track trims every 3.5-4 days of about 7 m in a
+# (docs/analysis/sentinel1/report.md). A +-50 m band holds the simulated pair as
+# tight; the table atmosphere's milder drag spaces its burns about a week apart.
+S1_TRACK_BAND_KM = 0.05
+
+
+def s1_keeping(names, start=0.0):
+    """Ground-track keeping for the Sentinel-1 satellites ``names`` on the
+    175-orbit, 12-day reference cycle, from ``start`` (s after the epoch)."""
+    return [TrackKeeping(n, band_km=S1_TRACK_BAND_KM, orbits=175, days=12,
+                         start=start, isp=S1_HYDRAZINE_ISP) for n in names]
+
+
+def _flown_phase_and_miss(sim, hours=26.0, step=10.0):
+    """Flown ``hours`` with the scenario's forces, from the ascending nodes: how
+    far (deg) 1C trails 1A (when it crosses after 1A, over 1A's node-to-node
+    period) and how far east (deg) its nodes land from 1A's 175-track grid
+    (tracks 360/175 deg apart), each averaged over the day."""
+    import numpy as np
+
+    from satflight.fit import fly_batch
+    from satflight.timeutil import gmst
+    sats = sim.scenario.satellites
+    t = np.arange(0.0, hours * 3600.0, step)
+    jd0 = sim.clock.jd(0.0)
+    Y = fly_batch(sim.scenario.forces, jd0, 0.0, sim.y, t,
+                  [s.cd * s.area / s.mass for s in sats], [0.0] * len(sats))
+    tn, lon = [], []
+    for k in range(2):
+        r = Y[k, :, :3]
+        up = np.flatnonzero((r[:-1, 2] < 0) & (r[1:, 2] >= 0))
+        f = -r[up, 2] / (r[up + 1, 2] - r[up, 2])
+        rn = r[up] + f[:, None] * (r[up + 1] - r[up])
+        tn.append(t[up] + f * step)
+        lon.append(np.degrees(np.arctan2(rn[:, 1], rn[:, 0]) - gmst(jd0 + tn[k] / 86400.0)))
+    period = np.diff(tn[0]).mean()
+    after = tn[1] - tn[0][np.searchsorted(tn[0], tn[1]) - 1]
+    after = after[tn[1] > tn[0][0]]
+    grid = 360.0 / S1_REVS
+    return (float(360.0 * after.mean() / period),
+            float(np.mean((lon[1] - lon[0][0] + grid / 2) % grid - grid / 2)))
 
 
 def _default_scenario(satellites):
@@ -141,9 +216,12 @@ def _default_scenario(satellites):
         description="ESA's Copernicus radar pair on the Sentinel-1 reference orbit: "
                     "693 km, sun-synchronous (98.18 deg), dawn-dusk with the ascending "
                     "node at 18:00, frozen perigee over the North Pole, 175 orbits in a "
-                    "12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, so "
-                    "together they revisit each ground track every 6 days. Open the map "
-                    "(M) to watch the tracks interleave. Reference orbit with the "
+                    "12-day repeat. 1C flies about half an orbit (176 deg) behind 1A, its "
+                    "plane turned 0.25 deg west to put it on 1A's ground tracks, so "
+                    "together they revisit each track every 6 days (Telemetry, PHASING). "
+                    "Each keeps within 50 m of its tracks with small along-track burns "
+                    "about a week apart, as ESA keeps them. "
+                    "Open the map (M) to watch the tracks interleave. Reference orbit with the "
                     "eccentricity and spacing ESA's precise orbits show (2025-26), not "
                     "tracking data.",
         epoch=EPOCH, forces=ForceModel(j2=True, j3=True, j4=True, drag=True), warp=120,
@@ -432,12 +510,238 @@ def geo_drift():
                     for lon in lons])
 
 
+# --- Sentinel-1 launch ------------------------------------------------------------------------
+# The study's first moment: the first sample of ESA's precise orbits for 1 July 2025.
+S1_DATA_START = datetime(2025, 7, 1, 0, 0, 2, tzinfo=UTC)
+# 1A and 1C there, in the simulator's ECI frame (km, km/s), read from the precise orbits
+# (replay.for_orbit at S1_DATA_START; tests/test_sentinel1_launch.py checks them against
+# the downloaded files when they are there).
+S1_DATA_START_STATE = {
+    "S1A": ((-5249.440911, -1545.403036, -4494.047597), (-4.874137275, 0.003528182, 5.697960208)),
+    "S1C": ((5581.886148, 1511.438843, 4068.991851), (4.457220354, -0.14653567, -6.042050241)),
+}
+S1_LAUNCH_EPOCH = datetime(2025, 6, 25, tzinfo=UTC)
+S1_LAUNCH_SITE = "Vandenberg SLC-4E (USA)"
+S1_PARKING_ALT = 600.0       # km: Falcon 9 leaves each satellite below its slot
+S1_HYDRAZINE_ISP = 220.0     # s, the satellites' own thrusters
+S1_TRANSFER_DEG = 170.0      # the last arc's sweep (a half turn is singular to aim)
+
+
+def _s1_launch_scenario(launches, maneuvers):
+    return Scenario(
+        name="Sentinel-1 launch",
+        description="Sentinel-1A and 1C launched from Vandenberg on Falcon 9 a few days "
+                    "before the study's precise orbits start (not the real dates): each "
+                    "lifts off southbound into the plane it will fly, is left at 600 km, "
+                    "and with three burns of its own thrusters (a phasing burn, an aimed "
+                    "transfer and an arrival burn) reaches the place ESA's precise orbit "
+                    "puts it at 00:00:02 UTC on 1 July 2025, from where the study begins. "
+                    "From then on each keeps within 50 m of its ground tracks with small "
+                    "along-track burns. Watch the PHASING rows settle at 176 deg once "
+                    "both have arrived.",
+        epoch=S1_LAUNCH_EPOCH, forces=ForceModel(j2=True, j3=True, j4=True, drag=True),
+        warp=60, record_dt=10.0, satellites=[], launches=launches, maneuvers=maneuvers,
+        stations=[GroundStation("Svalbard", 78.23, 15.39, 0.5, 5.0),
+                  GroundStation("Matera", 40.65, 16.70, 0.5, 5.0),
+                  GroundStation("Maspalomas", 27.76, -15.63, 0.2, 5.0),
+                  GroundStation("Kiruna", 67.86, 20.96, 0.4, 5.0)])
+
+
+def _s1_launch_spec(name, mass, t0):
+    lat, lon, alt = LAUNCH_SITES[S1_LAUNCH_SITE]
+    return LaunchSpec(name, vehicle_preset("Falcon 9 (approx.)"), site=S1_LAUNCH_SITE,
+                      lat=lat, lon=lon, alt=alt, timing="absolute", t0=round(t0, 3),
+                      perigee_alt=S1_PARKING_ALT, apogee_alt=S1_PARKING_ALT,
+                      inclination=98.18, direction="south", payload_mass=mass,
+                      payload_area=10.0, payload_cd=2.2)
+
+
+def _s1_window(raan_deg, after, clock):
+    """Liftoff time (s after S1_LAUNCH_EPOCH) of the first southbound window
+    from Vandenberg after ``after`` into the plane of RAAN ``raan_deg`` at i
+    98.18 deg, the plane fixed in space."""
+    from satflight.launch import next_window, plane_normal
+    lat, lon, alt = LAUNCH_SITES[S1_LAUNCH_SITE]
+    n = plane_normal(math.radians(98.18), math.radians(raan_deg))
+    return next_window(lat, lon, alt, lambda t: n, after, lambda t: float(clock.gmst(t)),
+                       "south")
+
+
+def _s1_signed_angle(r_from, r_to, h):
+    """Angle (deg, 0..360) from ``r_from`` to ``r_to`` the way the orbit of
+    angular momentum ``h`` runs."""
+    import numpy as np
+    a = math.degrees(math.atan2(np.dot(np.cross(r_from, r_to), h / np.linalg.norm(h)),
+                                np.dot(r_from, r_to)))
+    return a % 360.0
+
+
+def _s1_plan_arrival(sim, name, target):
+    """The three burns that take ``name`` (separated, in its parking orbit) to
+    the state ``target`` at S1_DATA_START: a phasing burn along the velocity an
+    orbit after now, sized so that at the transfer's start the slot lies
+    S1_TRANSFER_DEG ahead; the transfer, aimed through the run's forces to
+    arrive on the slot's position; and the arrival burn onto its velocity.
+    Returns (burns [(t, dv ECI)], the plane's miss deg: payload RAAN at the
+    transfer minus the slot's carried back there)."""
+    import numpy as np
+
+    from satflight.analysis import j2_secular_rates
+    from satflight.constants import MU_EARTH
+    from satflight.maneuvers import propellant_after
+    i = sim.index_of(name)
+    m0 = sim.sats[i].mass           # each arc is flown at the mass left after its burn:
+    #                                 drag goes as area over mass, and the burns spend 5 %
+    T = (S1_DATA_START - S1_LAUNCH_EPOCH).total_seconds()
+    r2, v2 = (np.array(x, float) for x in target)
+    t1 = sim.t + 2 * math.pi * math.sqrt(np.linalg.norm(sim.y[i, :3]) ** 3 / MU_EARTH)
+    y1 = sim.coast_states([i], sim.y[i][None], sim.t, t1)[0]
+
+    # the transfer starts at a fixed moment: a 170-deg arc from the parking radius
+    a_tr = 0.5 * (np.linalg.norm(y1[:3]) + np.linalg.norm(r2))
+    tof = S1_TRANSFER_DEG / 360.0 * 2 * math.pi * math.sqrt(a_tr ** 3 / MU_EARTH)
+    tb = T - tof
+    along = y1[3:] / np.linalg.norm(y1[3:])
+
+    def misses(dvs):
+        """For each phasing burn (km/s along the velocity), flown together to the
+        transfer: how far (deg) the slot then lies from S1_TRANSFER_DEG ahead."""
+        sim.sats[i].mass = propellant_after(m0, float(np.mean(dvs)), S1_HYDRAZINE_ISP)
+        Y = np.repeat(y1[None], len(dvs), axis=0)
+        Y[:, 3:] += np.outer(dvs, along)
+        Yb = sim.coast_states([i] * len(dvs), Y, t1, tb)
+        f = np.array([_s1_signed_angle(y[:3], r2, np.cross(y[:3], y[3:])) for y in Yb])
+        return (f - S1_TRANSFER_DEG + 180.0) % 360.0 - 180.0, Yb
+
+    def bracket(lo, hi, last=True):
+        grid = np.linspace(lo, hi, 25)
+        f, _ = misses(grid)
+        roots = [k for k in range(len(grid) - 1)
+                 if f[k] * f[k + 1] <= 0 and abs(f[k] - f[k + 1]) < 180.0]
+        if not roots:
+            return None
+        k = roots[-1] if last else roots[0]
+        return grid[k], grid[k + 1], f[k], f[k + 1]
+
+    # the highest phasing orbit (up to 48 m/s: still below the slot) that brings it round
+    b = bracket(0.0, 0.048)
+    if b is None:
+        raise RuntimeError(f"{name}: no phasing burn up to 48 m/s brings it to its slot")
+    for _ in range(2):                         # narrow it twice, flying 25 together
+        b = bracket(b[0], b[1], last=False)
+    lo, hi, flo, fhi = b
+    dv1 = lo - flo * (hi - lo) / (fhi - flo) if fhi != flo else lo
+    _, Yb = misses(np.array([dv1]))
+    sim.sats[i].mass = m0
+    r1, v1 = Yb[0][:3], Yb[0][3:]
+    # the plane: the payload's RAAN at the transfer against the slot's carried back there
+    from satflight.elements import rv2coe
+    el_p, el_s = rv2coe(r1, v1), rv2coe(r2, v2)
+    rd = float(j2_secular_rates(el_s.a, el_s.e, el_s.i)[0])
+    miss_raan = math.degrees(math.remainder(el_p.raan - (el_s.raan - rd * (T - tb)), 2 * math.pi))
+    return (round(t1, 3), dv1 * along), round(tb, 3), miss_raan
+
+
+def _s1_aim_transfer(sim, name, target, tb):
+    """The transfer and arrival burns [(t, dv ECI)] for ``name``, the run standing
+    at the transfer's start ``tb``: aimed from the state the run has flown it to
+    (five days of phasing coast drift some 170 m from any prediction, while the
+    45-minute transfer lands within centimetres of its own)."""
+    import numpy as np
+
+    from satflight.constants import MU_EARTH
+    from satflight.maneuvers import propellant_after
+    from satflight.planner import aim
+    i = sim.index_of(name)
+    T = (S1_DATA_START - S1_LAUNCH_EPOCH).total_seconds()
+    r2, v2 = (np.array(x, float) for x in target)
+    r1, v1 = sim.y[i, :3].copy(), sim.y[i, 3:].copy()
+    m1 = sim.sats[i].mass
+    a_tr = 0.5 * (np.linalg.norm(r1) + np.linalg.norm(r2))
+    speed = math.sqrt(MU_EARTH * (2.0 / np.linalg.norm(r1) - 1.0 / a_tr))
+    v_dep = v1 * speed / np.linalg.norm(v1)
+    for _ in range(3):                   # the transfer's own burn sets the arc's mass
+        sim.sats[i].mass = propellant_after(m1, float(np.linalg.norm(v_dep - v1)),
+                                            S1_HYDRAZINE_ISP)
+        v_dep, arrival = aim(sim, name, r1, v_dep, tb, T - tb, r2)
+    sim.sats[i].mass = m1
+    return [(tb, v_dep - v1), (T, v2 - arrival[3:])]
+
+
+def sentinel1_launch():
+    """Sentinel-1A and 1C launched a few days before the study starts and flown
+    onto their precise-orbit states at S1_DATA_START (see the scenario text)."""
+    import numpy as np
+
+    from satflight.maneuvers import Maneuver
+    clock = Clock(S1_LAUNCH_EPOCH)
+    T = (S1_DATA_START - S1_LAUNCH_EPOCH).total_seconds()
+    sso = math.degrees(2 * math.pi / (365.2421897 * 86400.0))        # deg/s
+    plan = {}
+    for name, mission, mass, day in (("Sentinel-1A", "S1A", 2164.0, 0),
+                                     ("Sentinel-1C", "S1C", 2200.0, 1)):
+        from satflight.elements import rv2coe
+        r, v = S1_DATA_START_STATE[mission]
+        raan_T = math.degrees(float(rv2coe(r, v).raan))
+        # the plane at liftoff: the slot's carried back sun-synchronously, plus what
+        # flying it shows the parking orbit's own regression adds
+        t0, fix = day * 86400.0, 0.0
+        for _ in range(6):
+            for _ in range(2):                     # the window moves the plane a little
+                t0 = _s1_window(raan_T - sso * (T - t0) + fix, day * 86400.0, clock)
+            spec = _s1_launch_spec(name, mass, t0)
+            sim = Simulation(_s1_launch_scenario([spec], []))
+            spec.kick = round(sim.ascents[0].kick_deg, 3)
+            sim.advance(t0 + 1800.0 - sim.t)       # separated, in the parking orbit
+            if sim.ascent_of(sim.index_of(name)) is not None:
+                raise RuntimeError(f"{name}: not in orbit 30 min after liftoff")
+            phase, tb, miss = _s1_plan_arrival(sim, name, S1_DATA_START_STATE[mission])
+            print(f"  {name}: liftoff {t0:.0f} s, plane miss {miss:+.4f} deg, phasing "
+                  f"{1e3 * float(np.linalg.norm(phase[1])):.1f} m/s")
+            if abs(miss) < 0.002:
+                break
+            fix -= miss
+        else:
+            raise RuntimeError(f"{name}: the plane still misses by {miss:.4f} deg")
+        plan[name] = (spec, phase, tb, mission)
+
+    def burn(name, t, dv, label):
+        return Maneuver(name, "impulse", timing="absolute", t=round(t, 3),
+                        dv=tuple(round(float(x), 9) for x in dv), frame="ECI",
+                        isp=S1_HYDRAZINE_ISP, label=label)
+
+    # both flown together with their phasing burns, as the scenario will fly them;
+    # each transfer is aimed from where that run has them when it starts
+    specs = [plan[n][0] for n in plan]
+    maneuvers = [burn(n, *plan[n][1], "phasing burn") for n in plan]
+    sim = Simulation(_s1_launch_scenario(specs, maneuvers))
+    for name in sorted(plan, key=lambda n: plan[n][2]):
+        _, _, tb, mission = plan[name]
+        sim.advance(tb - sim.t)
+        (t2, dv2), (t3, dv3) = _s1_aim_transfer(sim, name, S1_DATA_START_STATE[mission], tb)
+        print(f"  {name}: transfer {1e3 * float(np.linalg.norm(dv2)):.1f} m/s, arrival "
+              f"{1e3 * float(np.linalg.norm(dv3)):.1f} m/s")
+        new = [burn(name, t2, dv2, "transfer to the slot"),
+               burn(name, t3, dv3, "arrival in the slot")]
+        for m in new:
+            sim.schedule(Maneuver.from_dict(m.to_dict()))   # as a loaded run would
+        maneuvers += new
+    sc = _s1_launch_scenario(specs, sorted(maneuvers, key=lambda m: (m.sat, m.t)))
+    sc.track_keeping = s1_keeping(list(plan), start=T)      # once they are in their slots
+    return sc
+
+
 ALL = {"default": default, "data/sentinel1_replay": sentinel1_replay,
        "orbit_tour": orbit_tour, "hohmann_to_geo": hohmann,
        "gto_to_geo": gto_to_geo, "rendezvous": rendezvous,
        "starlink_shell": starlink, "gps_constellation": gps, "polar_star": iridium,
        "drag_decay": drag, "j2_precession": j2, "molniya_tundra": heo,
-       "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift}
+       "launches_and_arcs": launches, "launch_day": launch_day, "geo_drift": geo_drift,
+       "sentinel1_launch": sentinel1_launch}
+# builders that fly days to calibrate (default: the pair's measured phasing) or to aim
+# (sentinel1_launch: both ascents, the phasing and the transfers): minutes each to
+# rebuild, so selfcheck --quick leaves them out and says so
+SLOW = ("default", "sentinel1_launch")
 
 # Planner results differ in the last bits between platforms (libm, numpy SIMD
 # paths): 1e-14 m/s on a 7.5 km/s subtraction. Any edit to a scenario changes

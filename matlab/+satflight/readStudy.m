@@ -21,6 +21,9 @@ function S = readStudy(folder)
 %               atmosphere (sentinel1_study.py arcs --atmosphere msis)
 %     arcs_msis_dria  the same again with NRLMSIS and the physical drag
 %               coefficient (--cd-model dria_sphere)
+%     arcs_msis_iers  NRLMSIS with the solid-Earth tides and relativity
+%               added (--iers)
+%     arcs_msis_iers_alb  and the Earth's albedo and infrared too (--albedo)
 %
 %   Dates and times are datetimes in UTC. A blank number is NaN and a blank
 %   note or error is "". The daily tables are required; phasing, burns,
@@ -62,6 +65,10 @@ S.arcs_msis = readOne(fullfile(folder, "arcs_msis.csv"), arcCols, "start", "date
     ["mission", "error"]);
 S.arcs_msis_dria = readOne(fullfile(folder, "arcs_msis_dria.csv"), arcCols, "start", ...
     "date", ["mission", "error"]);
+S.arcs_msis_iers = readOne(fullfile(folder, "arcs_msis_iers.csv"), arcCols, "start", ...
+    "date", ["mission", "error"]);
+S.arcs_msis_iers_alb = readOne(fullfile(folder, "arcs_msis_iers_alb.csv"), arcCols, ...
+    "start", "date", ["mission", "error"]);
 end
 
 function T = readOne(file, expected, times, timeKind, texts)

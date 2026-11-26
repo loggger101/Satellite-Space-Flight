@@ -366,6 +366,144 @@ def _none(x, default: float) -> float:
     return default if x is None else x
 
 
+STUDY = ROOT / "docs" / "analysis" / "sentinel1"
+# phasing compares every object with every other at each node: a constellation of
+# hundreds would take MATLAB hours, so a run with more objects than this goes without
+PHASING_MAX = 24
+# the runtime's phasing functions: left out of a script with fewer than two objects
+# (or more than PHASING_MAX)
+PHASING_HELPERS = ["satflightNodes", "satflightPhasing", "repeatCycle", "stateNear",
+                   "sameOrbit", "satflightPhasingSummary", "uniquePairs", "runOrder",
+                   "satColor", "followDays", "satflightPlotPhaseAngle",
+                   "satflightPlotPhasingOffsets", "satflightPlotConstellation",
+                   "satflightPlotCrossings", "satflightPlotRepeatCycle", "phasingFollowText"]
+KEEPING_HELPERS = ["satflightTrackKeeping", "satflightKeepingSummary", "keptOrder",
+                   "satflightPlotTrackKeeping", "satflightPlotKeepingCost"]
+
+
+def phased(count: int) -> bool:
+    """Whether a run of ``count`` objects (launches with their stages counted once)
+    gets the phasing section."""
+    return 2 <= count <= PHASING_MAX
+
+
+def sentinel1_measured():
+    """What ESA's precise orbits show of the Sentinel-1 pair's phasing over the study
+    (docs/analysis/sentinel1): 1C's mean, least and greatest daily lag behind 1A
+    (deg), its plane offset from the two satellites' mean LTAN gap (deg, + east), how
+    close to its track each crossing lands (km: the 95th percentile of the daily
+    largest offsets; m: their median, a typical day) and ESA's along-track trims that
+    hold it there (burns.csv, both satellites: the median days between them and
+    delta-v of one, mm/s, and the delta-v they spend a day). None when the study's
+    CSVs are not there."""
+    import csv
+    try:
+        with open(STUDY / "phasing.csv", newline="", encoding="utf-8") as f:
+            phase = [float(r["mean_deg"]) for r in csv.DictReader(f)]
+        daily = {}
+        for m in ("S1A", "S1C"):
+            with open(STUDY / f"daily_{m}.csv", newline="", encoding="utf-8") as f:
+                daily[m] = list(csv.DictReader(f))
+        with open(STUDY / "burns.csv", newline="", encoding="utf-8") as f:
+            trims = [r for r in csv.DictReader(f) if r["kind"] == "burn"]
+    except FileNotFoundError:
+        return None
+    from datetime import datetime
+    from statistics import median
+    gaps, along, per_day = [], [], []
+    for m in ("S1A", "S1C"):
+        mine = sorted((r for r in trims if r["mission"] == m), key=lambda r: r["start_utc"])
+        starts = [datetime.fromisoformat(r["start_utc"]) for r in mine]
+        gaps += [(b - a).total_seconds() / 86400.0
+                 for a, b in zip(starts[:-1], starts[1:], strict=True)]
+        sized = [float(r["dv_along_mm_s"]) for r in mine if r["dv_along_mm_s"]]
+        along += sized
+        per_day.append(sum(sized) / len(daily[m]))
+    ltan = {m: sum(float(r["ltan_h"]) for r in rows) / len(rows) for m, rows in daily.items()}
+    track = sorted(float(r["track_max_m"]) for rows in daily.values() for r in rows
+                   if r["track_max_m"])
+    span = f"{daily['S1A'][0]['date'][:7]} .. {daily['S1A'][-1]['date'][:7]}"
+    return {"phase_deg": sum(phase) / len(phase), "phase_min_deg": min(phase),
+            "phase_max_deg": max(phase), "plane_deg": (ltan["S1C"] - ltan["S1A"]) * 15.0,
+            "track_km": track[int(0.95 * (len(track) - 1))] / 1000.0,
+            "track_typical_m": median(track), "burn_days": median(gaps),
+            "burn_mm_s": median(along), "keep_mm_s_per_day": sum(per_day) / len(per_day),
+            "span": span}
+
+
+def _phasing_section(names, keep=False) -> list[str]:
+    """The live script's constellation-phasing section, right after the run: the
+    nodes and phasing tables, the summary per pair and five figures; for a run with
+    Sentinel-1 in it, the precise orbits' values to hold them against; with ``keep``
+    (the scenario keeps ground tracks), the keeping's table and two figures."""
+    sentinel = any(n.startswith("Sentinel-1") for n in names)
+    measured = sentinel1_measured() if sentinel else None
+    out = ["%%"]
+    out += _text(
+        "## Constellation phasing\nHow the satellites that share an orbit sit along it and "
+        "over the ground, read at every ascending node as the simulator's Telemetry PHASING "
+        "rows read them. `phasingSummary` has one row per pair: how far the companion trails "
+        "(`behind_deg`; 180 is half an orbit), how far its plane is turned (`plane_deg`, + "
+        "east), how far east of the reference's ground tracks it crosses the equator "
+        "(`track_km`), the repeat cycle (`orbits` in `days`) and, on shared tracks, how many "
+        "days after the reference it flies each track (`follows_days`) and so how often the "
+        "pair revisits a track (`revisit_days`). `phasing` has every node's reading and "
+        "`nodes` every crossing. The figures: the phase angle over the run, the plane and "
+        "track offsets, where the satellites sit on the orbit at the end, every equator "
+        "crossing, and the repeat cycle's tracks (set `duration` to the cycle, 12 days for "
+        "Sentinel-1, to see every track flown by both).")
+    if measured:
+        out += _text(
+            "Sentinel-1: the dotted lines and the band are what ESA's precise orbits show "
+            f"over the study ({measured['span']}): 1C {measured['phase_deg']:.2f} deg behind "
+            f"1A on average ({measured['phase_min_deg']:.2f} to {measured['phase_max_deg']:.2f} "
+            f"day by day), its plane {abs(measured['plane_deg']):.3f} deg west, which puts it "
+            f"on 1A's tracks: every crossing within {measured['track_km']:.1f} km of its track. "
+            "ESA keeps them there with small along-track trims, one every "
+            f"{measured['burn_days']:.1f} days of {measured['burn_mm_s']:.1f} mm/s (median), "
+            f"{measured['keep_mm_s_per_day']:.2f} mm/s a day each"
+            + (", as this run's keepers do (below)." if keep else
+               "; this run flies none, so over many days its tracks drift past that band."))
+        out += ["measured = struct(" + ", ".join(
+            f"{_str(k)}, {_str(v) if isinstance(v, str) else _num(round(v, 6))}"
+            for k, v in measured.items()) + ");"]
+    else:
+        out += ["measured = struct([]);"]
+    out += ["nodes = satflightNodes(T, events, sim);",
+            "phasing = satflightPhasing(nodes, T);",
+            "phasingSummary = satflightPhasingSummary(phasing, nodes);",
+            "if height(phasing)",
+            "    display(phasingSummary)",
+            "    satflightPlotPhaseAngle(phasing, measured);",
+            "    satflightPlotPhasingOffsets(phasing, measured);",
+            "    satflightPlotConstellation(T, phasing);",
+            "    satflightPlotCrossings(nodes, phasing);",
+            "    satflightPlotRepeatCycle(nodes, phasing);",
+            "else",
+            '    disp("No two satellites share an orbit in this run (yet): nothing to phase.")',
+            "end"]
+    if keep:
+        out += ["%%"]
+        out += _text(
+            "### Ground-track keeping\nPhasing holds only while each satellite stays on its "
+            "tracks: drag lowers the orbit, the Earth turns a little less under each "
+            "revolution and the crossings creep east along a parabola. Each keeper burns "
+            "along-track before its satellite leaves its band (`sim.trackKeeping`). "
+            "`keeping` has every kept crossing's offset from its reference track; "
+            "`keepingSummary` per satellite how far off they landed (after the first day, "
+            "while the keeper learns the drift), its burns and what they cost a day. The "
+            "figures: the offsets with the burns marked, and the delta-v adding up"
+            + (" against ESA's measured rate." if measured else "."))
+        out += ["keeping = satflightTrackKeeping(nodes, sim);",
+                "keepingSummary = satflightKeepingSummary(keeping, burns);",
+                "display(keepingSummary)",
+                "if height(keeping)",
+                "    satflightPlotTrackKeeping(keeping, burns, measured);",
+                "    satflightPlotKeepingCost(keeping, burns, measured);",
+                "end"]
+    return out
+
+
 def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, step,
             compare, recorded) -> list[str]:
     F, it = src.forces, scenario.integrator
@@ -521,6 +659,23 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     else:
         out += _text("No maneuvers are scheduled.")
         out += ["sim.maneuvers = satflightNoBurns();"]
+    keep = scenario.track_keeping
+    if keep:
+        out += _text(
+            "Ground-track keeping, as ESA keeps Sentinel-1 on its tracks: at each ascending "
+            "node the run measures how far east or west of its reference track (the repeat "
+            "cycle's grid, set at its first node after `start` s) each satellite crosses, "
+            "fits a parabola to the crossings since its last burn and, before it leaves the "
+            "band (`bandKm` either way), schedules an along-track burn half an orbit on, "
+            "sized so that drag brings it back after peaking at the band's far edge.")
+        out.append('sim.trackKeeping = struct("sat", {{{}}}, "bandKm", {{{}}}, "orbits", {{{}}}, '
+                   '"days", {{{}}}, "start", {{{}}}, "isp", {{{}}});'.format(
+                       ", ".join(_str(k.sat) for k in keep),
+                       ", ".join(_num(k.band_km) for k in keep),
+                       ", ".join(_num(k.orbits) for k in keep),
+                       ", ".join(_num(k.days) for k in keep),
+                       ", ".join(_num(k.start) for k in keep),
+                       ", ".join(_num(k.isp) for k in keep)))
 
     stations = src.stations
     out += _text("Ground stations (marked on the ground track; passes are logged as AOS and LOS "
@@ -572,6 +727,14 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         out += ['launchTable = struct2table(rmfield(launches, ["insertion", "losses_kms", '
                 '"profile", "marks", "planned", "plannedMarks"]), AsArray=true);',
                 "display(launchTable)"]
+    names = [s.name for _, s in rows] + [a.spec.name for a in launches]
+    if phased(len(names)):
+        out += _phasing_section(names, bool(scenario.track_keeping))
+    elif len(names) > PHASING_MAX:
+        out += ["%%"]
+        out += _text(f"## Constellation phasing\nLeft out: phasing compares every object "
+                     f"with every other at each node, and this run has {len(names)} "
+                     f"(the export phases up to {PHASING_MAX}).")
     out += ["%%"]
     out += _text("## Plots\nGround track, altitude, orbital elements and the orbits in 3-D"
                  + (", and each launch's ascent" if launches else "")
@@ -614,7 +777,8 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
     if stations:
         out += ["satflightPlotSky(T, events, sim.stations, shown);"]
     out += ["betaAngles = satflightBeta(T);", "satflightPlotBeta(betaAngles, shown);"]
-    burns = bool(maneuvers or launches)       # a launch can schedule its circularization
+    # a launch can schedule its circularization, a keeper its trims
+    burns = bool(maneuvers or launches or scenario.track_keeping)
     pairs = len(rows) + len(launches) >= 2    # a launch adds its stages
     if burns or pairs:
         out += ["%%"]
@@ -708,7 +872,11 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
              + ["passes", "coverage"] * bool(stations) + ["eclipses", "betaAngles"]
              + ["maneuvers", "deltaV"] * burns + ["approaches"] * pairs
              + ["transfers"] * burns + ["drift", "diagnostics", "conservation"]
-             + ["truthGap"] * twins)
+             + ["truthGap"] * twins
+             + ["measured", "nodes", "phasing", "phasingSummary"]
+             * phased(len(rows) + len(launches))
+             + ["keeping", "keepingSummary"]
+             * (phased(len(rows) + len(launches)) and bool(scenario.track_keeping)))
     out += ["%%"]
     out += _text("## Save\nWith `figureFolder` set in Settings, saves every figure there as a "
                  "PNG at 300 dpi and a PDF (vector graphics, but for the 3-D Earth) named "
@@ -770,7 +938,10 @@ def _script(src, scenario, data, rows, maneuvers, scrubbed, origin, duration, st
         [] if burns else ["satflightTransfers", "satflightPlotTransfer", "satflightPlotDeltaV",
                           "satflightPlotBurnWindow", "burnMarks", "onlyFirst", "plural",
                           "orbitText", "orbitSummary", "julianUtc"]) + (
-        [] if twins else ["satflightTruthGap", "satflightPlotTruthGap"])
+        [] if twins else ["satflightTruthGap", "satflightPlotTruthGap"]) + (
+        [] if phased(len(rows) + len(launches)) else PHASING_HELPERS) + (
+        [] if phased(len(rows) + len(launches)) and scenario.track_keeping
+        else KEEPING_HELPERS)
     out += drop_functions(runtime_lines(compare), unused)
     out += ["", '%[appendix]{"version":"1.0"}', "%---", "%[metadata:view]",
             '%   data: {"layout":"inline"}', "%---"]

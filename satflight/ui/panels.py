@@ -15,6 +15,7 @@ from ..eclipse import shadow_state
 from ..elements import rv2coe
 from ..ephemeris import sun_position
 from ..frames import OMEGA_VEC, ecef_to_geodetic, eci_to_ecef, geodetic_height
+from ..phasing import rows as phasing_rows
 from ..replay import ENDED
 from ..simulation import ACTIVE, DECAYED, ESCAPED, IMPACTED, REENTRY_ALT, SCRUBBED
 from ..timeutil import format_duration, format_period
@@ -532,8 +533,11 @@ class InfoPanel:
         if precise:
             sections.append(("PRECISE ORBIT", precise))
         sections += [("STATE", _state_rows(sim, r, v)),
-                     (f"ORBIT  ({classify(el)})", _orbit_rows(el)),
-                     ("ENVIRONMENT", _environment_rows(sim, i, r, v)),
+                     (f"ORBIT  ({classify(el)})", _orbit_rows(el))]
+        phasing = phasing_rows(sim, i)
+        if phasing:
+            sections.append(("PHASING", phasing))
+        sections += [("ENVIRONMENT", _environment_rows(sim, i, r, v)),
                      ("SPACECRAFT", _craft_rows(sim, i))]
         if sim.stations:
             contact = [(st.name[:16], f"az {az:5.1f} el {el_:4.1f} {rng:,.0f} km")

@@ -1,0 +1,322 @@
+{
+  "name": "Sentinel-1 launch",
+  "description": "Sentinel-1A and 1C launched from Vandenberg on Falcon 9 a few days before the study's precise orbits start (not the real dates): each lifts off southbound into the plane it will fly, is left at 600 km, and with three burns of its own thrusters (a phasing burn, an aimed transfer and an arrival burn) reaches the place ESA's precise orbit puts it at 00:00:02 UTC on 1 July 2025, from where the study begins. From then on each keeps within 50 m of its ground tracks with small along-track burns. Watch the PHASING rows settle at 176 deg once both have arrived.",
+  "epoch": "2025-06-25T00:00:00Z",
+  "propagator": "cowell",
+  "integrator": {
+    "method": "dopri5",
+    "rtol": 1e-09,
+    "atol": 1e-06,
+    "h_max": 60.0,
+    "h_fixed": 10.0
+  },
+  "forces": {
+    "j2": true,
+    "j3": true,
+    "j4": true,
+    "c22": false,
+    "drag": true,
+    "density_scale": 1.0,
+    "gravity_degree": 0,
+    "sun": false,
+    "moon": false,
+    "srp": false,
+    "atmosphere": "table",
+    "cd_model": "fixed",
+    "tides": false,
+    "relativity": false,
+    "albedo": false
+  },
+  "record_dt": 10.0,
+  "warp": 60,
+  "satellites": [],
+  "constellations": [],
+  "stations": [
+    {
+      "name": "Svalbard",
+      "lat": 78.23,
+      "lon": 15.39,
+      "alt": 0.5,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Matera",
+      "lat": 40.65,
+      "lon": 16.7,
+      "alt": 0.5,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Maspalomas",
+      "lat": 27.76,
+      "lon": -15.63,
+      "alt": 0.2,
+      "min_el": 5.0,
+      "color": null
+    },
+    {
+      "name": "Kiruna",
+      "lat": 67.86,
+      "lon": 20.96,
+      "alt": 0.4,
+      "min_el": 5.0,
+      "color": null
+    }
+  ],
+  "maneuvers": [
+    {
+      "sat": "Sentinel-1A",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 59546.259,
+      "delay": 0.0,
+      "dv": [
+        -0.023471162,
+        -0.003868593,
+        -0.014697731
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 220.0,
+      "duration": 0.0,
+      "label": "phasing burn",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Sentinel-1A",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 515634.259,
+      "delay": 0.0,
+      "dv": [
+        0.034473661,
+        0.010228625,
+        0.008188839
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 220.0,
+      "duration": 0.0,
+      "label": "transfer to the slot",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Sentinel-1A",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 518402.0,
+      "delay": 0.0,
+      "dv": [
+        0.016904243,
+        0.010791173,
+        0.034497311
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 220.0,
+      "duration": 0.0,
+      "label": "arrival in the slot",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Sentinel-1C",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 145875.433,
+      "delay": 0.0,
+      "dv": [
+        -0.015968674,
+        -0.002830798,
+        -0.010024847
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 220.0,
+      "duration": 0.0,
+      "label": "phasing burn",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Sentinel-1C",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 515637.294,
+      "delay": 0.0,
+      "dv": [
+        0.058401218,
+        0.015945587,
+        0.052009311
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 220.0,
+      "duration": 0.0,
+      "label": "transfer to the slot",
+      "done": false,
+      "result": ""
+    },
+    {
+      "sat": "Sentinel-1C",
+      "kind": "impulse",
+      "timing": "absolute",
+      "t": 518402.0,
+      "delay": 0.0,
+      "dv": [
+        -0.017588825,
+        -0.008486069,
+        -0.028896832
+      ],
+      "frame": "ECI",
+      "delta_i": 0.0,
+      "target": "",
+      "thrust": 0.0,
+      "isp": 220.0,
+      "duration": 0.0,
+      "label": "arrival in the slot",
+      "done": false,
+      "result": ""
+    }
+  ],
+  "launches": [
+    {
+      "name": "Sentinel-1A",
+      "vehicle": {
+        "name": "Falcon 9",
+        "stages": [
+          {
+            "name": "Stage 1",
+            "thrust": 8227.0,
+            "isp_vac": 311.0,
+            "isp_sl": 282.0,
+            "propellant": 395700.0,
+            "dry": 25600.0
+          },
+          {
+            "name": "Stage 2",
+            "thrust": 981.0,
+            "isp_vac": 348.0,
+            "isp_sl": 0.0,
+            "propellant": 92670.0,
+            "dry": 3900.0
+          }
+        ],
+        "fairing": 1900.0,
+        "fairing_alt": 110.0,
+        "diameter": 3.7,
+        "cd": 0.45,
+        "max_g": 0.0,
+        "stage_coast": 8.0
+      },
+      "site": "Vandenberg SLC-4E (USA)",
+      "lat": 34.632,
+      "lon": -120.611,
+      "alt": 0.1,
+      "timing": "absolute",
+      "delay": 0.0,
+      "t0": 51953.859,
+      "guidance": "orbit",
+      "perigee_alt": 600.0,
+      "apogee_alt": 600.0,
+      "inclination": 98.18,
+      "direction": "south",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 2.375,
+      "payload_mass": 2164.0,
+      "payload_area": 10.0,
+      "payload_cd": 2.2,
+      "circularize": false,
+      "track_stages": true,
+      "color": null
+    },
+    {
+      "name": "Sentinel-1C",
+      "vehicle": {
+        "name": "Falcon 9",
+        "stages": [
+          {
+            "name": "Stage 1",
+            "thrust": 8227.0,
+            "isp_vac": 311.0,
+            "isp_sl": 282.0,
+            "propellant": 395700.0,
+            "dry": 25600.0
+          },
+          {
+            "name": "Stage 2",
+            "thrust": 981.0,
+            "isp_vac": 348.0,
+            "isp_sl": 0.0,
+            "propellant": 92670.0,
+            "dry": 3900.0
+          }
+        ],
+        "fairing": 1900.0,
+        "fairing_alt": 110.0,
+        "diameter": 3.7,
+        "cd": 0.45,
+        "max_g": 0.0,
+        "stage_coast": 8.0
+      },
+      "site": "Vandenberg SLC-4E (USA)",
+      "lat": 34.632,
+      "lon": -120.611,
+      "alt": 0.1,
+      "timing": "absolute",
+      "delay": 0.0,
+      "t0": 138283.269,
+      "guidance": "orbit",
+      "perigee_alt": 600.0,
+      "apogee_alt": 600.0,
+      "inclination": 98.18,
+      "direction": "south",
+      "raan": 0.0,
+      "target": "",
+      "azimuth": 90.0,
+      "vertical_time": 10.0,
+      "kick": 2.375,
+      "payload_mass": 2200.0,
+      "payload_area": 10.0,
+      "payload_cd": 2.2,
+      "circularize": false,
+      "track_stages": true,
+      "color": null
+    }
+  ],
+  "track_keeping": [
+    {
+      "sat": "Sentinel-1A",
+      "band_km": 0.05,
+      "orbits": 175,
+      "days": 12,
+      "start": 518402.0,
+      "isp": 220.0
+    },
+    {
+      "sat": "Sentinel-1C",
+      "band_km": 0.05,
+      "orbits": 175,
+      "days": 12,
+      "start": 518402.0,
+      "isp": 220.0
+    }
+  ]
+}

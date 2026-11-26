@@ -752,7 +752,7 @@ def physics_dialog(app):
         F("moon", "Moon's gravity", "bool", fm.moon, tip=FORCE_TIPS["moon"]),
         F("srp", "Sunlight pressure", "bool", fm.srp, tip=FORCE_TIPS["srp"]),
         F("albedo", "Earth albedo and infrared", "bool", fm.albedo,
-          tip=FORCE_TIPS["albedo"] + " Not in MATLAB exports yet."),
+          tip=FORCE_TIPS["albedo"]),
         F("tides", "Solid-Earth tides", "bool", fm.tides,
           tip=FORCE_TIPS["tides"]),
         F("relativity", "Relativity", "bool", fm.relativity,

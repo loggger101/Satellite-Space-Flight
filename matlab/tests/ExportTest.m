@@ -179,6 +179,24 @@ classdef ExportTest < ExportCase
             tc.verifyTrue(all(out.diagnostics.acc_relativity_ms2 > 0));
         end
 
+        function earthAlbedo(tc)
+            % the Earth's reflected sunlight and infrared (forces "albedo") with the Sun's
+            % pressure, 12 h: a Sentinel-like satellite and a light sail held to the
+            % simulator under 1 mm
+            sc = satflight.newScenario("Bright", Sun=true, Srp=true, Albedo=true, ...
+                Epoch=datetime(2025, 11, 12, 0, 0, 0, TimeZone="UTC"));
+            sc = satflight.addSatellite(sc, "Low", satflight.orbitElements(Altitude=693, ...
+                I=98.18, Raan=278, Nu=30), Mass=2164, Area=10);
+            sc = satflight.addSatellite(sc, "Sail", satflight.orbitElements(Altitude=800, ...
+                I=51.6, Raan=10, Nu=200), Mass=5, Area=4, Cr=1.8);
+            file = satflight.saveScenario(sc, fullfile(tc.Tmp, "bright.json"));
+            script = tc.export(file, "bright", ["--duration", "12h", "--step", "60"]);
+            tc.verifyTrue(any(contains(readlines(script), '"albedo", true')));
+            [diffs, out] = tc.check(script);
+            tc.verifyLessThan(diffs.max_diff_km, 1e-6);
+            tc.verifyTrue(all(out.diagnostics.acc_albedo_ms2 > 0));
+        end
+
         function nrlmsisAscent(tc)
             % under NRLMSIS an ascent flies the NRLMSIS column over its pad at liftoff
             % (launch.msis_column), in the storm: two launches from far-apart pads, 15 and
